@@ -8,10 +8,10 @@ put() {
   if [ -e "$f" ]; then cat > /dev/null; else cat > "$f"; fi
 }
 
-# Версия набора файлов: файлы «v2» перезаписываются один раз, потом их можно править руками.
+# Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=2
+NEW=3
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -612,7 +612,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v2: регистрация, дата-центры, новый интерфейс =====================
+# ===================== v3: регистрация, DNS для Android, дата-центры, новый интерфейс =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -819,6 +819,86 @@ func TestRaceAllBlocked(t *testing.T) {
 }
 HYDRA_EOF
 
+putv "$GODIR/dns.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"net"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+// На Android у Go нет /etc/resolv.conf, поэтому встроенный резолвер идёт на
+// localhost:53 — а там никого нет, и любое имя «не находится». Лечим: сами
+// задаём DNS-серверы. Системные присылает Android-часть, запасные — ниже.
+var fallbackDNS = []string{"8.8.8.8", "1.1.1.1", "77.88.8.8"}
+
+// SetSystemDNS подменяет резолвер процесса: сначала переданные серверы
+// (только IP-адреса), потом запасные. Каждая новая попытка идёт на следующий сервер.
+func SetSystemDNS(servers []string) {
+	var list []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || net.ParseIP(s) == nil || seen[s] {
+			return
+		}
+		seen[s] = true
+		list = append(list, s)
+	}
+	for _, s := range servers {
+		add(s)
+	}
+	for _, s := range fallbackDNS {
+		add(s)
+	}
+	var n uint32
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			i := int(atomic.AddUint32(&n, 1)-1) % len(list)
+			d := net.Dialer{Timeout: 3 * time.Second}
+			return d.DialContext(ctx, network, net.JoinHostPort(list[i], "53"))
+		},
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/dns_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"net"
+	"testing"
+)
+
+func TestSetSystemDNSRotatesServers(t *testing.T) {
+	old := net.DefaultResolver
+	defer func() { net.DefaultResolver = old }()
+
+	SetSystemDNS([]string{"127.0.0.1", "мусор", "127.0.0.2", "127.0.0.1"})
+	r := net.DefaultResolver
+	if !r.PreferGo || r.Dial == nil {
+		t.Fatal("резолвер не подменён")
+	}
+	var got []string
+	for i := 0; i < 2; i++ {
+		c, err := r.Dial(context.Background(), "udp", "ignored:53")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, c.RemoteAddr().String())
+		c.Close()
+	}
+	if got[0] != "127.0.0.1:53" || got[1] != "127.0.0.2:53" {
+		t.Fatalf("серверы по кругу: %v", got)
+	}
+}
+HYDRA_EOF
+
 putv "$GODIR/mobile/mobile.go" <<'HYDRA_EOF'
 // Package mobile — тонкая обвязка для gomobile: то, что видно из Kotlin.
 // Только простые типы (строки), чтобы привязка собиралась без сюрпризов.
@@ -851,6 +931,16 @@ func DefaultBlockedColos() string {
 // NormalizeColos приводит ввод пользователя к виду "DME,LED,FRA".
 func NormalizeColos(s string) string {
 	return strings.Join(hydra.ParseColoList(s), ",")
+}
+
+func init() {
+	// Без этого Go на Android не умеет разрешать имена (нет resolv.conf).
+	hydra.SetSystemDNS(nil)
+}
+
+// SetDNS принимает DNS-серверы текущей сети от Android ("ip1,ip2,...").
+func SetDNS(csv string) {
+	hydra.SetSystemDNS(strings.Split(csv, ","))
 }
 
 func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
@@ -1389,7 +1479,8 @@ func EnsureAccount(ctx context.Context, path string, r *Registrar) (*Account, er
 
 const (
 	KindRateLimited = "rate_limited" // 429: слишком много регистраций с этого IP
-	KindBlocked     = "blocked"      // до API не достучаться (DNS/DPI/сеть)
+	KindBlocked     = "blocked"      // до API не достучаться (DPI/сеть)
+	KindDNS         = "dns"          // имя API не определяется, DoH тоже не помог
 	KindAPI         = "api"          // API ответил, но отказал
 )
 
@@ -1411,13 +1502,20 @@ type httpError struct {
 
 func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d %s", e.Status, e.Body) }
 
+// protoError — API ответил, но не так, как ждали (формат изменился?).
+type protoError struct{ msg string }
+
+func (e *protoError) Error() string { return e.msg }
+
 func classify(errs []error) *RegError {
 	re := &RegError{Kind: KindBlocked}
-	rate, api := false, false
+	rate, api, dns := false, false, false
 	for _, e := range errs {
 		re.Detail = append(re.Detail, e.Error())
 		var he *httpError
-		if errors.As(e, &he) {
+		var pe *protoError
+		switch {
+		case errors.As(e, &he):
 			if he.Status == http.StatusTooManyRequests {
 				rate = true
 				if he.RetryAfter > re.RetryAfter {
@@ -1426,6 +1524,10 @@ func classify(errs []error) *RegError {
 			} else {
 				api = true
 			}
+		case errors.As(e, &pe):
+			api = true
+		case strings.Contains(e.Error(), "lookup "):
+			dns = true
 		}
 	}
 	switch {
@@ -1433,6 +1535,8 @@ func classify(errs []error) *RegError {
 		re.Kind = KindRateLimited
 	case api:
 		re.Kind = KindAPI
+	case dns:
+		re.Kind = KindDNS
 	}
 	return re
 }
@@ -1670,7 +1774,7 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 	}
 	rr := reg.norm()
 	if rr.ID == "" || rr.Token == "" {
-		return nil, errors.New("пустой ответ API при регистрации")
+		return nil, &protoError{"пустой ответ API при регистрации"}
 	}
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1746,7 +1850,10 @@ func (r *Registrar) do(ctx context.Context, cl *http.Client, verb, path, token s
 		}
 		return he
 	}
-	return json.Unmarshal(data, out)
+	if err := json.Unmarshal(data, out); err != nil {
+		return &protoError{"неожиданный ответ API: " + err.Error()}
+	}
+	return nil
 }
 
 func truncate(s string, n int) string {
@@ -1970,6 +2077,23 @@ func TestRegisterReportsBlocked(t *testing.T) {
 	}
 }
 
+func TestClassifyKinds(t *testing.T) {
+	dnsErr := errors.New("dial tcp: lookup api.cloudflareclient.com on [::1]:53: connection refused")
+	if k := classify([]error{dnsErr}).Kind; k != KindDNS {
+		t.Fatalf("ждали dns, получили %s", k)
+	}
+	if k := classify([]error{errors.New("connection reset by peer")}).Kind; k != KindBlocked {
+		t.Fatalf("ждали blocked, получили %s", k)
+	}
+	if k := classify([]error{&protoError{"мусор"}}).Kind; k != KindAPI {
+		t.Fatalf("ждали api, получили %s", k)
+	}
+	re := classify([]error{dnsErr, &httpError{Status: 429, RetryAfter: 3 * time.Second}})
+	if re.Kind != KindRateLimited || re.RetryAfter != 3*time.Second {
+		t.Fatalf("429 должен перекрывать остальное: %+v", re)
+	}
+}
+
 func TestAccountExportImportAndStorage(t *testing.T) {
 	a := &Account{ID: "id1", Token: "tok1", PrivateKey: "AAAA", EndpointV4: "1.2.3.4:443", Created: time.Unix(1700000000, 0).UTC()}
 	got, err := ImportAccount(a.Export())
@@ -2081,6 +2205,7 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Работает и на Android TV: сенсорный экран не обязателен -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -2113,6 +2238,8 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/AccountController.kt <<'HYDRA_EOF'
 package app.hydra
 
+import android.content.Context
+import android.net.ConnectivityManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -2122,7 +2249,29 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Состояние аккаунта WARP, общее для экранов; регистрация идёт в Go-ядре. */
-class AccountController(private val dir: String, private val scope: CoroutineScope) {
+/** DNS-серверы текущих сетей телефона: Go на Android сам их найти не может. */
+fun systemDns(ctx: Context): String {
+    return try {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val nets = cm.allNetworks.toMutableList()
+        cm.activeNetwork?.let { nets.add(0, it) }
+        val list = mutableListOf<String>()
+        for (n in nets) {
+            cm.getLinkProperties(n)?.dnsServers?.forEach { a ->
+                a.hostAddress?.let { list.add(it) }
+            }
+        }
+        list.distinct().joinToString(",")
+    } catch (t: Throwable) {
+        ""
+    }
+}
+
+class AccountController(
+    private val dir: String,
+    private val scope: CoroutineScope,
+    private val dnsProvider: () -> String
+) {
 
     var id by mutableStateOf(readId())
         private set
@@ -2149,6 +2298,7 @@ class AccountController(private val dir: String, private val scope: CoroutineSco
         scope.launch {
             report = withContext(Dispatchers.IO) {
                 try {
+                    mobile.Mobile.setDNS(dnsProvider())
                     mobile.Mobile.registerReport(dir)
                 } catch (t: Throwable) {
                     "FAIL internal\n" + t.message
@@ -2774,7 +2924,7 @@ class MainActivity : ComponentActivity() {
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val account = remember { AccountController(ctx.filesDir.absolutePath, scope) }
+    val account = remember { AccountController(ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
     var tab by rememberSaveable { mutableStateOf(0) }
 
     Scaffold(
@@ -3273,6 +3423,7 @@ fun failText(kind: String): String = stringResource(
     when (kind) {
         "rate_limited" -> R.string.fail_rate_limited
         "blocked" -> R.string.fail_blocked
+        "dns" -> R.string.fail_dns
         "api" -> R.string.fail_api
         else -> R.string.fail_other
     }
@@ -3331,6 +3482,7 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="action_register">Зарегистрировать</string>
     <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
     <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
+    <string name="fail_dns">Не удаётся определить адрес API Cloudflare: DNS не отвечает, а DoH недоступен. Проверь сеть или смени её.</string>
     <string name="fail_api">API Cloudflare отказал в запросе.</string>
     <string name="fail_other">Не удалось зарегистрироваться.</string>
 
@@ -3424,6 +3576,7 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="action_register">Register</string>
     <string name="fail_rate_limited">Cloudflare limits registrations from this IP. Wait a few minutes and try again.</string>
     <string name="fail_blocked">Cannot reach the Cloudflare API: the network or DNS blocks it. Try another network (mobile data or Wi-Fi).</string>
+    <string name="fail_dns">Cannot resolve the Cloudflare API address: DNS does not answer and DoH is unreachable. Check the network or switch to another one.</string>
     <string name="fail_api">The Cloudflare API refused the request.</string>
     <string name="fail_other">Registration failed.</string>
 
