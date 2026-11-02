@@ -9,8 +9,9 @@ import (
 )
 
 type fakeTunnel struct {
-	done chan struct{}
-	once sync.Once
+	done  chan struct{}
+	once  sync.Once
+	dials int32
 }
 
 func newFakeTunnel(dieAfter time.Duration) *fakeTunnel {
