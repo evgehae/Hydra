@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"context"
+	"net"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type Quality struct {
 // ctx ограничивает только установку соединения.
 type Tunnel interface {
 	Probe(ctx context.Context) (Quality, error)
+	// DialContext открывает TCP-соединение к addr через туннель (для SOCKS-входа).
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 	Done() <-chan struct{} // закрывается, когда туннель умер
 	Close() error
 }

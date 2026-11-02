@@ -38,6 +38,7 @@ type Orchestrator struct {
 	order  []Transport
 	diag   Diagnoser
 	events chan Event
+	front  *Front
 }
 
 func New(cfg Config, mem *Memory, ts []Transport, d Diagnoser) *Orchestrator {
@@ -45,7 +46,7 @@ func New(cfg Config, mem *Memory, ts []Transport, d Diagnoser) *Orchestrator {
 		d = nopDiagnoser{}
 	}
 	o := &Orchestrator{cfg: cfg, mem: mem, ts: map[string]Transport{}, order: ts, diag: d,
-		events: make(chan Event, 64)}
+		events: make(chan Event, 64), front: NewFront()}
 	for _, t := range ts {
 		o.ts[t.Name()] = t
 	}
@@ -53,6 +54,9 @@ func New(cfg Config, mem *Memory, ts []Transport, d Diagnoser) *Orchestrator {
 }
 
 func (o *Orchestrator) Events() <-chan Event { return o.events }
+
+// Front — постоянный локальный SOCKS5-вход; туннель под ним меняется на лету.
+func (o *Orchestrator) Front() *Front { return o.front }
 
 func (o *Orchestrator) emit(kind, strategy string, c Cause, msg string) {
 	select {
@@ -215,6 +219,7 @@ func (sb *standby) stop() {
 
 // session ведёт активный туннель + резерв; возвращается, когда нужна новая гонка.
 func (o *Orchestrator) session(ctx context.Context, netKey func() string, net string, t Tunnel, s Strategy) {
+	defer o.front.Set(nil)
 	sb := o.warm(ctx, net, s.ID)
 	for {
 		reason, netChanged := o.watch(ctx, netKey, net, t)
@@ -231,6 +236,7 @@ func (o *Orchestrator) session(ctx context.Context, netKey func() string, net st
 			if r.err == nil {
 				old := t
 				t, s = r.t, r.s
+				o.front.Set(t)
 				old.Close()
 				o.emit("failover", s.ID, cause, "переключился на резерв")
 				sb = o.warm(ctx, net, s.ID)
@@ -277,6 +283,7 @@ func (o *Orchestrator) Run(ctx context.Context, netKey func() string) error {
 			continue
 		}
 		backoff = time.Second
+		o.front.Set(t)
 		o.emit("connected", s.ID, CauseUnknown, "net="+net)
 		o.session(ctx, netKey, net, t, s)
 		_ = o.mem.Save()
