@@ -24,4 +24,17 @@ class Prefs(ctx: Context) {
     var killSwitch: Boolean
         get() = sp.getBoolean("kill_switch", false)
         set(v) { sp.edit().putBoolean("kill_switch", v).apply() }
+
+    /** Запрещённые дата-центры Cloudflare, коды через запятую. */
+    var blockedColos: String
+        get() = sp.getString("colo_block", null) ?: defaultBlockedColos()
+        set(v) { sp.edit().putString("colo_block", v).apply() }
+
+    /** Если не пусто — разрешены только эти дата-центры. */
+    var allowColos: String
+        get() = sp.getString("colo_allow", "") ?: ""
+        set(v) { sp.edit().putString("colo_allow", v).apply() }
+
+    fun defaultBlockedColos(): String =
+        try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
 }

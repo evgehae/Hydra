@@ -6,18 +6,30 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 
-/** Простая проверка сети: DNS и HTTPS до Cloudflare (+ покажет, идёт ли трафик через WARP). */
-suspend fun runDiagnostics(): String = withContext(Dispatchers.IO) {
-    val sb = StringBuilder()
+data class DiagResult(
+    val dnsOk: Boolean,
+    val dnsMs: Long,
+    val httpsOk: Boolean,
+    val httpsMs: Long,
+    val ip: String,
+    val loc: String,
+    val colo: String,
+    val warp: String
+)
 
+/** DNS + HTTPS до Cloudflare; trace показывает дата-центр и идёт ли трафик через WARP. */
+suspend fun runDiagnostics(): DiagResult = withContext(Dispatchers.IO) {
+    var dnsOk = false
     var t = System.currentTimeMillis()
     try {
-        val ip = InetAddress.getByName("cloudflare.com").hostAddress
-        sb.append("DNS: OK ($ip, ${System.currentTimeMillis() - t} ms)\n")
+        InetAddress.getByName("cloudflare.com")
+        dnsOk = true
     } catch (e: Exception) {
-        sb.append("DNS: FAIL (${e.javaClass.simpleName})\n")
     }
+    val dnsMs = System.currentTimeMillis() - t
 
+    var httpsOk = false
+    var kv: Map<String, String> = emptyMap()
     t = System.currentTimeMillis()
     try {
         val c = URL("https://cloudflare.com/cdn-cgi/trace").openConnection() as HttpURLConnection
@@ -25,17 +37,17 @@ suspend fun runDiagnostics(): String = withContext(Dispatchers.IO) {
         c.readTimeout = 5000
         val body = c.inputStream.bufferedReader().use { it.readText() }
         c.disconnect()
-        val kv = body.lines()
+        kv = body.lines()
             .mapNotNull { l -> l.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }
             .toMap()
-        sb.append("HTTPS: OK (${System.currentTimeMillis() - t} ms)\n")
-        sb.append("IP: ${kv["ip"]}\n")
-        sb.append("Loc: ${kv["loc"]}\n")
-        sb.append("Colo: ${kv["colo"]}\n")
-        sb.append("WARP: ${kv["warp"]}\n")
+        httpsOk = true
     } catch (e: Exception) {
-        sb.append("HTTPS: FAIL (${e.javaClass.simpleName})\n")
     }
+    val httpsMs = System.currentTimeMillis() - t
 
-    sb.toString()
+    DiagResult(
+        dnsOk, dnsMs, httpsOk, httpsMs,
+        kv["ip"].orEmpty(), kv["loc"].orEmpty(),
+        (kv["colo"] ?: "").uppercase(), kv["warp"].orEmpty()
+    )
 }

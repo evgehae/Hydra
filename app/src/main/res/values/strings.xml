@@ -4,29 +4,87 @@
 
     <string name="tab_home">Home</string>
     <string name="tab_split">Apps</string>
-    <string name="tab_diag">Diagnostics</string>
+    <string name="tab_diag">Check</string>
     <string name="tab_settings">Settings</string>
 
-    <string name="home_status_idle">Not connected</string>
-    <string name="home_connect">Connect</string>
-    <string name="home_soon">Connection arrives in the next build</string>
-    <string name="home_engine">Engine: %1$s</string>
+    <string name="home_tagline">WARP that heals itself</string>
+    <string name="home_status_need_account">Account required</string>
+    <string name="home_sub_need_account">Tap the button to create a WARP account</string>
+    <string name="home_status_registering">Registering…</string>
+    <string name="home_sub_registering">Trying several routes to Cloudflare</string>
+    <string name="home_status_ready">Ready</string>
+    <string name="home_sub_ready">Connecting arrives in the next build</string>
+    <string name="home_soon_toast">Connecting arrives in the next build</string>
 
-    <string name="split_title">Split tunneling</string>
-    <string name="split_mode_only">Only selected apps use the VPN</string>
-    <string name="split_mode_except">All apps except the selected ones</string>
-    <string name="split_count">Selected: %1$d</string>
+    <string name="ready_title">Readiness</string>
+    <string name="step_engine">Go engine</string>
+    <string name="step_account">WARP account</string>
+    <string name="step_account_ok">Registered · %1$s</string>
+    <string name="step_account_none">Not registered</string>
+    <string name="step_connect">Connection</string>
+    <string name="step_connect_sub">Coming in the next build</string>
+    <string name="action_register">Register</string>
+    <string name="fail_rate_limited">Cloudflare limits registrations from this IP. Wait a few minutes and try again.</string>
+    <string name="fail_blocked">Cannot reach the Cloudflare API: the network or DNS blocks it. Try another network (mobile data or Wi-Fi).</string>
+    <string name="fail_api">The Cloudflare API refused the request.</string>
+    <string name="fail_other">Registration failed.</string>
+
+    <string name="dc_title">Datacenter</string>
+    <string name="dc_blocked">Blocked: %1$s</string>
+    <string name="dc_allow">Only: %1$s</string>
+    <string name="dc_hint">After connecting, Hydra checks which Cloudflare datacenter you landed in and tries other routes if it is blocked.</string>
+
+    <string name="apps_title">Split tunneling</string>
+    <string name="mode_only">Only selected</string>
+    <string name="mode_except">All except selected</string>
+    <string name="mode_only_hint">Only checked apps go through the VPN</string>
+    <string name="mode_except_hint">Checked apps bypass the VPN</string>
+    <string name="apps_search">Search apps</string>
+    <string name="apps_selected">Selected: %1$d</string>
+    <string name="apps_all">All</string>
+    <string name="apps_none">Clear</string>
 
     <string name="diag_title">Diagnostics</string>
-    <string name="diag_run">Check network</string>
-    <string name="diag_running">Checking…</string>
+    <string name="diag_sub">Checks DNS, HTTPS and which Cloudflare datacenter serves you</string>
+    <string name="diag_run">Run check</string>
+    <string name="diag_dns">DNS</string>
+    <string name="diag_https">HTTPS</string>
+    <string name="diag_ms">%1$d ms</string>
+    <string name="diag_fail">failed</string>
+    <string name="diag_ip">Public IP</string>
+    <string name="diag_dc">Datacenter</string>
+    <string name="diag_dc_unknown">unknown</string>
+    <string name="diag_dc_blocked">%1$s — blocked by policy</string>
+    <string name="diag_warp">WARP</string>
+    <string name="diag_warp_on">active</string>
+    <string name="diag_warp_off">off (direct connection)</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_language">Language</string>
     <string name="lang_system">System</string>
     <string name="lang_en">English</string>
     <string name="lang_ru">Русский</string>
+
+    <string name="colo_title">Cloudflare datacenters</string>
+    <string name="colo_block">Blocked (codes)</string>
+    <string name="colo_allow">Only these (optional)</string>
+    <string name="colo_hint">Airport codes, comma separated: HEL, FRA, AMS…</string>
+    <string name="colo_reset">Reset to default</string>
+
+    <string name="account_title">WARP account</string>
+    <string name="account_copy">Copy</string>
+    <string name="account_paste">Paste</string>
+    <string name="account_copied">Account copied</string>
+    <string name="account_nothing">No account yet</string>
+    <string name="account_imported">Account imported</string>
+    <string name="account_hint">Copy the account to move it to another device</string>
+
+    <string name="conn_title">Connection</string>
     <string name="settings_autostart">Connect on startup</string>
     <string name="settings_killswitch">Block traffic if the VPN drops</string>
-    <string name="settings_soon">These options take effect once connection is ready.</string>
+    <string name="settings_soon">These options take effect once connecting is ready.</string>
+
+    <string name="about_title">About</string>
+    <string name="about_text">Hydra 0.2.0 · built on ideas of the open-source usque client (MIT)</string>
+    <string name="engine_label">Engine: %1$s</string>
 </resources>

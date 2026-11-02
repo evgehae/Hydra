@@ -4,29 +4,87 @@
 
     <string name="tab_home">Главная</string>
     <string name="tab_split">Приложения</string>
-    <string name="tab_diag">Диагностика</string>
+    <string name="tab_diag">Проверка</string>
     <string name="tab_settings">Настройки</string>
 
-    <string name="home_status_idle">Не подключено</string>
-    <string name="home_connect">Подключить</string>
-    <string name="home_soon">Подключение появится в следующей сборке</string>
-    <string name="home_engine">Движок: %1$s</string>
+    <string name="home_tagline">WARP, который чинит себя</string>
+    <string name="home_status_need_account">Нужен аккаунт</string>
+    <string name="home_sub_need_account">Нажми кнопку, чтобы создать аккаунт WARP</string>
+    <string name="home_status_registering">Регистрирую…</string>
+    <string name="home_sub_registering">Пробую несколько маршрутов до Cloudflare</string>
+    <string name="home_status_ready">Готово</string>
+    <string name="home_sub_ready">Подключение появится в следующей сборке</string>
+    <string name="home_soon_toast">Подключение появится в следующей сборке</string>
 
-    <string name="split_title">Раздельное туннелирование</string>
-    <string name="split_mode_only">Через VPN только выбранные приложения</string>
-    <string name="split_mode_except">Все приложения, кроме выбранных</string>
-    <string name="split_count">Выбрано: %1$d</string>
+    <string name="ready_title">Готовность</string>
+    <string name="step_engine">Движок Go</string>
+    <string name="step_account">Аккаунт WARP</string>
+    <string name="step_account_ok">Зарегистрирован · %1$s</string>
+    <string name="step_account_none">Не зарегистрирован</string>
+    <string name="step_connect">Подключение</string>
+    <string name="step_connect_sub">Появится в следующей сборке</string>
+    <string name="action_register">Зарегистрировать</string>
+    <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
+    <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
+    <string name="fail_api">API Cloudflare отказал в запросе.</string>
+    <string name="fail_other">Не удалось зарегистрироваться.</string>
+
+    <string name="dc_title">Дата-центр</string>
+    <string name="dc_blocked">Запрещены: %1$s</string>
+    <string name="dc_allow">Только: %1$s</string>
+    <string name="dc_hint">После подключения Гидра проверит, в какой дата-центр Cloudflare ты попал, и если он запрещён, попробует другие маршруты.</string>
+
+    <string name="apps_title">Раздельное туннелирование</string>
+    <string name="mode_only">Только выбранные</string>
+    <string name="mode_except">Все, кроме выбранных</string>
+    <string name="mode_only_hint">Через VPN пойдут только отмеченные приложения</string>
+    <string name="mode_except_hint">Отмеченные приложения пойдут напрямую</string>
+    <string name="apps_search">Поиск приложений</string>
+    <string name="apps_selected">Выбрано: %1$d</string>
+    <string name="apps_all">Все</string>
+    <string name="apps_none">Сбросить</string>
 
     <string name="diag_title">Диагностика</string>
-    <string name="diag_run">Проверить сеть</string>
-    <string name="diag_running">Проверяю…</string>
+    <string name="diag_sub">Проверяет DNS, HTTPS и в какой дата-центр Cloudflare ты попадаешь</string>
+    <string name="diag_run">Проверить</string>
+    <string name="diag_dns">DNS</string>
+    <string name="diag_https">HTTPS</string>
+    <string name="diag_ms">%1$d мс</string>
+    <string name="diag_fail">ошибка</string>
+    <string name="diag_ip">Публичный IP</string>
+    <string name="diag_dc">Дата-центр</string>
+    <string name="diag_dc_unknown">не определён</string>
+    <string name="diag_dc_blocked">%1$s — запрещён политикой</string>
+    <string name="diag_warp">WARP</string>
+    <string name="diag_warp_on">включён</string>
+    <string name="diag_warp_off">выключен (прямое соединение)</string>
 
     <string name="settings_title">Настройки</string>
     <string name="settings_language">Язык</string>
     <string name="lang_system">Системный</string>
     <string name="lang_en">English</string>
     <string name="lang_ru">Русский</string>
+
+    <string name="colo_title">Дата-центры Cloudflare</string>
+    <string name="colo_block">Запрещённые (коды)</string>
+    <string name="colo_allow">Только эти (необязательно)</string>
+    <string name="colo_hint">Коды аэропортов через запятую: HEL, FRA, AMS…</string>
+    <string name="colo_reset">По умолчанию</string>
+
+    <string name="account_title">Аккаунт WARP</string>
+    <string name="account_copy">Копировать</string>
+    <string name="account_paste">Вставить</string>
+    <string name="account_copied">Аккаунт скопирован</string>
+    <string name="account_nothing">Аккаунта ещё нет</string>
+    <string name="account_imported">Аккаунт импортирован</string>
+    <string name="account_hint">Скопируй аккаунт, чтобы перенести его на другое устройство</string>
+
+    <string name="conn_title">Подключение</string>
     <string name="settings_autostart">Подключаться при запуске</string>
     <string name="settings_killswitch">Блокировать трафик при обрыве VPN</string>
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
+
+    <string name="about_title">О программе</string>
+    <string name="about_text">Hydra 0.2.0 · основано на идеях открытого клиента usque (MIT)</string>
+    <string name="engine_label">Движок: %1$s</string>
 </resources>

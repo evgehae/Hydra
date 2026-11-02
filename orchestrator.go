@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type Config struct {
 	MaxRTTFactor  float64 // во сколько раз RTT может вырасти от базового
 	MaxLoss       float64
 	StandbyWait   time.Duration // сколько ждать резерв при сбое
+	Colo          *ColoPolicy   // политика дата-центров (nil — без ограничений)
 }
 
 func DefaultConfig() Config {
@@ -26,6 +28,7 @@ func DefaultConfig() Config {
 		MaxRTTFactor: 3,
 		MaxLoss:      0.2,
 		StandbyWait:  2 * time.Second,
+		Colo:         DefaultColoPolicy(),
 	}
 }
 
@@ -78,10 +81,11 @@ func (o *Orchestrator) candidates(net, skip string) []Strategy {
 }
 
 type dialRes struct {
-	t   Tunnel
-	s   Strategy
-	d   time.Duration
-	err error
+	t    Tunnel
+	s    Strategy
+	d    time.Duration
+	err  error
+	colo string
 }
 
 func drain(res <-chan dialRes, n int) {
@@ -90,6 +94,26 @@ func drain(res <-chan dialRes, n int) {
 			r.t.Close()
 		}
 	}
+}
+
+// checkColo спрашивает у туннеля, через какой дата-центр он идёт, и отбрасывает
+// запрещённые политикой. Туннели без ColoReporter пропускаются без проверки.
+func (o *Orchestrator) checkColo(ctx context.Context, t Tunnel) (Tunnel, string, error) {
+	rep, ok := t.(ColoReporter)
+	if !ok || o.cfg.Colo == nil {
+		return t, "", nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	colo, err := rep.Colo(cctx)
+	cancel()
+	if err != nil {
+		return t, "", nil // не смогли узнать — не блокируем
+	}
+	if !o.cfg.Colo.Allows(colo) {
+		t.Close()
+		return nil, colo, &ColoError{Colo: colo}
+	}
+	return t, colo, nil
 }
 
 // race — «гонка стратегий»: кандидаты стартуют по очереди с небольшим
@@ -103,6 +127,7 @@ func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Stra
 	defer cancel()
 	res := make(chan dialRes, len(cands))
 	started, finished := 0, 0
+	var blockedColos []string
 	start := func() {
 		s := cands[started]
 		started++
@@ -111,7 +136,11 @@ func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Stra
 			dctx, c := context.WithTimeout(rctx, o.cfg.DialTimeout)
 			defer c()
 			t, err := o.ts[s.Transport].Dial(dctx, s)
-			res <- dialRes{t, s, time.Since(t0), err}
+			colo := ""
+			if err == nil {
+				t, colo, err = o.checkColo(rctx, t)
+			}
+			res <- dialRes{t, s, time.Since(t0), err, colo}
 		}()
 	}
 	timer := time.NewTimer(0)
@@ -130,6 +159,9 @@ func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Stra
 			finished++
 			if r.err == nil {
 				o.mem.Record(net, r.s.ID, true, r.d)
+				if r.colo != "" {
+					o.emit("colo", r.s.ID, CauseUnknown, r.colo)
+				}
 				cancel()
 				go drain(res, started-finished)
 				return r.t, r.s, nil
@@ -137,7 +169,16 @@ func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Stra
 			if ctx.Err() == nil {
 				o.mem.Record(net, r.s.ID, false, r.d)
 			}
+			var ce *ColoError
+			if errors.As(r.err, &ce) {
+				blockedColos = append(blockedColos, ce.Colo)
+				o.emit("colo_blocked", r.s.ID, CauseUnknown, ce.Colo)
+			}
 			if finished == len(cands) {
+				if len(blockedColos) > 0 {
+					return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали (запрещённые дата-центры: %s)",
+						len(cands), strings.Join(blockedColos, ", "))
+				}
 				return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали", len(cands))
 			}
 			if finished == started && started < len(cands) {
