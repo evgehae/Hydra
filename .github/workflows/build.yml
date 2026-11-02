@@ -1,0 +1,51 @@
+name: build-apk
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Создать файлы Android-проекта (если их ещё нет)
+        run: |
+          bash bootstrap.sh
+          git config user.name "hydra-bot"
+          git config user.email "hydra-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (git commit -m "Add Android project" && git push origin HEAD:${{ github.ref_name }})
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Собрать Go-ядро в AAR
+        run: |
+          GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
+          mkdir -p app/libs
+          OUT="$PWD/app/libs/hydra.aar"
+          cd "$GODIR"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+          go get golang.org/x/mobile/bind
+          gomobile bind -target=android/arm64 -androidapi 26 -o "$OUT" ./mobile
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Собрать APK
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hydra-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
