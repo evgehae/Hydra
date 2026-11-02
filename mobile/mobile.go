@@ -31,6 +31,16 @@ func NormalizeColos(s string) string {
 	return strings.Join(hydra.ParseColoList(s), ",")
 }
 
+func init() {
+	// Без этого Go на Android не умеет разрешать имена (нет resolv.conf).
+	hydra.SetSystemDNS(nil)
+}
+
+// SetDNS принимает DNS-серверы текущей сети от Android ("ip1,ip2,...").
+func SetDNS(csv string) {
+	hydra.SetSystemDNS(strings.Split(csv, ","))
+}
+
 func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
 
 // AccountID возвращает ID сохранённого аккаунта или "".

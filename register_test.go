@@ -82,6 +82,23 @@ func TestRegisterReportsBlocked(t *testing.T) {
 	}
 }
 
+func TestClassifyKinds(t *testing.T) {
+	dnsErr := errors.New("dial tcp: lookup api.cloudflareclient.com on [::1]:53: connection refused")
+	if k := classify([]error{dnsErr}).Kind; k != KindDNS {
+		t.Fatalf("ждали dns, получили %s", k)
+	}
+	if k := classify([]error{errors.New("connection reset by peer")}).Kind; k != KindBlocked {
+		t.Fatalf("ждали blocked, получили %s", k)
+	}
+	if k := classify([]error{&protoError{"мусор"}}).Kind; k != KindAPI {
+		t.Fatalf("ждали api, получили %s", k)
+	}
+	re := classify([]error{dnsErr, &httpError{Status: 429, RetryAfter: 3 * time.Second}})
+	if re.Kind != KindRateLimited || re.RetryAfter != 3*time.Second {
+		t.Fatalf("429 должен перекрывать остальное: %+v", re)
+	}
+}
+
 func TestAccountExportImportAndStorage(t *testing.T) {
 	a := &Account{ID: "id1", Token: "tok1", PrivateKey: "AAAA", EndpointV4: "1.2.3.4:443", Created: time.Unix(1700000000, 0).UTC()}
 	got, err := ImportAccount(a.Export())

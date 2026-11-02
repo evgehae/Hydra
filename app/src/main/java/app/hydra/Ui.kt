@@ -102,6 +102,7 @@ fun failText(kind: String): String = stringResource(
     when (kind) {
         "rate_limited" -> R.string.fail_rate_limited
         "blocked" -> R.string.fail_blocked
+        "dns" -> R.string.fail_dns
         "api" -> R.string.fail_api
         else -> R.string.fail_other
     }

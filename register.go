@@ -136,7 +136,8 @@ func EnsureAccount(ctx context.Context, path string, r *Registrar) (*Account, er
 
 const (
 	KindRateLimited = "rate_limited" // 429: слишком много регистраций с этого IP
-	KindBlocked     = "blocked"      // до API не достучаться (DNS/DPI/сеть)
+	KindBlocked     = "blocked"      // до API не достучаться (DPI/сеть)
+	KindDNS         = "dns"          // имя API не определяется, DoH тоже не помог
 	KindAPI         = "api"          // API ответил, но отказал
 )
 
@@ -158,13 +159,20 @@ type httpError struct {
 
 func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d %s", e.Status, e.Body) }
 
+// protoError — API ответил, но не так, как ждали (формат изменился?).
+type protoError struct{ msg string }
+
+func (e *protoError) Error() string { return e.msg }
+
 func classify(errs []error) *RegError {
 	re := &RegError{Kind: KindBlocked}
-	rate, api := false, false
+	rate, api, dns := false, false, false
 	for _, e := range errs {
 		re.Detail = append(re.Detail, e.Error())
 		var he *httpError
-		if errors.As(e, &he) {
+		var pe *protoError
+		switch {
+		case errors.As(e, &he):
 			if he.Status == http.StatusTooManyRequests {
 				rate = true
 				if he.RetryAfter > re.RetryAfter {
@@ -173,6 +181,10 @@ func classify(errs []error) *RegError {
 			} else {
 				api = true
 			}
+		case errors.As(e, &pe):
+			api = true
+		case strings.Contains(e.Error(), "lookup "):
+			dns = true
 		}
 	}
 	switch {
@@ -180,6 +192,8 @@ func classify(errs []error) *RegError {
 		re.Kind = KindRateLimited
 	case api:
 		re.Kind = KindAPI
+	case dns:
+		re.Kind = KindDNS
 	}
 	return re
 }
@@ -417,7 +431,7 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 	}
 	rr := reg.norm()
 	if rr.ID == "" || rr.Token == "" {
-		return nil, errors.New("пустой ответ API при регистрации")
+		return nil, &protoError{"пустой ответ API при регистрации"}
 	}
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -493,7 +507,10 @@ func (r *Registrar) do(ctx context.Context, cl *http.Client, verb, path, token s
 		}
 		return he
 	}
-	return json.Unmarshal(data, out)
+	if err := json.Unmarshal(data, out); err != nil {
+		return &protoError{"неожиданный ответ API: " + err.Error()}
+	}
+	return nil
 }
 
 func truncate(s string, n int) string {

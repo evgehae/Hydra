@@ -1,5 +1,7 @@
 package app.hydra
 
+import android.content.Context
+import android.net.ConnectivityManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -9,7 +11,29 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Состояние аккаунта WARP, общее для экранов; регистрация идёт в Go-ядре. */
-class AccountController(private val dir: String, private val scope: CoroutineScope) {
+/** DNS-серверы текущих сетей телефона: Go на Android сам их найти не может. */
+fun systemDns(ctx: Context): String {
+    return try {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val nets = cm.allNetworks.toMutableList()
+        cm.activeNetwork?.let { nets.add(0, it) }
+        val list = mutableListOf<String>()
+        for (n in nets) {
+            cm.getLinkProperties(n)?.dnsServers?.forEach { a ->
+                a.hostAddress?.let { list.add(it) }
+            }
+        }
+        list.distinct().joinToString(",")
+    } catch (t: Throwable) {
+        ""
+    }
+}
+
+class AccountController(
+    private val dir: String,
+    private val scope: CoroutineScope,
+    private val dnsProvider: () -> String
+) {
 
     var id by mutableStateOf(readId())
         private set
@@ -36,6 +60,7 @@ class AccountController(private val dir: String, private val scope: CoroutineSco
         scope.launch {
             report = withContext(Dispatchers.IO) {
                 try {
+                    mobile.Mobile.setDNS(dnsProvider())
                     mobile.Mobile.registerReport(dir)
                 } catch (t: Throwable) {
                     "FAIL internal\n" + t.message

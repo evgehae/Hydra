@@ -26,6 +26,7 @@
     <string name="action_register">Зарегистрировать</string>
     <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
     <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
+    <string name="fail_dns">Не удаётся определить адрес API Cloudflare: DNS не отвечает, а DoH недоступен. Проверь сеть или смени её.</string>
     <string name="fail_api">API Cloudflare отказал в запросе.</string>
     <string name="fail_other">Не удалось зарегистрироваться.</string>
 
