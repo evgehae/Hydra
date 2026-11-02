@@ -10,13 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Создать файлы Android-проекта (если их ещё нет)
+      - name: Создать файлы проекта (если их ещё нет)
         run: |
           bash bootstrap.sh
           git config user.name "hydra-bot"
           git config user.email "hydra-bot@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || (git commit -m "Add Android project" && git push origin HEAD:${{ github.ref_name }})
+          git diff --cached --quiet || (git commit -m "Update project files" && git push origin HEAD:${{ github.ref_name }})
 
       - uses: actions/setup-go@v5
         with:
@@ -26,6 +26,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Тесты Go-ядра
+        run: |
+          GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
+          cd "$GODIR"
+          go vet ./...
+          go test ./...
 
       - name: Собрать Go-ядро в AAR
         run: |
