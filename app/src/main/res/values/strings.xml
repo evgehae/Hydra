@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hydra</string>
+
+    <string name="tab_home">Home</string>
+    <string name="tab_split">Apps</string>
+    <string name="tab_diag">Diagnostics</string>
+    <string name="tab_settings">Settings</string>
+
+    <string name="home_status_idle">Not connected</string>
+    <string name="home_connect">Connect</string>
+    <string name="home_soon">Connection arrives in the next build</string>
+    <string name="home_engine">Engine: %1$s</string>
+
+    <string name="split_title">Split tunneling</string>
+    <string name="split_mode_only">Only selected apps use the VPN</string>
+    <string name="split_mode_except">All apps except the selected ones</string>
+    <string name="split_count">Selected: %1$d</string>
+
+    <string name="diag_title">Diagnostics</string>
+    <string name="diag_run">Check network</string>
+    <string name="diag_running">Checking…</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_language">Language</string>
+    <string name="lang_system">System</string>
+    <string name="lang_en">English</string>
+    <string name="lang_ru">Русский</string>
+    <string name="settings_autostart">Connect on startup</string>
+    <string name="settings_killswitch">Block traffic if the VPN drops</string>
+    <string name="settings_soon">These options take effect once connection is ready.</string>
+</resources>
