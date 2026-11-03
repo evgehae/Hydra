@@ -27,12 +27,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Тесты Go-ядра
+      - name: Подключить usque и проверить Go-ядро
         run: |
           GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
           cd "$GODIR"
-          go vet ./...
-          go test ./...
+          go get github.com/inipew/usque@v1.3.1
+          # replace-директивы usque не наследуются зависимыми модулями — переносим их сами
+          curl -fsSL https://raw.githubusercontent.com/inipew/usque/v1.3.1/go.mod -o /tmp/usque.mod || true
+          if [ -s /tmp/usque.mod ]; then
+            go mod edit -json /tmp/usque.mod | jq -r '.Replace[]? | select((.New.Version // "") != "") | "\(.Old.Path)\(if (.Old.Version // "") != "" then "@" + .Old.Version else "" end)=\(.New.Path)@\(.New.Version)"' | while read -r r; do echo "replace $r"; go mod edit -replace "$r"; done
+          fi
+          go mod tidy
+          go vet -tags usque ./...
+          go test -tags usque ./...
 
       - name: Собрать Go-ядро в AAR
         run: |
@@ -43,7 +50,7 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
           go get golang.org/x/mobile/bind
-          gomobile bind -target=android/arm64 -androidapi 26 -o "$OUT" ./mobile
+          gomobile bind -tags usque -target=android/arm64 -androidapi 26 -o "$OUT" ./mobile
 
       - uses: gradle/actions/setup-gradle@v4
         with:
