@@ -22,7 +22,7 @@
     <string name="step_account_ok">Registered · %1$s</string>
     <string name="step_account_none">Not registered</string>
     <string name="step_connect">Connection</string>
-    <string name="step_connect_sub">Coming in the next build</string>
+    <string name="step_connect_sub">Tap the shield above</string>
     <string name="action_register">Register</string>
     <string name="fail_rate_limited">Cloudflare limits registrations from this IP. Wait a few minutes and try again.</string>
     <string name="fail_blocked">Cannot reach the Cloudflare API: the network or DNS blocks it. Try another network (mobile data or Wi-Fi).</string>
@@ -86,6 +86,19 @@
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.2.0 · built on ideas of the open-source usque client (MIT)</string>
+    <string name="about_text">Hydra 0.3.0 · built on ideas of the open-source usque client (MIT)</string>
     <string name="engine_label">Engine: %1$s</string>
+
+    <string name="vpn_off">Not connected</string>
+    <string name="vpn_off_sub">Tap the shield to connect</string>
+    <string name="vpn_connecting">Connecting…</string>
+    <string name="vpn_connecting_sub">Looking for the best route</string>
+    <string name="vpn_up">Connected</string>
+    <string name="vpn_up_sub">Datacenter %1$s</string>
+    <string name="vpn_reconnecting">Reconnecting…</string>
+    <string name="vpn_failed">No connection</string>
+    <string name="tile_dc">Datacenter</string>
+    <string name="tile_rtt">Latency</string>
+    <string name="tile_route">Route</string>
+    <string name="need_apps_toast">Select apps first (Apps tab) or switch the mode to “All except selected”</string>
 </resources>

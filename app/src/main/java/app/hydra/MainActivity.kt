@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import java.util.Locale
@@ -52,11 +53,14 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         setContent {
             HydraTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    HydraApp(prefs) { recreate() }
+                HydraBackground {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.onBackground
+                    ) {
+                        HydraApp(prefs) { recreate() }
+                    }
                 }
             }
         }
@@ -68,10 +72,11 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = remember { AccountController(ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
+    val vpn = remember { VpnController(ctx.applicationContext, scope) }
     var tab by rememberSaveable { mutableStateOf(0) }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
                 NavigationBarItem(
@@ -103,7 +108,7 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     ) { pad ->
         Box(Modifier.padding(pad).statusBarsPadding().fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(prefs, account)
+                0 -> HomeScreen(prefs, account, vpn)
                 1 -> AppsScreen(prefs)
                 2 -> DiagScreen(prefs)
                 else -> SettingsScreen(prefs, account, onLanguageChanged)

@@ -22,7 +22,7 @@
     <string name="step_account_ok">Зарегистрирован · %1$s</string>
     <string name="step_account_none">Не зарегистрирован</string>
     <string name="step_connect">Подключение</string>
-    <string name="step_connect_sub">Появится в следующей сборке</string>
+    <string name="step_connect_sub">Нажми на щит сверху</string>
     <string name="action_register">Зарегистрировать</string>
     <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
     <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
@@ -86,6 +86,19 @@
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.2.0 · основано на идеях открытого клиента usque (MIT)</string>
+    <string name="about_text">Hydra 0.3.0 · основано на идеях открытого клиента usque (MIT)</string>
     <string name="engine_label">Движок: %1$s</string>
+
+    <string name="vpn_off">Не подключено</string>
+    <string name="vpn_off_sub">Нажми на щит, чтобы подключиться</string>
+    <string name="vpn_connecting">Подключаюсь…</string>
+    <string name="vpn_connecting_sub">Ищу лучший маршрут</string>
+    <string name="vpn_up">Подключено</string>
+    <string name="vpn_up_sub">Дата-центр %1$s</string>
+    <string name="vpn_reconnecting">Переподключаюсь…</string>
+    <string name="vpn_failed">Нет соединения</string>
+    <string name="tile_dc">Дата-центр</string>
+    <string name="tile_rtt">Задержка</string>
+    <string name="tile_route">Маршрут</string>
+    <string name="need_apps_toast">Сначала выбери приложения (вкладка «Приложения») или включи режим «Все, кроме выбранных»</string>
 </resources>

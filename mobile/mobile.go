@@ -13,7 +13,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -99,4 +99,24 @@ func ImportAccount(dir, text string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+func stripMask(a string) string { return strings.TrimSpace(strings.Split(a, "/")[0]) }
+
+// AccountAddr4 — IPv4-адрес устройства внутри туннеля ("" если аккаунта нет).
+func AccountAddr4(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV4)
+}
+
+// AccountAddr6 — IPv6-адрес устройства внутри туннеля.
+func AccountAddr6(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV6)
 }
