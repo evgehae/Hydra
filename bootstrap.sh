@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=3
+NEW=4
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -612,7 +612,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v3: регистрация, DNS для Android, дата-центры, новый интерфейс =====================
+# ===================== v4: подключение (MASQUE), проверка дата-центра, новый интерфейс, иконка =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -899,6 +899,648 @@ func TestSetSystemDNSRotatesServers(t *testing.T) {
 }
 HYDRA_EOF
 
+putv "$GODIR/engine.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"errors"
+	"io"
+	"math/rand"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// Engine — «сердце» Гидры на телефоне. Android отдаёт TUN (поток IP-пакетов),
+// Engine гоняет их через туннель WARP и сам следит за ним:
+//   - после подключения спрашивает у Cloudflare, в какой дата-центр попали;
+//     запрещённый дата-центр (например DME) — туннель отбрасывается, пробуем следующий;
+//   - постоянно проверяет задержку и потери, при сбое переходит на другую стратегию;
+//   - память по сетям запоминает, что работало, и пробует это первым.
+
+// PacketDevice — «сетевая карта» для туннеля (те же методы, что у TunnelDevice в usque).
+type PacketDevice interface {
+	ReadPacket(buf []byte) (int, error)
+	WritePacket(pkt []byte) error
+}
+
+// Runner держит туннель по стратегии s, пока ctx не отменён или не случилась
+// непоправимая ошибка. Пакеты читает/пишет через dev.
+type Runner func(ctx context.Context, dev PacketDevice, s Strategy) error
+
+type EngineConfig struct {
+	LocalIP    net.IP // IPv4-адрес внутри туннеля (из аккаунта)
+	Strategies []Strategy
+	Runner     Runner
+	Policy     *ColoPolicy
+	Mem        *Memory
+	NetKey     func() string
+	ProbeEvery time.Duration
+	UpTimeout  time.Duration // сколько ждать первого ответа после старта стратегии
+	BadProbes  int           // сколько проб подряд без ответа = туннель умер
+}
+
+func DefaultEngineConfig() EngineConfig {
+	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 10 * time.Second, BadProbes: 3}
+}
+
+type Status struct {
+	State    string // connecting | up | reconnecting | failed
+	Strategy string
+	Colo     string
+	RTT      time.Duration
+	Message  string
+}
+
+type Engine struct {
+	cfg     EngineConfig
+	tun     io.ReadWriteCloser
+	out     chan []byte // пакеты из TUN (от приложений)
+	probeQ  chan []byte
+	port    uint16
+	nextID  uint32
+	events  chan Event
+	tunDead chan struct{}
+	once    sync.Once
+
+	mu      sync.Mutex
+	status  Status
+	waiters map[uint16]chan string
+}
+
+func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
+	d := DefaultEngineConfig()
+	if cfg.ProbeEvery <= 0 {
+		cfg.ProbeEvery = d.ProbeEvery
+	}
+	if cfg.UpTimeout <= 0 {
+		cfg.UpTimeout = d.UpTimeout
+	}
+	if cfg.BadProbes <= 0 {
+		cfg.BadProbes = d.BadProbes
+	}
+	if cfg.Mem == nil {
+		cfg.Mem, _ = LoadMemory("")
+	}
+	if cfg.NetKey == nil {
+		cfg.NetKey = func() string { return "default" }
+	}
+	return &Engine{
+		cfg:     cfg,
+		tun:     tun,
+		out:     make(chan []byte, 512),
+		probeQ:  make(chan []byte, 16),
+		port:    uint16(20000 + rand.Intn(30000)),
+		events:  make(chan Event, 64),
+		tunDead: make(chan struct{}),
+		waiters: map[uint16]chan string{},
+		status:  Status{State: "connecting"},
+	}
+}
+
+func (e *Engine) Events() <-chan Event { return e.events }
+
+func (e *Engine) Status() Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.status
+}
+
+func (e *Engine) setStatus(s Status) {
+	e.mu.Lock()
+	e.status = s
+	e.mu.Unlock()
+}
+
+func (e *Engine) emit(kind, strategy, msg string) {
+	select {
+	case e.events <- Event{Kind: kind, Strategy: strategy, Msg: msg, At: time.Now()}:
+	default:
+	}
+}
+
+func (e *Engine) Close() { e.once.Do(func() { e.tun.Close() }) }
+
+// readTun читает пакеты приложений. Пока туннеля нет, лишние пакеты отбрасываются.
+func (e *Engine) readTun() {
+	defer close(e.tunDead)
+	for {
+		buf := make([]byte, 2048)
+		n, err := e.tun.Read(buf)
+		if err != nil {
+			return
+		}
+		select {
+		case e.out <- buf[:n]:
+		default:
+		}
+	}
+}
+
+// attemptDev — «карта» одной попытки: после отмены попытки её горутины
+// просыпаются с ошибкой и не крадут пакеты у следующей попытки.
+type attemptDev struct {
+	e    *Engine
+	done <-chan struct{}
+}
+
+func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
+	select {
+	case <-d.done:
+		return 0, io.EOF
+	case <-d.e.tunDead:
+		return 0, io.EOF
+	case p := <-d.e.probeQ:
+		return copy(buf, p), nil
+	case p := <-d.e.out:
+		return copy(buf, p), nil
+	}
+}
+
+func (d *attemptDev) WritePacket(pkt []byte) error {
+	select {
+	case <-d.done:
+		return io.ErrClosedPipe
+	default:
+	}
+	if id, colo, ok := ParseColoReply(pkt, d.e.port); ok {
+		d.e.deliver(id, colo)
+		return nil
+	}
+	_, err := d.e.tun.Write(pkt)
+	return err
+}
+
+func (e *Engine) deliver(id uint16, colo string) {
+	e.mu.Lock()
+	ch := e.waiters[id]
+	e.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- colo:
+		default:
+		}
+	}
+}
+
+// probe шлёт пробу и ждёт ответ: возвращает задержку и код дата-центра.
+func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duration, string, error) {
+	id := uint16(atomic.AddUint32(&e.nextID, 1))
+	ch := make(chan string, 1)
+	e.mu.Lock()
+	e.waiters[id] = ch
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		delete(e.waiters, id)
+		e.mu.Unlock()
+	}()
+	pkt := BuildColoProbe(e.cfg.LocalIP, e.port, id)
+	if pkt == nil {
+		return 0, "", errors.New("нет IPv4-адреса туннеля")
+	}
+	t0 := time.Now()
+	select {
+	case e.probeQ <- pkt:
+	default:
+		return 0, "", errors.New("очередь проб переполнена")
+	}
+	select {
+	case colo := <-ch:
+		return time.Since(t0), colo, nil
+	case <-time.After(timeout):
+		return 0, "", errors.New("нет ответа на пробу")
+	case <-ctx.Done():
+		return 0, "", ctx.Err()
+	}
+}
+
+type outcome struct {
+	wasUp      bool
+	netChanged bool
+	reason     string
+}
+
+func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome {
+	e.setStatus(Status{State: "connecting", Strategy: s.ID})
+	e.emit("connecting", s.ID, "")
+	actx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dev := &attemptDev{e: e, done: actx.Done()}
+	errc := make(chan error, 1)
+	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
+
+	start := time.Now()
+	var colo string
+	var rtt time.Duration
+	up := false
+	for !up && time.Since(start) < e.cfg.UpTimeout {
+		select {
+		case err := <-errc:
+			msg := "туннель не поднялся"
+			if err != nil {
+				msg = err.Error()
+			}
+			e.cfg.Mem.Record(nk, s.ID, false, 0)
+			e.emit("failed", s.ID, msg)
+			return outcome{reason: msg}
+		case <-ctx.Done():
+			return outcome{reason: "остановка"}
+		default:
+		}
+		r, c, err := e.probe(actx, 1500*time.Millisecond)
+		if err == nil {
+			up, colo, rtt = true, c, r
+		} else {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	if !up {
+		e.cfg.Mem.Record(nk, s.ID, false, 0)
+		e.emit("failed", s.ID, "нет ответа от туннеля")
+		return outcome{reason: "нет ответа от туннеля"}
+	}
+	if !e.cfg.Policy.Allows(colo) {
+		e.cfg.Mem.Record(nk, s.ID, false, 0)
+		e.emit("colo_blocked", s.ID, colo)
+		return outcome{reason: "дата-центр " + colo + " запрещён"}
+	}
+	e.cfg.Mem.Record(nk, s.ID, true, time.Since(start))
+	e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: rtt})
+	e.emit("connected", s.ID, colo)
+
+	bad := 0
+	tk := time.NewTicker(e.cfg.ProbeEvery)
+	defer tk.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return outcome{wasUp: true, reason: "остановка"}
+		case err := <-errc:
+			msg := "туннель закрылся"
+			if err != nil {
+				msg = err.Error()
+			}
+			e.cfg.Mem.Record(nk, s.ID, false, 0)
+			return outcome{wasUp: true, reason: msg}
+		case <-tk.C:
+			if e.cfg.NetKey() != nk {
+				return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
+			}
+			r, c, err := e.probe(actx, e.cfg.ProbeEvery)
+			if err != nil {
+				bad++
+				if bad >= e.cfg.BadProbes {
+					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.emit("degraded", s.ID, "туннель перестал отвечать")
+					return outcome{wasUp: true, reason: "туннель перестал отвечать"}
+				}
+				continue
+			}
+			bad = 0
+			if c != colo {
+				colo = c
+				if !e.cfg.Policy.Allows(c) {
+					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.emit("colo_blocked", s.ID, c)
+					return outcome{wasUp: true, reason: "дата-центр " + c + " запрещён"}
+				}
+			}
+			e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: r})
+		}
+	}
+}
+
+// Run — главный цикл: подключиться, следить, при сбое перейти на другую стратегию.
+func (e *Engine) Run(ctx context.Context) error {
+	defer e.Close()
+	go e.readTun()
+	backoff := time.Second
+	skip := ""
+	for ctx.Err() == nil {
+		select {
+		case <-e.tunDead:
+			return errors.New("TUN закрыт")
+		default:
+		}
+		nk := e.cfg.NetKey()
+		cands := e.cfg.Mem.Rank(nk, e.cfg.Strategies)
+		ran := 0
+		lastReason := ""
+		restart := false
+		for _, s := range cands {
+			if ctx.Err() != nil {
+				break
+			}
+			if s.ID == skip {
+				continue
+			}
+			ran++
+			r := e.runStrategy(ctx, nk, s)
+			if ctx.Err() != nil {
+				break
+			}
+			lastReason = r.reason
+			if r.wasUp {
+				skip = s.ID
+				if r.netChanged {
+					skip = ""
+				}
+				e.setStatus(Status{State: "reconnecting", Message: r.reason})
+				backoff = time.Second
+				restart = true
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if restart {
+			continue
+		}
+		skip = ""
+		if ran == 0 {
+			lastReason = "нет стратегий"
+		}
+		e.setStatus(Status{State: "failed", Message: lastReason})
+		e.emit("failed", "", lastReason)
+		if !sleep(ctx, backoff) {
+			break
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+	return ctx.Err()
+}
+HYDRA_EOF
+
+putv "$GODIR/engine_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type fakeTun struct {
+	rd   chan []byte
+	wr   chan []byte
+	done chan struct{}
+	once sync.Once
+}
+
+func newFakeTun() *fakeTun {
+	return &fakeTun{rd: make(chan []byte, 16), wr: make(chan []byte, 64), done: make(chan struct{})}
+}
+func (f *fakeTun) Read(p []byte) (int, error) {
+	select {
+	case b := <-f.rd:
+		return copy(p, b), nil
+	case <-f.done:
+		return 0, io.EOF
+	}
+}
+func (f *fakeTun) Write(p []byte) (int, error) {
+	select {
+	case f.wr <- append([]byte(nil), p...):
+	default:
+	}
+	return len(p), nil
+}
+func (f *fakeTun) Close() error { f.once.Do(func() { close(f.done) }); return nil }
+
+// fakeRunner изображает туннель: отвечает на пробы кодом дата-центра из
+// параметров стратегии; "dieAfter" — через сколько мс перестать отвечать;
+// "dead" — не отвечать вовсе.
+func fakeRunner(started *int32) Runner {
+	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		atomic.AddInt32(started, 1)
+		t0 := time.Now()
+		buf := make([]byte, 2048)
+		for {
+			n, err := dev.ReadPacket(buf)
+			if err != nil {
+				return nil
+			}
+			if s.Params["dead"] == "1" {
+				continue
+			}
+			if d := s.Params["dieAfter"]; d != "" {
+				ms := 0
+				for _, c := range d {
+					ms = ms*10 + int(c-'0')
+				}
+				if time.Since(t0) > time.Duration(ms)*time.Millisecond {
+					continue
+				}
+			}
+			if buf[9] == 17 { // UDP — это наша проба
+				dev.WritePacket(buildColoReply(append([]byte(nil), buf[:n]...), s.Params["colo"]))
+			}
+		}
+	}
+}
+
+func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy) (*Engine, context.CancelFunc, *int32) {
+	var started int32
+	cfg := DefaultEngineConfig()
+	cfg.LocalIP = net.ParseIP("172.16.0.2")
+	cfg.Strategies = ss
+	cfg.Runner = fakeRunner(&started)
+	cfg.Policy = policy
+	cfg.ProbeEvery = 40 * time.Millisecond
+	cfg.UpTimeout = 600 * time.Millisecond
+	cfg.BadProbes = 2
+	e := NewEngine(newFakeTun(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go e.Run(ctx)
+	return e, cancel, &started
+}
+
+func waitStatus(t *testing.T, e *Engine, what string, ok func(Status) bool) Status {
+	t.Helper()
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := e.Status(); ok(st) {
+			return st
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("не дождались: %s; статус %+v", what, e.Status())
+	return Status{}
+}
+
+func TestEngineSkipsBlockedColo(t *testing.T) {
+	ss := []Strategy{
+		{ID: "moscow", Transport: "masque", Params: map[string]string{"colo": "DME"}},
+		{ID: "helsinki", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy())
+	defer cancel()
+	st := waitStatus(t, e, "up через HEL", func(s Status) bool { return s.State == "up" && s.Colo == "HEL" })
+	if st.Strategy != "helsinki" {
+		t.Fatalf("ждали стратегию helsinki, получили %q", st.Strategy)
+	}
+}
+
+func TestEngineFailsOverWhenTunnelDies(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL", "dieAfter": "250"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	e, cancel, started := testEngine(t, ss, DefaultColoPolicy())
+	defer cancel()
+	waitStatus(t, e, "up через a", func(s Status) bool { return s.State == "up" && s.Strategy == "a" })
+	st := waitStatus(t, e, "переход на b", func(s Status) bool { return s.State == "up" && s.Strategy == "b" })
+	if st.Colo != "FRA" || atomic.LoadInt32(started) < 2 {
+		t.Fatalf("неверное состояние после сбоя: %+v", st)
+	}
+}
+
+func TestEngineReportsFailureWhenEverythingBlocked(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "DME"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"dead": "1"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy())
+	defer cancel()
+	waitStatus(t, e, "state=failed", func(s Status) bool { return s.State == "failed" })
+}
+HYDRA_EOF
+
+putv "$GODIR/masque_runner.go" <<'HYDRA_EOF'
+//go:build usque
+
+package hydra
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"math/big"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/inipew/usque/api"
+	"github.com/inipew/usque/masque"
+)
+
+// Этот файл собирается только с тегом usque: он подтягивает клиент MASQUE из
+// проекта usque (MIT, автор Diniboy1123). Без тега ядро и тесты не требуют
+// сетевых зависимостей.
+
+func parsePeerKey(s string) (*ecdsa.PublicKey, error) {
+	s = strings.TrimSpace(s)
+	var der []byte
+	if blk, _ := pem.Decode([]byte(s)); blk != nil {
+		der = blk.Bytes
+	} else {
+		var err error
+		if der, err = base64.StdEncoding.DecodeString(s); err != nil {
+			return nil, fmt.Errorf("ключ сервера: %w", err)
+		}
+	}
+	pub, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("ключ сервера: %w", err)
+	}
+	ec, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("ключ сервера не ECDSA")
+	}
+	return ec, nil
+}
+
+func selfSignedCert(priv *ecdsa.PrivateKey) ([]byte, error) {
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	tpl := &x509.Certificate{
+		SerialNumber: serial.Add(serial, big.NewInt(1)),
+		Subject:      pkix.Name{CommonName: "hydra"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	return x509.CreateCertificate(rand.Reader, tpl, tpl, &priv.PublicKey, priv)
+}
+
+// NewMasqueRunner создаёт Runner, который держит туннель WARP средствами usque.
+func NewMasqueRunner(acc *Account) (Runner, error) {
+	keyDER, err := base64.StdEncoding.DecodeString(acc.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("ключ аккаунта: %w", err)
+	}
+	priv, err := x509.ParseECPrivateKey(keyDER)
+	if err != nil {
+		return nil, fmt.Errorf("ключ аккаунта: %w", err)
+	}
+	peer, err := parsePeerKey(acc.PeerPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		cert, err := selfSignedCert(priv)
+		if err != nil {
+			return err
+		}
+		sni := s.Params["sni"]
+		if sni == "" {
+			sni = defaultMasqueSNI
+		}
+		tlsCfg, err := masque.PrepareTlsConfig(priv, peer, [][]byte{cert}, sni, true)
+		if err != nil {
+			return err
+		}
+		host, portStr, err := net.SplitHostPort(s.Params["endpoint"])
+		if err != nil {
+			return err
+		}
+		port := 443
+		fmt.Sscanf(portStr, "%d", &port)
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return errors.New("адрес сервера не IP: " + host)
+		}
+		h2 := s.Params["h2"] == "1"
+		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
+		if h2 {
+			ep = &net.TCPAddr{IP: ip, Port: port}
+		}
+		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
+			TLSConfig:         tlsCfg,
+			KeepalivePeriod:   30 * time.Second,
+			InitialPacketSize: 1242,
+			Endpoint:          ep,
+			Device:            dev,
+			MTU:               1280,
+			ReconnectDelay:    time.Second,
+			AlwaysReconnect:   true,
+			UseHTTP2:          h2,
+		})
+		return ctx.Err()
+	}, nil
+}
+HYDRA_EOF
+
 putv "$GODIR/mobile/mobile.go" <<'HYDRA_EOF'
 // Package mobile — тонкая обвязка для gomobile: то, что видно из Kotlin.
 // Только простые типы (строки), чтобы привязка собиралась без сюрпризов.
@@ -915,7 +1557,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -1001,6 +1643,184 @@ func ImportAccount(dir, text string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+func stripMask(a string) string { return strings.TrimSpace(strings.Split(a, "/")[0]) }
+
+// AccountAddr4 — IPv4-адрес устройства внутри туннеля ("" если аккаунта нет).
+func AccountAddr4(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV4)
+}
+
+// AccountAddr6 — IPv6-адрес устройства внутри туннеля.
+func AccountAddr6(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV6)
+}
+HYDRA_EOF
+
+putv "$GODIR/mobile/policy.go" <<'HYDRA_EOF'
+package mobile
+
+import (
+	"strings"
+	"sync"
+
+	hydra "hydra/core"
+)
+
+var (
+	polMu    sync.Mutex
+	polBlock = ""
+	polAllow = ""
+	netKey   = "default"
+)
+
+// SetColoPolicy задаёт запрещённые и (необязательно) единственно разрешённые
+// дата-центры Cloudflare: "DME,LED" и "HEL,FRA".
+func SetColoPolicy(block, allow string) {
+	polMu.Lock()
+	polBlock, polAllow = block, allow
+	polMu.Unlock()
+}
+
+// SetNetKey сообщает ядру, в какой сети телефон ("wifi:xxx", "cell:25001"):
+// память стратегий копится отдельно для каждой сети.
+func SetNetKey(k string) {
+	polMu.Lock()
+	netKey = strings.TrimSpace(k)
+	polMu.Unlock()
+}
+
+func currentNetKey() string {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return netKey
+}
+
+func currentPolicy() *hydra.ColoPolicy {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return &hydra.ColoPolicy{Block: hydra.ParseColoList(polBlock), Allow: hydra.ParseColoList(polAllow)}
+}
+HYDRA_EOF
+
+putv "$GODIR/mobile/vpn_stub.go" <<'HYDRA_EOF'
+//go:build !usque
+
+package mobile
+
+// Сборка без клиента MASQUE (без тега usque): подключение недоступно.
+
+func StartTunnel(dir string, tunFd int) string {
+	return "сборка без движка MASQUE (нет тега usque)"
+}
+
+func StopTunnel() {}
+
+func EngineStatus() string { return "off||||" }
+HYDRA_EOF
+
+putv "$GODIR/mobile/vpn_usque.go" <<'HYDRA_EOF'
+//go:build usque
+
+package mobile
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	hydra "hydra/core"
+)
+
+var (
+	vpnMu     sync.Mutex
+	vpnEngine *hydra.Engine
+	vpnCancel context.CancelFunc
+)
+
+// StartTunnel запускает Гидру на TUN-интерфейсе, который создал Android (tunFd).
+// Пустая строка — успех, иначе текст ошибки.
+func StartTunnel(dir string, tunFd int) string {
+	vpnMu.Lock()
+	defer vpnMu.Unlock()
+	if vpnEngine != nil {
+		return "уже запущено"
+	}
+	acc, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || acc == nil {
+		return "нет аккаунта WARP"
+	}
+	runner, err := hydra.NewMasqueRunner(acc)
+	if err != nil {
+		return err.Error()
+	}
+	ip := net.ParseIP(strings.Split(acc.AddrV4, "/")[0])
+	if ip == nil {
+		return "в аккаунте нет IPv4-адреса"
+	}
+	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
+
+	cfg := hydra.DefaultEngineConfig()
+	cfg.LocalIP = ip
+	cfg.Strategies = hydra.MasqueStrategies(acc)
+	cfg.Runner = runner
+	cfg.Policy = currentPolicy()
+	cfg.Mem = mem
+	cfg.NetKey = currentNetKey
+
+	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	vpnEngine, vpnCancel = e, cancel
+	go func() {
+		e.Run(ctx)
+		mem.Save()
+		vpnMu.Lock()
+		if vpnEngine == e {
+			vpnEngine, vpnCancel = nil, nil
+		}
+		vpnMu.Unlock()
+	}()
+	return ""
+}
+
+// StopTunnel останавливает Гидру и закрывает TUN.
+func StopTunnel() {
+	vpnMu.Lock()
+	c, e := vpnCancel, vpnEngine
+	vpnMu.Unlock()
+	if c != nil {
+		c()
+	}
+	if e != nil {
+		e.Close()
+	}
+}
+
+// EngineStatus: "состояние|стратегия|дата-центр|задержка_мс|сообщение".
+// Состояния: off, connecting, up, reconnecting, failed.
+func EngineStatus() string {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e == nil {
+		return "off||||"
+	}
+	st := e.Status()
+	return fmt.Sprintf("%s|%s|%s|%d|%s", st.State, st.Strategy, st.Colo,
+		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"))
 }
 HYDRA_EOF
 
@@ -1337,6 +2157,220 @@ func (o *Orchestrator) Run(ctx context.Context, netKey func() string) error {
 		_ = o.mem.Save()
 	}
 	return ctx.Err()
+}
+HYDRA_EOF
+
+putv "$GODIR/probe.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/binary"
+	"net"
+	"strings"
+)
+
+// Проба дата-центра без всякого TCP/IP-стека: сами строим UDP-пакет с DNS-запросом
+// «CHAOS TXT id.server» к 1.1.1.1. Резолвер Cloudflare отвечает кодом дата-центра
+// (HEL, FRA, DME...). Пакет уходит в туннель, ответ приходит из туннеля — так мы
+// заодно измеряем задержку и проверяем, что туннель вообще живой.
+
+var probeDst = net.IPv4(1, 1, 1, 1).To4()
+
+func ipChecksum(h []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(h); i += 2 {
+		sum += uint32(h[i])<<8 | uint32(h[i+1])
+	}
+	for sum>>16 != 0 {
+		sum = sum&0xffff + sum>>16
+	}
+	return ^uint16(sum)
+}
+
+// BuildColoProbe строит IPv4-пакет с запросом id.server. nil, если src не IPv4.
+func BuildColoProbe(src net.IP, srcPort, id uint16) []byte {
+	s4 := src.To4()
+	if s4 == nil {
+		return nil
+	}
+	dns := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	dns = append(dns, 2, 'i', 'd', 6, 's', 'e', 'r', 'v', 'e', 'r', 0, 0, 16, 0, 3) // TXT, класс CH
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000) // DF
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], s4)
+	copy(p[16:20], probeDst)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], srcPort)
+	binary.BigEndian.PutUint16(p[22:], 53)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	// контрольная сумма UDP = 0: для IPv4 это допустимо
+	copy(p[28:], dns)
+	return p
+}
+
+func skipName(b []byte, off int) int {
+	for off < len(b) {
+		c := int(b[off])
+		switch {
+		case c == 0:
+			return off + 1
+		case c&0xC0 == 0xC0:
+			return off + 2
+		default:
+			off += c + 1
+		}
+	}
+	return -1
+}
+
+// normProbeColo: из ответа берём код аэропорта (первые три буквы, заглавными).
+func normProbeColo(s string) string {
+	s = strings.ToUpper(strings.Trim(strings.TrimSpace(s), `"`))
+	if len(s) > 3 {
+		ok := true
+		for _, r := range s[:3] {
+			if r < 'A' || r > 'Z' {
+				ok = false
+			}
+		}
+		if ok {
+			return s[:3]
+		}
+	}
+	return s
+}
+
+// ParseColoReply разбирает ответ на пробу, пришедший на порт dstPort.
+func ParseColoReply(pkt []byte, dstPort uint16) (id uint16, colo string, ok bool) {
+	if len(pkt) < 28 || pkt[0]>>4 != 4 {
+		return
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+8+12 || pkt[9] != 17 {
+		return
+	}
+	if !net.IP(pkt[12:16]).Equal(probeDst) {
+		return
+	}
+	udp := pkt[ihl:]
+	if binary.BigEndian.Uint16(udp[0:]) != 53 || binary.BigEndian.Uint16(udp[2:]) != dstPort {
+		return
+	}
+	dns := udp[8:]
+	if ulen := int(binary.BigEndian.Uint16(udp[4:])); ulen >= 8 && ulen-8 <= len(dns) {
+		dns = dns[:ulen-8]
+	}
+	if len(dns) < 12 || dns[2]&0x80 == 0 || dns[3]&0x0f != 0 {
+		return
+	}
+	id = binary.BigEndian.Uint16(dns[0:])
+	qd := int(binary.BigEndian.Uint16(dns[4:]))
+	an := int(binary.BigEndian.Uint16(dns[6:]))
+	if an < 1 {
+		return
+	}
+	off := 12
+	for i := 0; i < qd; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+4 > len(dns) {
+			return
+		}
+		off += 4
+	}
+	off = skipName(dns, off)
+	if off < 0 || off+10 > len(dns) {
+		return
+	}
+	typ := binary.BigEndian.Uint16(dns[off:])
+	rdlen := int(binary.BigEndian.Uint16(dns[off+8:]))
+	off += 10
+	if typ != 16 || rdlen < 1 || off+rdlen > len(dns) {
+		return
+	}
+	n := int(dns[off])
+	if n+1 > rdlen {
+		return
+	}
+	colo = normProbeColo(string(dns[off+1 : off+1+n]))
+	return id, colo, colo != ""
+}
+HYDRA_EOF
+
+putv "$GODIR/probe_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/binary"
+	"net"
+	"testing"
+)
+
+// buildColoReply — «сервер» для тестов: отвечает на пробу кодом дата-центра.
+func buildColoReply(probe []byte, colo string) []byte {
+	ihl := int(probe[0]&0x0f) * 4
+	srcIP := probe[12:16]
+	udp := probe[ihl:]
+	sport := binary.BigEndian.Uint16(udp[0:])
+	q := udp[8:]
+	id := binary.BigEndian.Uint16(q[0:])
+
+	dns := []byte{byte(id >> 8), byte(id), 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0}
+	dns = append(dns, q[12:]...) // вопрос как есть
+	dns = append(dns, 0xC0, 0x0C, 0, 16, 0, 3, 0, 0, 0, 0, 0, byte(len(colo)+1), byte(len(colo)))
+	dns = append(dns, colo...)
+
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], probeDst)
+	copy(p[16:20], srcIP)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], 53)
+	binary.BigEndian.PutUint16(p[22:], sport)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	copy(p[28:], dns)
+	return p
+}
+
+func TestProbeRoundTrip(t *testing.T) {
+	probe := BuildColoProbe(net.ParseIP("172.16.0.2"), 40000, 7)
+	if probe == nil || len(probe) < 40 {
+		t.Fatal("проба не построена")
+	}
+	if ipChecksum(probe[:20]) != 0 {
+		t.Fatal("контрольная сумма IP неверна")
+	}
+	reply := buildColoReply(probe, "HEL")
+	id, colo, ok := ParseColoReply(reply, 40000)
+	if !ok || id != 7 || colo != "HEL" {
+		t.Fatalf("разбор ответа: %v %q %v", id, colo, ok)
+	}
+	if _, _, ok := ParseColoReply(reply, 40001); ok {
+		t.Fatal("ответ на чужой порт должен игнорироваться")
+	}
+	if _, _, ok := ParseColoReply(probe, 40000); ok {
+		t.Fatal("сам запрос не должен приниматься за ответ")
+	}
+	if BuildColoProbe(net.ParseIP("2001:db8::1"), 1, 1) != nil {
+		t.Fatal("для IPv6-адреса пробы нет")
+	}
+}
+
+func TestNormProbeColo(t *testing.T) {
+	for in, want := range map[string]string{"HEL": "HEL", `"ams"`: "AMS", "fra1": "FRA", "DME": "DME"} {
+		if got := normProbeColo(in); got != want {
+			t.Fatalf("%q -> %q, ждали %q", in, got, want)
+		}
+	}
 }
 HYDRA_EOF
 
@@ -2159,6 +3193,111 @@ func TestFragConnSplitsFirstWrite(t *testing.T) {
 }
 HYDRA_EOF
 
+putv "$GODIR/strategies.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"fmt"
+	"net"
+	"strings"
+)
+
+const defaultMasqueSNI = "consumer-masque.cloudflareclient.com"
+
+func hostOnly(ep string) string {
+	h, _, err := net.SplitHostPort(ep)
+	if err != nil {
+		return strings.Trim(ep, "[]")
+	}
+	return strings.Trim(h, "[]")
+}
+
+// MasqueStrategies — набор способов подключиться к WARP по MASQUE: адрес сервера
+// × имя в TLS (SNI) × HTTP/3 (UDP) или HTTP/2 (TCP, если режут QUIC).
+// Порядок — «самое вероятное первым»; дальше его уточняет память по сетям.
+// Разные группы адресов нужны ещё и для того, чтобы уйти от нежелательного
+// дата-центра: у разных префиксов Cloudflare маршруты бывают разные.
+func MasqueStrategies(acc *Account) []Strategy {
+	var eps []string
+	seen := map[string]bool{}
+	add := func(h string) {
+		h = strings.TrimSpace(h)
+		if h == "" || net.ParseIP(h) == nil || seen[h] {
+			return
+		}
+		seen[h] = true
+		eps = append(eps, h)
+	}
+	if acc != nil {
+		add(hostOnly(acc.EndpointV4))
+	}
+	for _, h := range []string{
+		"162.159.198.1", "162.159.198.2",
+		"162.159.192.1", "162.159.193.1", "162.159.195.1",
+		"188.114.96.1", "188.114.97.1",
+	} {
+		add(h)
+	}
+	snis := []struct{ alias, name string }{
+		{"std", defaultMasqueSNI},
+		{"speed", "speed.cloudflare.com"},
+		{"www", "www.cloudflare.com"},
+	}
+	var out []Strategy
+	for _, h2 := range []bool{false, true} {
+		proto, flag := "h3", "0"
+		if h2 {
+			proto, flag = "h2", "1"
+		}
+		for _, sni := range snis {
+			for _, ep := range eps {
+				out = append(out, Strategy{
+					ID:        fmt.Sprintf("%s/%s/%s", proto, ep, sni.alias),
+					Transport: "masque",
+					Params: map[string]string{
+						"endpoint": net.JoinHostPort(ep, "443"),
+						"sni":      sni.name,
+						"h2":       flag,
+					},
+				})
+			}
+		}
+	}
+	return out
+}
+HYDRA_EOF
+
+putv "$GODIR/strategies_test.go" <<'HYDRA_EOF'
+package hydra
+
+import "testing"
+
+func TestMasqueStrategies(t *testing.T) {
+	acc := &Account{EndpointV4: "162.159.198.3:0"}
+	ss := MasqueStrategies(acc)
+	if len(ss) < 20 {
+		t.Fatalf("мало стратегий: %d", len(ss))
+	}
+	if ss[0].Params["endpoint"] != "162.159.198.3:443" || ss[0].Params["h2"] != "0" {
+		t.Fatalf("первой должна идти стратегия с адресом из аккаунта по HTTP/3: %+v", ss[0])
+	}
+	ids := map[string]bool{}
+	sawH2 := false
+	for _, s := range ss {
+		if ids[s.ID] {
+			t.Fatalf("повтор ID %s", s.ID)
+		}
+		ids[s.ID] = true
+		if s.Params["h2"] == "1" {
+			sawH2 = true
+		}
+	}
+	if !sawH2 {
+		t.Fatal("нет запасных стратегий по HTTP/2")
+	}
+}
+HYDRA_EOF
+
 putv app/build.gradle.kts <<'HYDRA_EOF'
 plugins {
     id("com.android.application")
@@ -2174,8 +3313,8 @@ android {
         applicationId = "app.hydra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -2220,6 +3359,8 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
 
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.Hydra">
         <activity
@@ -2231,6 +3372,15 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".HydraVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
 HYDRA_EOF
@@ -2695,122 +3845,192 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/HomeScreen.kt <<'HYDRA_EOF'
 package app.hydra
 
+import android.app.Activity
+import android.net.VpnService
 import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contracts.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
-fun HomeScreen(prefs: Prefs, account: AccountController) {
+fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
     val ctx = LocalContext.current
     val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
     val hasAccount = account.id.isNotEmpty()
-    val failKind = account.failKind
-    val soonToast = stringResource(R.string.home_soon_toast)
+    val needAppsToast = stringResource(R.string.need_apps_toast)
+
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == Activity.RESULT_OK) vpn.start()
+    }
+
+    val onRing: () -> Unit = {
+        when {
+            account.busy -> {}
+            !hasAccount -> account.register()
+            vpn.active -> vpn.stop()
+            prefs.splitOnlySelected && prefs.splitApps.isEmpty() ->
+                Toast.makeText(ctx, needAppsToast, Toast.LENGTH_LONG).show()
+            else -> {
+                val i = VpnService.prepare(ctx)
+                if (i != null) launcher.launch(i) else vpn.start()
+            }
+        }
+    }
+
+    val scheme = MaterialTheme.colorScheme
+    val ringColor = when {
+        account.busy -> scheme.primary
+        !hasAccount -> scheme.outline
+        vpn.state == "up" -> HydraGreen
+        vpn.state == "connecting" || vpn.state == "reconnecting" -> scheme.primary
+        vpn.state == "failed" -> scheme.error
+        else -> scheme.primary
+    }
+    val animating = account.busy || vpn.state == "connecting" || vpn.state == "reconnecting"
 
     val title = when {
         account.busy -> stringResource(R.string.home_status_registering)
         !hasAccount -> stringResource(R.string.home_status_need_account)
-        else -> stringResource(R.string.home_status_ready)
+        vpn.state == "up" -> stringResource(R.string.vpn_up)
+        vpn.state == "connecting" -> stringResource(R.string.vpn_connecting)
+        vpn.state == "reconnecting" -> stringResource(R.string.vpn_reconnecting)
+        vpn.state == "failed" -> stringResource(R.string.vpn_failed)
+        else -> stringResource(R.string.vpn_off)
     }
     val sub = when {
         account.busy -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
-        else -> stringResource(R.string.home_sub_ready)
+        vpn.state == "up" -> stringResource(R.string.vpn_up_sub, coloLabel(vpn.colo))
+        vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
+        vpn.state == "reconnecting" || vpn.state == "failed" ->
+            if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_connecting_sub)
+        else -> stringResource(R.string.vpn_off_sub)
     }
 
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Hydra", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text(
-            stringResource(R.string.home_tagline),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(32.dp))
-
-        PowerButton(busy = account.busy, ready = hasAccount) {
-            if (!hasAccount) {
-                account.register()
-            } else {
-                Toast.makeText(ctx, soonToast, Toast.LENGTH_SHORT).show()
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.ic_hydra_mark), contentDescription = null, modifier = Modifier.size(56.dp))
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("HYDRA", fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                Text(
+                    stringResource(R.string.home_tagline),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
             }
         }
 
         Spacer(Modifier.height(20.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        PowerRing(color = ringColor, animating = animating, on = vpn.state == "up", onClick = onRing)
+        Spacer(Modifier.height(12.dp))
+
+        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         Text(
             sub,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = scheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(22.dp))
 
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Tile(
+                stringResource(R.string.tile_dc),
+                if (vpn.state == "up" && vpn.colo.isNotEmpty()) vpn.colo else "—",
+                Modifier.weight(1f)
+            )
+            Tile(
+                stringResource(R.string.tile_rtt),
+                if (vpn.state == "up") stringResource(R.string.diag_ms, vpn.rttMs) else "—",
+                Modifier.weight(1f)
+            )
+            Tile(
+                stringResource(R.string.tile_route),
+                if (vpn.state == "up") routeLabel(vpn.strategy) else "—",
+                Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
         HCard {
             SectionTitle(stringResource(R.string.ready_title))
             StepRow(StepState.Done, stringResource(R.string.step_engine), engine)
-
+            val failKind = account.failKind
             val registerLabel = stringResource(R.string.action_register)
-            val accountState = when {
-                hasAccount -> StepState.Done
-                failKind.isNotEmpty() -> StepState.Failed
-                else -> StepState.Pending
-            }
-            val accountSub = when {
-                hasAccount -> stringResource(R.string.step_account_ok, account.id.take(8))
-                failKind.isNotEmpty() -> failText(failKind)
-                else -> stringResource(R.string.step_account_none)
-            }
             StepRow(
-                accountState,
+                when {
+                    hasAccount -> StepState.Done
+                    failKind.isNotEmpty() -> StepState.Failed
+                    else -> StepState.Pending
+                },
                 stringResource(R.string.step_account),
-                accountSub,
+                when {
+                    hasAccount -> stringResource(R.string.step_account_ok, account.id.take(8))
+                    failKind.isNotEmpty() -> failText(failKind)
+                    else -> stringResource(R.string.step_account_none)
+                },
                 actionLabel = if (hasAccount || account.busy) null else registerLabel,
                 onAction = { account.register() }
             )
-
             StepRow(
-                StepState.Pending,
+                if (vpn.state == "up") StepState.Done else StepState.Pending,
                 stringResource(R.string.step_connect),
                 stringResource(R.string.step_connect_sub)
             )
         }
 
         Spacer(Modifier.height(12.dp))
-
         HCard {
             SectionTitle(stringResource(R.string.dc_title))
             Spacer(Modifier.height(6.dp))
@@ -2826,30 +4046,262 @@ fun HomeScreen(prefs: Prefs, account: AccountController) {
             Text(
                 stringResource(R.string.dc_hint),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = scheme.onSurfaceVariant
             )
         }
     }
 }
 
 @Composable
-fun PowerButton(busy: Boolean, ready: Boolean, onClick: () -> Unit) {
-    val ring = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-    val fill = MaterialTheme.colorScheme.primaryContainer
+fun Tile(label: String, value: String, modifier: Modifier = Modifier) {
+    HCard(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/** Большая кнопка-щит: цвет и пульсация показывают состояние. */
+@Composable
+fun PowerRing(color: Color, animating: Boolean, on: Boolean, onClick: () -> Unit) {
+    val inf = rememberInfiniteTransition(label = "pulse")
+    val pulse by inf.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Restart),
+        label = "pulse"
+    )
+    val disc = MaterialTheme.colorScheme.primaryContainer
+
     Box(
-        modifier = Modifier
-            .size(168.dp)
-            .clip(CircleShape)
-            .background(if (ready) fill else fill.copy(alpha = 0.5f))
-            .border(3.dp, ring, CircleShape)
-            .clickable(enabled = !busy) { onClick() },
+        Modifier
+            .size(236.dp)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        if (busy) {
-            CircularProgressIndicator(Modifier.size(56.dp), color = MaterialTheme.colorScheme.primary)
-        } else {
-            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(72.dp), tint = ring)
+        Canvas(Modifier.fillMaxSize()) {
+            val c = center
+            val r = size.minDimension / 2f
+            // свечение
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(color.copy(alpha = if (on) 0.40f else 0.22f), Color.Transparent),
+                    center = c,
+                    radius = r
+                ),
+                radius = r,
+                center = c
+            )
+            // расходящаяся волна
+            if (animating) {
+                drawCircle(
+                    color = color.copy(alpha = 0.35f * (1f - pulse)),
+                    radius = r * (0.70f + 0.30f * pulse),
+                    center = c,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
+            // кольцо и диск
+            drawCircle(color = disc, radius = r * 0.66f, center = c)
+            drawCircle(color = color, radius = r * 0.70f, center = c, style = Stroke(width = 5.dp.toPx()))
+
+            // щит
+            val w = r * 0.60f
+            val h = r * 0.70f
+            val top = c.y - h / 2f
+            val shield = Path().apply {
+                moveTo(c.x, top)
+                lineTo(c.x + w / 2f, top + h * 0.14f)
+                lineTo(c.x + w / 2f, top + h * 0.56f)
+                cubicTo(c.x + w / 2f, top + h * 0.80f, c.x + w * 0.24f, top + h * 0.93f, c.x, top + h)
+                cubicTo(c.x - w * 0.24f, top + h * 0.93f, c.x - w / 2f, top + h * 0.80f, c.x - w / 2f, top + h * 0.56f)
+                lineTo(c.x - w / 2f, top + h * 0.14f)
+                close()
+            }
+            drawPath(
+                shield,
+                color = color,
+                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+            // замочная скважина
+            val kc = Offset(c.x, top + h * 0.42f)
+            drawCircle(color = color, radius = r * 0.075f, center = kc)
+            val slot = Path().apply {
+                moveTo(kc.x - r * 0.03f, kc.y + r * 0.04f)
+                lineTo(kc.x + r * 0.03f, kc.y + r * 0.04f)
+                lineTo(kc.x + r * 0.05f, kc.y + r * 0.17f)
+                lineTo(kc.x - r * 0.05f, kc.y + r * 0.17f)
+                close()
+            }
+            drawPath(slot, color = color)
         }
+    }
+}
+HYDRA_EOF
+
+putv app/src/main/java/app/hydra/HydraVpnService.kt <<'HYDRA_EOF'
+package app.hydra
+
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+
+/**
+ * Системный VPN-сервис: создаёт TUN-интерфейс и отдаёт его Go-ядру, которое
+ * гонит пакеты через туннель WARP. Раздельное туннелирование — средствами Android:
+ * в списке приложений либо «только эти», либо «все, кроме этих».
+ * Само приложение всегда исключено из VPN, иначе его собственное QUIC-соединение
+ * с Cloudflare пошло бы внутрь туннеля.
+ */
+class HydraVpnService : VpnService() {
+
+    companion object {
+        const val ACTION_START = "app.hydra.action.START"
+        const val ACTION_STOP = "app.hydra.action.STOP"
+        private const val TAG = "Hydra"
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val netWatcher = object : Runnable {
+        override fun run() {
+            try { mobile.Mobile.setNetKey(currentNetKey()) } catch (t: Throwable) { }
+            handler.postDelayed(this, 3000)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return if (intent?.action == ACTION_STOP) {
+            stopVpn()
+            START_NOT_STICKY
+        } else {
+            startVpn()
+            START_STICKY
+        }
+    }
+
+    private fun startVpn() {
+        val dir = filesDir.absolutePath
+        val prefs = Prefs(this)
+
+        val running = try { !mobile.Mobile.engineStatus().startsWith("off") } catch (t: Throwable) { false }
+        if (running) return
+
+        val v4 = try { mobile.Mobile.accountAddr4(dir) } catch (t: Throwable) { "" }
+        val v6 = try { mobile.Mobile.accountAddr6(dir) } catch (t: Throwable) { "" }
+        if (v4.isEmpty()) {
+            Log.e(TAG, "нет аккаунта WARP")
+            stopSelf()
+            return
+        }
+
+        try {
+            mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
+            mobile.Mobile.setNetKey(currentNetKey())
+        } catch (t: Throwable) {
+            Log.e(TAG, "настройки ядра: " + t.message)
+        }
+
+        val b = Builder()
+            .setSession("Hydra")
+            .setMtu(1280)
+            .addAddress(v4, 32)
+            .addRoute("0.0.0.0", 0)
+            .addDnsServer("1.1.1.1")
+            .addDnsServer("1.0.0.1")
+        if (v6.isNotEmpty()) {
+            b.addAddress(v6, 128)
+            b.addRoute("::", 0)
+            b.addDnsServer("2606:4700:4700::1111")
+        }
+
+        val apps = prefs.splitApps
+        if (prefs.splitOnlySelected) {
+            var any = false
+            for (p in apps) {
+                try {
+                    b.addAllowedApplication(p)
+                    any = true
+                } catch (e: Exception) {
+                }
+            }
+            if (!any) {
+                stopSelf()
+                return
+            }
+        } else {
+            for (p in apps) {
+                try {
+                    b.addDisallowedApplication(p)
+                } catch (e: Exception) {
+                }
+            }
+            try {
+                b.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+            }
+        }
+
+        val pfd = try { b.establish() } catch (e: Exception) { null }
+        if (pfd == null) {
+            Log.e(TAG, "не удалось создать TUN")
+            stopSelf()
+            return
+        }
+        val err = try {
+            mobile.Mobile.startTunnel(dir, pfd.detachFd().toLong())
+        } catch (t: Throwable) {
+            t.message ?: "ошибка ядра"
+        }
+        if (err.isNotEmpty()) {
+            Log.e(TAG, err)
+            stopSelf()
+            return
+        }
+        handler.removeCallbacks(netWatcher)
+        handler.postDelayed(netWatcher, 3000)
+    }
+
+    /** Ключ сети для памяти стратегий: "wifi", "cell" или "default" (сам VPN не считается). */
+    private fun currentNetKey(): String {
+        return try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+            var wifi = false
+            var cell = false
+            for (n in cm.allNetworks) {
+                val c = cm.getNetworkCapabilities(n) ?: continue
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = true
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) cell = true
+            }
+            when {
+                wifi -> "wifi"
+                cell -> "cell"
+                else -> "default"
+            }
+        } catch (t: Throwable) {
+            "default"
+        }
+    }
+
+    private fun stopVpn() {
+        handler.removeCallbacks(netWatcher)
+        try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        stopSelf()
+    }
+
+    override fun onRevoke() {
+        stopVpn()
+        super.onRevoke()
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacks(netWatcher)
+        try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        super.onDestroy()
     }
 }
 HYDRA_EOF
@@ -2886,6 +4338,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import java.util.Locale
@@ -2909,11 +4362,14 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         setContent {
             HydraTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    HydraApp(prefs) { recreate() }
+                HydraBackground {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.onBackground
+                    ) {
+                        HydraApp(prefs) { recreate() }
+                    }
                 }
             }
         }
@@ -2925,10 +4381,11 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = remember { AccountController(ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
+    val vpn = remember { VpnController(ctx.applicationContext, scope) }
     var tab by rememberSaveable { mutableStateOf(0) }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
                 NavigationBarItem(
@@ -2960,7 +4417,7 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     ) { pad ->
         Box(Modifier.padding(pad).statusBarsPadding().fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(prefs, account)
+                0 -> HomeScreen(prefs, account, vpn)
                 1 -> AppsScreen(prefs)
                 2 -> DiagScreen(prefs)
                 else -> SettingsScreen(prefs, account, onLanguageChanged)
@@ -3268,44 +4725,52 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/Theme.kt <<'HYDRA_EOF'
 package app.hydra
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
+/** Цвет «подключено». */
+val HydraGreen = Color(0xFF35E0A1)
+
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF3DDBB0),
-    onPrimary = Color(0xFF00382A),
-    primaryContainer = Color(0xFF0E3B31),
-    onPrimaryContainer = Color(0xFFB9F6E4),
-    secondary = Color(0xFF9CC4B8),
-    onSecondary = Color(0xFF0B2A22),
-    background = Color(0xFF0A110F),
-    onBackground = Color(0xFFE1EAE6),
-    surface = Color(0xFF0A110F),
-    onSurface = Color(0xFFE1EAE6),
-    surfaceVariant = Color(0xFF16221E),
-    onSurfaceVariant = Color(0xFFAFC0BA),
-    outline = Color(0xFF50635C),
+    primary = Color(0xFF3DB4FF),
+    onPrimary = Color(0xFF00243D),
+    primaryContainer = Color(0xFF0F2A57),
+    onPrimaryContainer = Color(0xFFCFE8FF),
+    secondary = Color(0xFF9B86FF),
+    onSecondary = Color(0xFF1B0F52),
+    background = Color(0xFF070C1A),
+    onBackground = Color(0xFFE6ECFA),
+    surface = Color(0xFF070C1A),
+    onSurface = Color(0xFFE6ECFA),
+    surfaceVariant = Color(0xFF111B33),
+    onSurfaceVariant = Color(0xFFA9B6D3),
+    outline = Color(0xFF3C4B70),
     error = Color(0xFFFF8A80),
     onError = Color(0xFF410002)
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF00796B),
+    primary = Color(0xFF0B73C9),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFCDEFE6),
-    onPrimaryContainer = Color(0xFF00201A),
-    secondary = Color(0xFF4A635C),
-    background = Color(0xFFF5FAF8),
-    onBackground = Color(0xFF111917),
-    surface = Color(0xFFF5FAF8),
-    onSurface = Color(0xFF111917),
-    surfaceVariant = Color(0xFFE2EDE9),
-    onSurfaceVariant = Color(0xFF3E4E49),
-    outline = Color(0xFF70827B),
+    primaryContainer = Color(0xFFD3E6FF),
+    onPrimaryContainer = Color(0xFF001C38),
+    secondary = Color(0xFF5B45D6),
+    background = Color(0xFFF4F7FF),
+    onBackground = Color(0xFF101827),
+    surface = Color(0xFFF4F7FF),
+    onSurface = Color(0xFF101827),
+    surfaceVariant = Color(0xFFE3EAFB),
+    onSurfaceVariant = Color(0xFF3F4B66),
+    outline = Color(0xFF7683A3),
     error = Color(0xFFBA1A1A)
 )
 
@@ -3315,6 +4780,18 @@ fun HydraTheme(content: @Composable () -> Unit) {
         colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
         content = content
     )
+}
+
+/** Фон приложения: мягкий вертикальный градиент. */
+@Composable
+fun HydraBackground(content: @Composable () -> Unit) {
+    val dark = isSystemInDarkTheme()
+    val brush = if (dark) {
+        Brush.verticalGradient(listOf(Color(0xFF070C1A), Color(0xFF0B1735)))
+    } else {
+        Brush.verticalGradient(listOf(Color(0xFFF4F7FF), Color(0xFFE4ECFF)))
+    }
+    Box(Modifier.fillMaxSize().background(brush)) { content() }
 }
 HYDRA_EOF
 
@@ -3453,6 +4930,210 @@ fun parseColos(s: String): Set<String> =
     s.split(',', ';', ' ', '\n').map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
 HYDRA_EOF
 
+putv app/src/main/java/app/hydra/VpnController.kt <<'HYDRA_EOF'
+package app.hydra
+
+import android.content.Context
+import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Состояние VPN для интерфейса: раз в секунду спрашивает у Go-ядра, как дела. */
+class VpnController(private val ctx: Context, scope: CoroutineScope) {
+
+    var state by mutableStateOf("off")
+        private set
+    var strategy by mutableStateOf("")
+        private set
+    var colo by mutableStateOf("")
+        private set
+    var rttMs by mutableStateOf(0)
+        private set
+    var message by mutableStateOf("")
+        private set
+
+    val active: Boolean get() = state != "off"
+
+    init {
+        scope.launch {
+            while (isActive) {
+                refresh()
+                delay(1000)
+            }
+        }
+    }
+
+    private suspend fun refresh() {
+        val raw = withContext(Dispatchers.IO) {
+            try {
+                mobile.Mobile.engineStatus()
+            } catch (t: Throwable) {
+                "off||||"
+            }
+        }
+        val p = raw.split("|")
+        state = p.getOrElse(0) { "off" }
+        strategy = p.getOrElse(1) { "" }
+        colo = p.getOrElse(2) { "" }
+        rttMs = p.getOrElse(3) { "0" }.toIntOrNull() ?: 0
+        message = p.getOrElse(4) { "" }
+    }
+
+    fun start() {
+        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START))
+    }
+
+    fun stop() {
+        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP))
+    }
+}
+
+/** "h3/162.159.198.1/std" -> "H3 · std" */
+fun routeLabel(strategy: String): String {
+    val p = strategy.split("/")
+    return if (p.size == 3) p[0].uppercase() + " · " + p[2] else "—"
+}
+HYDRA_EOF
+
+putv app/src/main/res/drawable/ic_hydra_mark.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.8" android:scaleY="0.8" android:pivotX="54" android:pivotY="54" android:translateY="-0.5">
+        <path android:strokeColor="#2EC8FF" android:strokeAlpha="0.8" android:strokeWidth="1.7" android:strokeLineCap="round" android:pathData="M30 92 C40 97.5 68 97.5 78 92"/>
+        <path android:strokeColor="#2EC8FF" android:strokeAlpha="0.45" android:strokeWidth="1.7" android:strokeLineCap="round" android:pathData="M25 96.5 C38 102.5 70 102.5 83 96.5"/>
+        <path android:strokeColor="#2EC8FF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M47 62 C37 58.5 34.5 50.5 37.6 42.2"/>
+        <path android:strokeColor="#4FA6FF" android:strokeWidth="6.4" android:strokeLineCap="round" android:pathData="M54 62 L54 40.5"/>
+        <path android:strokeColor="#8A6BFF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M61 62 C71 58.5 73.5 50.5 70.4 42.2"/>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="-40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="32.5" android:translateY="36.0">
+            <path android:fillColor="#2EC8FF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="75.5" android:translateY="36.0">
+            <path android:fillColor="#8A6BFF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="0" android:scaleX="1.12" android:scaleY="1.12" android:translateX="54.0" android:translateY="31.5">
+            <path android:fillColor="#4FA6FF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <path android:fillColor="#0F2A63" android:strokeColor="#2EC8FF" android:strokeWidth="2.4" android:strokeLineJoin="round" android:pathData="M54 55.5 L68.5 60.5 V72 C68.5 80.5 62.5 86.5 54 90 C45.5 86.5 39.5 80.5 39.5 72 V60.5 Z"/>
+        <path android:fillColor="#13398A" android:pathData="M54 59 L65 62.8 V72 C65 78.6 60.4 83.4 54 86.2 C47.6 83.4 43 78.6 43 72 V62.8 Z"/>
+        <path android:fillColor="#E6FBFF" android:pathData="M54 65.2 m-3.6 0 a3.6 3.6 0 1 0 7.2 0 a3.6 3.6 0 1 0 -7.2 0 Z"/>
+        <path android:fillColor="#E6FBFF" android:pathData="M52.4 67.6 L55.6 67.6 L56.7 76 L51.3 76 Z"/>
+    </group>
+</vector>
+HYDRA_EOF
+
+putv app/src/main/res/drawable/ic_launcher_background.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0 0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54" android:startY="0"
+                android:endX="54" android:endY="108"
+                android:startColor="#0A1030"
+                android:endColor="#142560"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+</vector>
+HYDRA_EOF
+
+putv app/src/main/res/drawable/ic_launcher_foreground.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.8" android:scaleY="0.8" android:pivotX="54" android:pivotY="54" android:translateY="-0.5">
+        <path android:strokeColor="#2EC8FF" android:strokeAlpha="0.8" android:strokeWidth="1.7" android:strokeLineCap="round" android:pathData="M30 92 C40 97.5 68 97.5 78 92"/>
+        <path android:strokeColor="#2EC8FF" android:strokeAlpha="0.45" android:strokeWidth="1.7" android:strokeLineCap="round" android:pathData="M25 96.5 C38 102.5 70 102.5 83 96.5"/>
+        <path android:strokeColor="#2EC8FF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M47 62 C37 58.5 34.5 50.5 37.6 42.2"/>
+        <path android:strokeColor="#4FA6FF" android:strokeWidth="6.4" android:strokeLineCap="round" android:pathData="M54 62 L54 40.5"/>
+        <path android:strokeColor="#8A6BFF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M61 62 C71 58.5 73.5 50.5 70.4 42.2"/>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="-40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="32.5" android:translateY="36.0">
+            <path android:fillColor="#2EC8FF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="75.5" android:translateY="36.0">
+            <path android:fillColor="#8A6BFF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="0" android:scaleX="1.12" android:scaleY="1.12" android:translateX="54.0" android:translateY="31.5">
+            <path android:fillColor="#4FA6FF" android:strokeColor="#0A1030" android:strokeWidth="0.5" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z"/>
+            <path android:fillColor="#E6FBFF" android:pathData="M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <path android:fillColor="#0F2A63" android:strokeColor="#2EC8FF" android:strokeWidth="2.4" android:strokeLineJoin="round" android:pathData="M54 55.5 L68.5 60.5 V72 C68.5 80.5 62.5 86.5 54 90 C45.5 86.5 39.5 80.5 39.5 72 V60.5 Z"/>
+        <path android:fillColor="#13398A" android:pathData="M54 59 L65 62.8 V72 C65 78.6 60.4 83.4 54 86.2 C47.6 83.4 43 78.6 43 72 V62.8 Z"/>
+        <path android:fillColor="#E6FBFF" android:pathData="M54 65.2 m-3.6 0 a3.6 3.6 0 1 0 7.2 0 a3.6 3.6 0 1 0 -7.2 0 Z"/>
+        <path android:fillColor="#E6FBFF" android:pathData="M52.4 67.6 L55.6 67.6 L56.7 76 L51.3 76 Z"/>
+    </group>
+</vector>
+HYDRA_EOF
+
+putv app/src/main/res/drawable/ic_launcher_monochrome.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.8" android:scaleY="0.8" android:pivotX="54" android:pivotY="54" android:translateY="-0.5">
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M47 62 C37 58.5 34.5 50.5 37.6 42.2"/>
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="6.4" android:strokeLineCap="round" android:pathData="M54 62 L54 40.5"/>
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="5.6" android:strokeLineCap="round" android:pathData="M61 62 C71 58.5 73.5 50.5 70.4 42.2"/>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="-40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="32.5" android:translateY="36.0">
+            <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="40" android:scaleX="0.88" android:scaleY="0.88" android:translateX="75.5" android:translateY="36.0">
+            <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <group android:pivotX="0" android:pivotY="0" android:rotation="0" android:scaleX="1.12" android:scaleY="1.12" android:translateX="54.0" android:translateY="31.5">
+            <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M0 -17 L3.6 -11.5 L8.6 -14.6 L6.2 -7.4 L7.4 -2.2 L4.2 4.6 L0 7.6 L-4.2 4.6 L-7.4 -2.2 L-6.2 -7.4 L-8.6 -14.6 L-3.6 -11.5 Z M-4.6 -4.6 L-1.2 -3.4 L-4.4 -2.2 Z M4.6 -4.6 L1.2 -3.4 L4.4 -2.2 Z"/>
+        </group>
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="2.4" android:strokeLineJoin="round" android:pathData="M54 55.5 L68.5 60.5 V72 C68.5 80.5 62.5 86.5 54 90 C45.5 86.5 39.5 80.5 39.5 72 V60.5 Z"/>
+        <path android:fillColor="#FFFFFF" android:pathData="M54 65.2 m-3.6 0 a3.6 3.6 0 1 0 7.2 0 a3.6 3.6 0 1 0 -7.2 0 Z"/>
+        <path android:fillColor="#FFFFFF" android:pathData="M52.4 67.6 L55.6 67.6 L56.7 76 L51.3 76 Z"/>
+    </group>
+</vector>
+HYDRA_EOF
+
+putv app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
+HYDRA_EOF
+
+putv app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
+HYDRA_EOF
+
 putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -3478,7 +5159,7 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="step_account_ok">Зарегистрирован · %1$s</string>
     <string name="step_account_none">Не зарегистрирован</string>
     <string name="step_connect">Подключение</string>
-    <string name="step_connect_sub">Появится в следующей сборке</string>
+    <string name="step_connect_sub">Нажми на щит сверху</string>
     <string name="action_register">Зарегистрировать</string>
     <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
     <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
@@ -3542,8 +5223,21 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.2.0 · основано на идеях открытого клиента usque (MIT)</string>
+    <string name="about_text">Hydra 0.3.0 · основано на идеях открытого клиента usque (MIT)</string>
     <string name="engine_label">Движок: %1$s</string>
+
+    <string name="vpn_off">Не подключено</string>
+    <string name="vpn_off_sub">Нажми на щит, чтобы подключиться</string>
+    <string name="vpn_connecting">Подключаюсь…</string>
+    <string name="vpn_connecting_sub">Ищу лучший маршрут</string>
+    <string name="vpn_up">Подключено</string>
+    <string name="vpn_up_sub">Дата-центр %1$s</string>
+    <string name="vpn_reconnecting">Переподключаюсь…</string>
+    <string name="vpn_failed">Нет соединения</string>
+    <string name="tile_dc">Дата-центр</string>
+    <string name="tile_rtt">Задержка</string>
+    <string name="tile_route">Маршрут</string>
+    <string name="need_apps_toast">Сначала выбери приложения (вкладка «Приложения») или включи режим «Все, кроме выбранных»</string>
 </resources>
 HYDRA_EOF
 
@@ -3572,7 +5266,7 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="step_account_ok">Registered · %1$s</string>
     <string name="step_account_none">Not registered</string>
     <string name="step_connect">Connection</string>
-    <string name="step_connect_sub">Coming in the next build</string>
+    <string name="step_connect_sub">Tap the shield above</string>
     <string name="action_register">Register</string>
     <string name="fail_rate_limited">Cloudflare limits registrations from this IP. Wait a few minutes and try again.</string>
     <string name="fail_blocked">Cannot reach the Cloudflare API: the network or DNS blocks it. Try another network (mobile data or Wi-Fi).</string>
@@ -3636,8 +5330,21 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.2.0 · built on ideas of the open-source usque client (MIT)</string>
+    <string name="about_text">Hydra 0.3.0 · built on ideas of the open-source usque client (MIT)</string>
     <string name="engine_label">Engine: %1$s</string>
+
+    <string name="vpn_off">Not connected</string>
+    <string name="vpn_off_sub">Tap the shield to connect</string>
+    <string name="vpn_connecting">Connecting…</string>
+    <string name="vpn_connecting_sub">Looking for the best route</string>
+    <string name="vpn_up">Connected</string>
+    <string name="vpn_up_sub">Datacenter %1$s</string>
+    <string name="vpn_reconnecting">Reconnecting…</string>
+    <string name="vpn_failed">No connection</string>
+    <string name="tile_dc">Datacenter</string>
+    <string name="tile_rtt">Latency</string>
+    <string name="tile_route">Route</string>
+    <string name="need_apps_toast">Select apps first (Apps tab) or switch the mode to “All except selected”</string>
 </resources>
 HYDRA_EOF
 
