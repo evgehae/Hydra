@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=5
+NEW=6
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -618,7 +618,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v5: фейковые QUIC-пакеты, журнал, смена сети, новый интерфейс =====================
+# ===================== v6 =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -1399,7 +1399,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				continue
 			}
 			ep := s.Params["endpoint"]
-			if until, ok := blocked[ep]; ok && time.Now().Before(until) {
+			if until, ok := blocked[ep]; ep != "" && ok && time.Now().Before(until) {
 				skipped++
 				continue
 			}
@@ -1411,8 +1411,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			lastReason = r.reason
 			if r.coloBlocked != "" {
 				sawBlocked = true
-				blocked[ep] = time.Now().Add(10 * time.Minute)
-				Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
+				if ep != "" {
+					blocked[ep] = time.Now().Add(10 * time.Minute)
+					Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
+				}
 			}
 			if r.netChanged {
 				skip = ""
@@ -2937,6 +2939,7 @@ func clientHelloFor(sni string) ([]byte, error) {
 			ServerName:         sni,
 			MinVersion:         tls.VersionTLS13,
 			NextProtos:         []string{"h3"},
+			CurvePreferences:   []tls.CurveID{tls.X25519}, // без гибридного ключа: ClientHello остаётся коротким
 			InsecureSkipVerify: true,
 		})
 		c.Handshake()
@@ -3031,7 +3034,7 @@ func TestFakeQUICInitialDecrypts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(pkt) != 1357 {
-		t.Fatalf("длина %d, ждали 1357", len(pkt))
+		t.Fatalf("длина %d, ждали 1357 (ClientHello раздулся и фейк не влезает в один пакет)", len(pkt))
 	}
 	if pkt[0]&0x80 == 0 {
 		t.Fatal("ждали длинный заголовок")
