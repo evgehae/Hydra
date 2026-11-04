@@ -65,6 +65,7 @@ func clientHelloFor(sni string) ([]byte, error) {
 			ServerName:         sni,
 			MinVersion:         tls.VersionTLS13,
 			NextProtos:         []string{"h3"},
+			CurvePreferences:   []tls.CurveID{tls.X25519}, // без гибридного ключа: ClientHello остаётся коротким
 			InsecureSkipVerify: true,
 		})
 		c.Handshake()

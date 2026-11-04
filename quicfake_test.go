@@ -13,7 +13,7 @@ func TestFakeQUICInitialDecrypts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(pkt) != 1357 {
-		t.Fatalf("длина %d, ждали 1357", len(pkt))
+		t.Fatalf("длина %d, ждали 1357 (ClientHello раздулся и фейк не влезает в один пакет)", len(pkt))
 	}
 	if pkt[0]&0x80 == 0 {
 		t.Fatal("ждали длинный заголовок")

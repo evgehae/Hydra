@@ -491,7 +491,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				continue
 			}
 			ep := s.Params["endpoint"]
-			if until, ok := blocked[ep]; ok && time.Now().Before(until) {
+			if until, ok := blocked[ep]; ep != "" && ok && time.Now().Before(until) {
 				skipped++
 				continue
 			}
@@ -503,8 +503,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			lastReason = r.reason
 			if r.coloBlocked != "" {
 				sawBlocked = true
-				blocked[ep] = time.Now().Add(10 * time.Minute)
-				Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
+				if ep != "" {
+					blocked[ep] = time.Now().Add(10 * time.Minute)
+					Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
+				}
 			}
 			if r.netChanged {
 				skip = ""
