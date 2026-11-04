@@ -49,6 +49,8 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.Policy = currentPolicy()
 	cfg.Mem = mem
 	cfg.NetKey = currentNetKey
+	cfg.NetChanged = netEvents
+	cfg.SoftFallback = currentFallback()
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
 	ctx, cancel := context.WithCancel(context.Background())

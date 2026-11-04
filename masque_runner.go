@@ -105,7 +105,25 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
 		if h2 {
 			ep = &net.TCPAddr{IP: ip, Port: port}
+		} else if fsni := s.Params["fake"]; fsni != "" {
+			// фейковые QUIC-пакеты с малым TTL перед рукопожатием (как у Zarp)
+			var fk FakeSpec
+			fk.TTL = atoiDefault(s.Params["fttl"], 5)
+			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
+				if p, err := BuildFakeQUICInitial(fsni, 1357); err == nil {
+					fk.Payloads = append(fk.Payloads, p)
+				}
+			}
+			if len(fk.Payloads) > 0 {
+				relay, err := StartUDPRelay(&net.UDPAddr{IP: ip, Port: port}, fk)
+				if err != nil {
+					return err
+				}
+				defer relay.Close()
+				ep = relay.Addr()
+			}
 		}
+		Logf("   запускаю клиент MASQUE (usque)…")
 		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
 			TLSConfig:         tlsCfg,
 			KeepalivePeriod:   30 * time.Second,

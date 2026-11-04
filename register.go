@@ -210,13 +210,16 @@ type NamedDialer struct {
 type regMethod struct {
 	name      string
 	doh, frag bool
+	sni       string // другое имя в TLS; Host в запросе остаётся настоящим
 }
 
 var allMethods = []regMethod{
-	{"direct", false, false},
-	{"frag", false, true},
-	{"doh", true, false},
-	{"doh+frag", true, true},
+	{"direct", false, false, ""},
+	{"frag", false, true, ""},
+	{"doh", true, false, ""},
+	{"doh+frag", true, true, ""},
+	{"front-speed", true, false, "speed.cloudflare.com"},
+	{"front-www", true, true, "www.cloudflare.com"},
 }
 
 type route struct {
@@ -558,8 +561,12 @@ func (r *Registrar) dialTLS(ctx context.Context, rt route, addr string) (net.Con
 	if rt.m.frag {
 		c = &fragConn{Conn: raw, at: 3, delay: 15 * time.Millisecond}
 	}
+	name := host
+	if rt.m.sni != "" {
+		name = rt.m.sni
+	}
 	tc := tls.Client(c, &tls.Config{
-		ServerName: host,
+		ServerName: name,
 		NextProtos: []string{"http/1.1"},
 		MinVersion: tls.VersionTLS12,
 	})

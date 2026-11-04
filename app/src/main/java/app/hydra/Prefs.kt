@@ -35,6 +35,16 @@ class Prefs(ctx: Context) {
         get() = sp.getString("colo_allow", "") ?: ""
         set(v) { sp.edit().putString("colo_allow", v).apply() }
 
+    /** Канал связи с Cloudflare: "auto" или "cell" (принудительно мобильная сеть). */
+    var channel: String
+        get() = sp.getString("channel", "auto") ?: "auto"
+        set(v) { sp.edit().putString("channel", v).apply() }
+
+    /** Если все адреса ведут в запрещённый дата-центр — подключиться всё равно. */
+    var fallbackAny: Boolean
+        get() = sp.getBoolean("fallback_any", false)
+        set(v) { sp.edit().putBoolean("fallback_any", v).apply() }
+
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
 }

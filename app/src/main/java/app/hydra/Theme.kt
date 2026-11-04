@@ -1,30 +1,42 @@
 package app.hydra
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.Canvas as GfxCanvas
 
-/** Цвет «подключено». */
-val HydraGreen = Color(0xFF35E0A1)
+// Неоновая палитра Гидры.
+val NeonCyan = Color(0xFF47D4FF)
+val NeonViolet = Color(0xFFA98BFF)
+val NeonPink = Color(0xFFFF7AD9)
+val NeonGreen = Color(0xFF84E36B)
+val NeonAmber = Color(0xFFFFC857)
+val HydraGreen = NeonGreen
 
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFF3DB4FF),
+private val HydraColors = darkColorScheme(
+    primary = NeonCyan,
     onPrimary = Color(0xFF00243D),
     primaryContainer = Color(0xFF0F2A57),
     onPrimaryContainer = Color(0xFFCFE8FF),
-    secondary = Color(0xFF9B86FF),
+    secondary = NeonViolet,
     onSecondary = Color(0xFF1B0F52),
-    background = Color(0xFF070C1A),
+    tertiary = NeonGreen,
+    background = Color(0xFF080C18),
     onBackground = Color(0xFFE6ECFA),
-    surface = Color(0xFF070C1A),
+    surface = Color(0xFF080C18),
     onSurface = Color(0xFFE6ECFA),
     surfaceVariant = Color(0xFF111B33),
     onSurfaceVariant = Color(0xFFA9B6D3),
@@ -33,38 +45,38 @@ private val DarkColors = darkColorScheme(
     onError = Color(0xFF410002)
 )
 
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF0B73C9),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD3E6FF),
-    onPrimaryContainer = Color(0xFF001C38),
-    secondary = Color(0xFF5B45D6),
-    background = Color(0xFFF4F7FF),
-    onBackground = Color(0xFF101827),
-    surface = Color(0xFFF4F7FF),
-    onSurface = Color(0xFF101827),
-    surfaceVariant = Color(0xFFE3EAFB),
-    onSurfaceVariant = Color(0xFF3F4B66),
-    outline = Color(0xFF7683A3),
-    error = Color(0xFFBA1A1A)
-)
-
+/** Гидра всегда тёмная: неон на карбоне. */
 @Composable
 fun HydraTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
-        content = content
-    )
+    MaterialTheme(colorScheme = HydraColors, content = content)
 }
 
-/** Фон приложения: мягкий вертикальный градиент. */
+/** Плитка «карбона» 24×24: тёмные и чуть светлее квадраты в шахматном порядке. */
+private fun carbonTile(): ImageBitmap {
+    val bmp = ImageBitmap(24, 24)
+    val c = GfxCanvas(bmp)
+    val dark = Paint().apply { color = Color(0xFF0A0F1D) }
+    val light = Paint().apply { color = Color(0xFF0F1628) }
+    c.drawRect(0f, 0f, 24f, 24f, dark)
+    c.drawRect(0f, 0f, 12f, 12f, light)
+    c.drawRect(12f, 12f, 24f, 24f, light)
+    return bmp
+}
+
+/** Фон приложения: карбон с мягким неоновым свечением сверху. */
 @Composable
 fun HydraBackground(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val brush = if (dark) {
-        Brush.verticalGradient(listOf(Color(0xFF070C1A), Color(0xFF0B1735)))
-    } else {
-        Brush.verticalGradient(listOf(Color(0xFFF4F7FF), Color(0xFFE4ECFF)))
-    }
-    Box(Modifier.fillMaxSize().background(brush)) { content() }
+    val tile = remember { carbonTile() }
+    val carbon = remember(tile) { ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated)) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF080C18))
+            .drawBehind { drawRect(brush = carbon) }
+            .background(
+                Brush.verticalGradient(
+                    listOf(NeonViolet.copy(alpha = 0.10f), Color.Transparent, NeonCyan.copy(alpha = 0.06f))
+                )
+            )
+    ) { content() }
 }

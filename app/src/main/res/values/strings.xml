@@ -86,7 +86,7 @@
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.3.0 · built on ideas of the open-source usque client (MIT)</string>
+    <string name="about_text">Hydra 0.4 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
     <string name="engine_label">Engine: %1$s</string>
 
     <string name="vpn_off">Not connected</string>
@@ -101,4 +101,21 @@
     <string name="tile_rtt">Latency</string>
     <string name="tile_route">Route</string>
     <string name="need_apps_toast">Select apps first (Apps tab) or switch the mode to “All except selected”</string>
+
+    <string name="apps_header_chosen">Selected (%1$d)</string>
+    <string name="apps_header_rest">All apps</string>
+    <string name="journal_title">Journal</string>
+    <string name="journal_copy">Copy</string>
+    <string name="journal_clear">Clear</string>
+    <string name="journal_empty">Empty for now. Connect or register, and every step appears here.</string>
+    <string name="journal_see">Details are in the journal (Check tab).</string>
+    <string name="channel_title">Connection channel</string>
+    <string name="channel_auto">Automatic</string>
+    <string name="channel_cell">Mobile network</string>
+    <string name="channel_hint">Mobile network: the tunnel is carried over mobile data even when Wi-Fi is on. Helps when your Wi-Fi provider only leads to a blocked datacenter. Uses mobile data.</string>
+    <string name="fallback_any">Connect anyway if there is no other way</string>
+    <string name="fallback_hint">If every address leads to a blocked datacenter, connect to it rather than stay offline.</string>
+    <string name="action_register_cell">Register via mobile network</string>
+    <string name="licenses_title">Licenses</string>
+    <string name="licenses_text">Hydra uses open-source components: usque (MIT License), quic-go and others under permissive licenses. Full notices are in the NOTICE file of the project repository.</string>
 </resources>

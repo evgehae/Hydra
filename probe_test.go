@@ -67,3 +67,49 @@ func TestNormProbeColo(t *testing.T) {
 		}
 	}
 }
+
+// buildSynAck — «сервер» для тестов: отвечает SYN-ACK на SYN.
+func buildSynAck(syn []byte) []byte {
+	ihl := int(syn[0]&0x0f) * 4
+	t := syn[ihl:]
+	sport := binary.BigEndian.Uint16(t[0:])
+	seq := binary.BigEndian.Uint32(t[4:])
+	p := make([]byte, 40)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], 40)
+	p[8] = 64
+	p[9] = 6
+	copy(p[12:16], probeDst)
+	copy(p[16:20], syn[12:16])
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	r := p[20:]
+	binary.BigEndian.PutUint16(r[0:], 443)
+	binary.BigEndian.PutUint16(r[2:], sport)
+	binary.BigEndian.PutUint32(r[4:], 12345)
+	binary.BigEndian.PutUint32(r[8:], seq+1)
+	r[12] = 5 << 4
+	r[13] = 0x12
+	binary.BigEndian.PutUint16(r[14:], 65535)
+	return p
+}
+
+func TestTCPSynRoundTrip(t *testing.T) {
+	src := net.ParseIP("172.16.0.2")
+	syn := BuildTCPSyn(src, 41000, 1000, 9)
+	if syn == nil || ipChecksum(syn[:20]) != 0 {
+		t.Fatal("SYN не построен или неверная сумма IP")
+	}
+	if tcpChecksum(src, probeDst, syn[20:]) != 0 {
+		t.Fatal("контрольная сумма TCP неверна")
+	}
+	rep := buildSynAck(syn)
+	if !ParseTCPSynAck(rep, 41000, 1001) {
+		t.Fatal("SYN-ACK не распознан")
+	}
+	if ParseTCPSynAck(rep, 41001, 1001) || ParseTCPSynAck(rep, 41000, 999) {
+		t.Fatal("чужой порт или чужой ack не должен приниматься")
+	}
+	if BuildTCPRst(src, 41000, 1001, 10) == nil {
+		t.Fatal("RST не построен")
+	}
+}

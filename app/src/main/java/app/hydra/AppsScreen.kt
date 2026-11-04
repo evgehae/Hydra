@@ -2,7 +2,10 @@ package app.hydra
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Checkbox
@@ -34,6 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -78,15 +84,25 @@ fun AppsScreen(prefs: Prefs) {
         val q = query.trim()
         if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
     }
+    // выбранные — наверху
+    val chosen = filtered.filter { it.pkg in selected }
+    val rest = filtered.filter { it.pkg !in selected }
+
+    fun toggle(pkg: String) {
+        val n = if (pkg in selected) selected - pkg else selected + pkg
+        selected = n
+        prefs.splitApps = n
+    }
 
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
+        Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp)) {
             Text(
                 stringResource(R.string.apps_title),
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = NeonCyan
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = onlySelected,
@@ -116,6 +132,7 @@ fun AppsScreen(prefs: Prefs) {
                 value = query,
                 onValueChange = { query = it },
                 singleLine = true,
+                shape = RoundedCornerShape(22.dp),
                 placeholder = { Text(stringResource(R.string.apps_search)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth()
@@ -145,29 +162,51 @@ fun AppsScreen(prefs: Prefs) {
             }
         }
 
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(filtered, key = { it.pkg }) { a ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val n = if (a.pkg in selected) selected - a.pkg else selected + a.pkg
-                            selected = n
-                            prefs.splitApps = n
-                        }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (a.icon != null) {
-                        Image(bitmap = a.icon, contentDescription = null, modifier = Modifier.size(40.dp))
-                    } else {
-                        Box(Modifier.size(40.dp))
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Text(a.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                    Checkbox(checked = a.pkg in selected, onCheckedChange = null)
-                }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)) {
+            if (chosen.isNotEmpty()) {
+                item(key = "head_chosen") { ListHeader(stringResource(R.string.apps_header_chosen, chosen.size), NeonGreen) }
+                items(chosen, key = { "s_" + it.pkg }) { a -> AppRow(a, true) { toggle(a.pkg) } }
+                item(key = "head_rest") { ListHeader(stringResource(R.string.apps_header_rest), NeonViolet) }
             }
+            items(rest, key = { it.pkg }) { a -> AppRow(a, false) { toggle(a.pkg) } }
         }
+    }
+}
+
+@Composable
+private fun ListHeader(text: String, color: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = color,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(start = 22.dp, top = 12.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun AppRow(a: AppItem, checked: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    val border = if (checked) BorderStroke(1.6.dp, NeonGreen) else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .border(border, shape)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Spacer(Modifier.width(10.dp))
+        if (a.icon != null) {
+            Image(bitmap = a.icon, contentDescription = null, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)))
+        } else {
+            Box(Modifier.size(40.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(a.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
     }
 }

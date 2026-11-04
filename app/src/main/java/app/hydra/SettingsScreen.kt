@@ -30,42 +30,45 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 @Composable
 fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     var lang by remember { mutableStateOf(prefs.lang) }
+    var channel by remember { mutableStateOf(prefs.channel) }
     var block by remember { mutableStateOf(prefs.blockedColos) }
     var allow by remember { mutableStateOf(prefs.allowColos) }
+    var fallback by remember { mutableStateOf(prefs.fallbackAny) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var kill by remember { mutableStateOf(prefs.killSwitch) }
     var note by remember { mutableStateOf("") }
+    var showLicenses by remember { mutableStateOf(false) }
 
     val copiedMsg = stringResource(R.string.account_copied)
     val nothingMsg = stringResource(R.string.account_nothing)
     val importedMsg = stringResource(R.string.account_imported)
+    val scheme = MaterialTheme.colorScheme
 
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
             stringResource(R.string.settings_title),
             style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            color = NeonCyan
         )
 
         // Язык
-        HCard {
-            SectionTitle(stringResource(R.string.settings_language))
+        HCard(accent = NeonCyan) {
+            SectionTitle(stringResource(R.string.settings_language), NeonCyan)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
@@ -88,9 +91,33 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             }
         }
 
+        // Канал связи
+        HCard(accent = NeonPink) {
+            SectionTitle(stringResource(R.string.channel_title), NeonPink)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("auto" to R.string.channel_auto, "cell" to R.string.channel_cell).forEach { (code, res) ->
+                    FilterChip(
+                        selected = channel == code,
+                        onClick = {
+                            channel = code
+                            prefs.channel = code
+                        },
+                        label = { Text(stringResource(res)) }
+                    )
+                }
+            }
+            Text(
+                stringResource(R.string.channel_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+
         // Дата-центры Cloudflare
-        HCard {
-            SectionTitle(stringResource(R.string.colo_title))
+        HCard(accent = NeonViolet) {
+            SectionTitle(stringResource(R.string.colo_title), NeonViolet)
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = block,
@@ -118,8 +145,17 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             Text(
                 stringResource(R.string.colo_hint),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
+            )
+            SwitchRow(stringResource(R.string.fallback_any), fallback) {
+                fallback = it
+                prefs.fallbackAny = it
+            }
+            Text(
+                stringResource(R.string.fallback_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant
             )
             TextButton(onClick = {
                 block = prefs.defaultBlockedColos()
@@ -130,8 +166,8 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
         }
 
         // Аккаунт WARP
-        HCard {
-            SectionTitle(stringResource(R.string.account_title))
+        HCard(accent = NeonGreen) {
+            SectionTitle(stringResource(R.string.account_title), NeonGreen)
             Spacer(Modifier.height(4.dp))
             Text(
                 if (account.id.isEmpty()) {
@@ -152,12 +188,18 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
                     CircularProgressIndicator(
                         Modifier.size(20.dp),
                         strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        color = scheme.onPrimary
                     )
                 } else {
                     Text(stringResource(R.string.action_register))
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { account.registerViaCellular() },
+                enabled = !account.busy && account.id.isEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(stringResource(R.string.action_register_cell)) }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
@@ -184,14 +226,14 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             Text(
                 stringResource(R.string.account_hint),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
             )
             if (note.isNotEmpty()) {
                 Text(
                     note,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = scheme.primary,
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
@@ -199,24 +241,20 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
                 Text(
                     failText(account.failKind),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    color = scheme.error,
                     modifier = Modifier.padding(top = 6.dp)
                 )
-            }
-            if (account.report.isNotEmpty()) {
                 Text(
-                    account.report,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
+                    stringResource(R.string.journal_see),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
                 )
             }
         }
 
         // Подключение
-        HCard {
-            SectionTitle(stringResource(R.string.conn_title))
+        HCard(accent = NeonAmber) {
+            SectionTitle(stringResource(R.string.conn_title), NeonAmber)
             SwitchRow(stringResource(R.string.settings_autostart), auto) {
                 auto = it
                 prefs.autoStart = it
@@ -228,22 +266,33 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             Text(
                 stringResource(R.string.settings_soon),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = scheme.onSurfaceVariant
             )
         }
 
         // О программе
-        HCard {
-            SectionTitle(stringResource(R.string.about_title))
+        HCard(accent = NeonPink) {
+            SectionTitle(stringResource(R.string.about_title), NeonPink)
             Spacer(Modifier.height(4.dp))
-            Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodyMedium)
             val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
             Text(
                 stringResource(R.string.engine_label, engine),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
+            TextButton(onClick = { showLicenses = !showLicenses }) {
+                Text(stringResource(R.string.licenses_title))
+            }
+            if (showLicenses) {
+                Text(
+                    stringResource(R.string.licenses_text),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
         }
+        Spacer(Modifier.height(8.dp))
     }
 }

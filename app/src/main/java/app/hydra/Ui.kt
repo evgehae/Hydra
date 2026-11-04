@@ -1,5 +1,6 @@
 package app.hydra
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,25 +24,38 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** Карточка-контейнер с мягкими углами. */
+/** Карточка с неоновой рамкой: цвет рамки — accent. */
 @Composable
-fun HCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun HCard(
+    modifier: Modifier = Modifier,
+    accent: Color = NeonCyan,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        ),
+        border = BorderStroke(1.6.dp, accent.copy(alpha = 0.85f))
     ) {
         Column(Modifier.padding(16.dp), content = content)
     }
 }
 
 @Composable
-fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+fun SectionTitle(text: String, color: Color = Color.Unspecified) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = color
+    )
 }
 
 enum class StepState { Done, Pending, Failed }

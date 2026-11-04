@@ -11,7 +11,10 @@ var (
 	polMu    sync.Mutex
 	polBlock = ""
 	polAllow = ""
+	polSoft  = false
 	netKey   = "default"
+	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
+	netEvents = make(chan struct{}, 1)
 )
 
 // SetColoPolicy задаёт запрещённые и (необязательно) единственно разрешённые
@@ -22,18 +25,39 @@ func SetColoPolicy(block, allow string) {
 	polMu.Unlock()
 }
 
-// SetNetKey сообщает ядру, в какой сети телефон ("wifi:xxx", "cell:25001"):
-// память стратегий копится отдельно для каждой сети.
-func SetNetKey(k string) {
+// SetFallback: если все адреса ведут в запрещённый дата-центр — всё равно подключиться.
+func SetFallback(on bool) {
 	polMu.Lock()
-	netKey = strings.TrimSpace(k)
+	polSoft = on
 	polMu.Unlock()
+}
+
+// SetNetKey сообщает ядру, в какой сети телефон ("wifi", "cell"). Смена ключа
+// сразу будит движок.
+func SetNetKey(k string) {
+	k = strings.TrimSpace(k)
+	polMu.Lock()
+	changed := k != netKey
+	netKey = k
+	polMu.Unlock()
+	if changed {
+		select {
+		case netEvents <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func currentNetKey() string {
 	polMu.Lock()
 	defer polMu.Unlock()
 	return netKey
+}
+
+func currentFallback() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polSoft
 }
 
 func currentPolicy() *hydra.ColoPolicy {

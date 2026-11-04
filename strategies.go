@@ -3,6 +3,7 @@ package hydra
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -16,11 +17,36 @@ func hostOnly(ep string) string {
 	return strings.Trim(h, "[]")
 }
 
-// MasqueStrategies — набор способов подключиться к WARP по MASQUE: адрес сервера
-// × имя в TLS (SNI) × HTTP/3 (UDP) или HTTP/2 (TCP, если режут QUIC).
+func atoiDefault(s string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+	return def
+}
+
+type fakeVariant struct {
+	alias string
+	sni   string
+	ttl   int
+	count int
+}
+
+// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). Первая — та, что у
+// Zarp дала мгновенное подключение: «VK, TTL=5, ×6».
+var fakeVariants = []fakeVariant{
+	{"vk5x6", "vk.com", 5, 6},
+	{"vk4x6", "vk.com", 4, 6},
+	{"vk6x6", "vk.com", 6, 6},
+	{"ya5x6", "ya.ru", 5, 6},
+	{"g5x6", "www.google.com", 5, 6},
+	{"plain", "", 0, 0},
+}
+
+// MasqueStrategies — способы подключиться к WARP по MASQUE: адрес сервера ×
+// фейковые пакеты × имя в TLS (SNI) × HTTP/3 (UDP) или HTTP/2 (TCP, если режут QUIC).
 // Порядок — «самое вероятное первым»; дальше его уточняет память по сетям.
-// Разные группы адресов нужны ещё и для того, чтобы уйти от нежелательного
-// дата-центра: у разных префиксов Cloudflare маршруты бывают разные.
+// Разные группы адресов нужны ещё и чтобы уйти от нежелательного дата-центра:
+// у разных префиксов Cloudflare маршруты бывают разные.
 func MasqueStrategies(acc *Account) []Strategy {
 	var eps []string
 	seen := map[string]bool{}
@@ -32,40 +58,65 @@ func MasqueStrategies(acc *Account) []Strategy {
 		seen[h] = true
 		eps = append(eps, h)
 	}
+	add("162.159.198.2")
 	if acc != nil {
 		add(hostOnly(acc.EndpointV4))
 	}
 	for _, h := range []string{
-		"162.159.198.1", "162.159.198.2",
-		"162.159.192.1", "162.159.193.1", "162.159.195.1",
+		"162.159.198.1", "162.159.192.1", "162.159.193.1", "162.159.195.1",
 		"188.114.96.1", "188.114.97.1",
+		"2606:4700:103::2", "2606:4700:103::1",
 	} {
 		add(h)
 	}
-	snis := []struct{ alias, name string }{
-		{"std", defaultMasqueSNI},
+
+	mk := func(proto, ep, alias, sni string, fv *fakeVariant) Strategy {
+		p := map[string]string{
+			"endpoint": net.JoinHostPort(ep, "443"),
+			"sni":      sni,
+			"h2":       "0",
+		}
+		if proto == "h2" {
+			p["h2"] = "1"
+		}
+		if fv != nil && fv.count > 0 {
+			p["fake"] = fv.sni
+			p["fttl"] = strconv.Itoa(fv.ttl)
+			p["fcount"] = strconv.Itoa(fv.count)
+		}
+		return Strategy{ID: fmt.Sprintf("%s/%s/%s", proto, ep, alias), Transport: "masque", Params: p}
+	}
+
+	var out []Strategy
+	for i := range fakeVariants {
+		fv := &fakeVariants[i]
+		for _, ep := range eps {
+			out = append(out, mk("h3", ep, fv.alias, defaultMasqueSNI, fv))
+		}
+	}
+	// другое имя в TLS — только с самыми удачными фейками
+	for _, alt := range []struct{ alias, name string }{
 		{"speed", "speed.cloudflare.com"},
 		{"www", "www.cloudflare.com"},
+	} {
+		for _, ep := range eps {
+			out = append(out, mk("h3", ep, fakeVariants[0].alias+"+"+alt.alias, alt.name, &fakeVariants[0]))
+		}
 	}
-	var out []Strategy
-	for _, h2 := range []bool{false, true} {
-		proto, flag := "h3", "0"
-		if h2 {
-			proto, flag = "h2", "1"
-		}
-		for _, sni := range snis {
-			for _, ep := range eps {
-				out = append(out, Strategy{
-					ID:        fmt.Sprintf("%s/%s/%s", proto, ep, sni.alias),
-					Transport: "masque",
-					Params: map[string]string{
-						"endpoint": net.JoinHostPort(ep, "443"),
-						"sni":      sni.name,
-						"h2":       flag,
-					},
-				})
-			}
-		}
+	for _, ep := range eps {
+		out = append(out, mk("h2", ep, "std", defaultMasqueSNI, nil))
+	}
+	return out
+}
+
+func describeStrategy(s Strategy) string {
+	proto := "HTTP/3 (QUIC)"
+	if s.Params["h2"] == "1" {
+		proto = "HTTP/2 (TCP)"
+	}
+	out := fmt.Sprintf("%s → %s, SNI %s", proto, s.Params["endpoint"], s.Params["sni"])
+	if f := s.Params["fake"]; f != "" {
+		out += fmt.Sprintf(", фейки %s ×%s TTL %s", f, s.Params["fcount"], s.Params["fttl"])
 	}
 	return out
 }

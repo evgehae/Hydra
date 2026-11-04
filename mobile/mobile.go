@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -34,7 +35,16 @@ func NormalizeColos(s string) string {
 func init() {
 	// Без этого Go на Android не умеет разрешать имена (нет resolv.conf).
 	hydra.SetSystemDNS(nil)
+	// Строки клиента MASQUE (usque) тоже попадают в журнал приложения.
+	log.SetFlags(0)
+	log.SetOutput(hydra.JournalWriter{})
 }
+
+// GetJournal возвращает последние n строк журнала (0 — все), новые в конце.
+func GetJournal(n int) string { return hydra.JournalText(n) }
+
+// ClearJournal очищает журнал.
+func ClearJournal() { hydra.JournalClear() }
 
 // SetDNS принимает DNS-серверы текущей сети от Android ("ip1,ip2,...").
 func SetDNS(csv string) {
@@ -59,9 +69,12 @@ func RegisterReport(dir string) string {
 	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
 		return "OK\nаккаунт уже есть: " + a.ID
 	}
-	var log strings.Builder
+	var sb strings.Builder
 	r := hydra.NewRegistrar()
-	r.Log = func(s string) { log.WriteString(s + "\n") }
+	r.Log = func(s string) {
+		sb.WriteString(s + "\n")
+		hydra.Logf("регистрация: %s", s)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -72,12 +85,12 @@ func RegisterReport(dir string) string {
 		if errors.As(err, &re) {
 			kind = re.Kind
 		}
-		return fmt.Sprintf("FAIL %s\n%s%v", kind, log.String(), err)
+		return fmt.Sprintf("FAIL %s\n%s%v", kind, sb.String(), err)
 	}
 	if err := acc.Save(path); err != nil {
 		return "FAIL storage\n" + err.Error()
 	}
-	return "OK\n" + log.String() + "id: " + acc.ID
+	return "OK\n" + sb.String() + "id: " + acc.ID
 }
 
 // ExportAccount возвращает строку для переноса аккаунта или "".

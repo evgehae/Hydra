@@ -62,14 +62,21 @@ func fakeRunner(started *int32) Runner {
 					continue
 				}
 			}
-			if buf[9] == 17 { // UDP — это наша проба
+			switch buf[9] {
+			case 17: // UDP — проба дата-центра
 				dev.WritePacket(buildColoReply(append([]byte(nil), buf[:n]...), s.Params["colo"]))
+			case 6: // TCP — проба SYN (RST и прочее игнорируем)
+				if s.Params["notcp"] != "1" && buf[ihlOf(buf)+13] == 0x02 {
+					dev.WritePacket(buildSynAck(append([]byte(nil), buf[:n]...)))
+				}
 			}
 		}
 	}
 }
 
-func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy) (*Engine, context.CancelFunc, *int32) {
+func ihlOf(b []byte) int { return int(b[0]&0x0f) * 4 }
+
+func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy, tcpCheck bool) (*Engine, context.CancelFunc, *int32) {
 	var started int32
 	cfg := DefaultEngineConfig()
 	cfg.LocalIP = net.ParseIP("172.16.0.2")
@@ -79,6 +86,8 @@ func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy) (*Engine, conte
 	cfg.ProbeEvery = 40 * time.Millisecond
 	cfg.UpTimeout = 600 * time.Millisecond
 	cfg.BadProbes = 2
+	cfg.TCPCheck = tcpCheck
+	cfg.TCPTimeout = 150 * time.Millisecond
 	e := NewEngine(newFakeTun(), cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	go e.Run(ctx)
@@ -103,7 +112,7 @@ func TestEngineSkipsBlockedColo(t *testing.T) {
 		{ID: "moscow", Transport: "masque", Params: map[string]string{"colo": "DME"}},
 		{ID: "helsinki", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
 	}
-	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy())
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
 	defer cancel()
 	st := waitStatus(t, e, "up через HEL", func(s Status) bool { return s.State == "up" && s.Colo == "HEL" })
 	if st.Strategy != "helsinki" {
@@ -116,7 +125,7 @@ func TestEngineFailsOverWhenTunnelDies(t *testing.T) {
 		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL", "dieAfter": "250"}},
 		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
 	}
-	e, cancel, started := testEngine(t, ss, DefaultColoPolicy())
+	e, cancel, started := testEngine(t, ss, DefaultColoPolicy(), false)
 	defer cancel()
 	waitStatus(t, e, "up через a", func(s Status) bool { return s.State == "up" && s.Strategy == "a" })
 	st := waitStatus(t, e, "переход на b", func(s Status) bool { return s.State == "up" && s.Strategy == "b" })
@@ -130,7 +139,53 @@ func TestEngineReportsFailureWhenEverythingBlocked(t *testing.T) {
 		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "DME"}},
 		{ID: "b", Transport: "masque", Params: map[string]string{"dead": "1"}},
 	}
-	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy())
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
 	defer cancel()
 	waitStatus(t, e, "state=failed", func(s Status) bool { return s.State == "failed" })
+}
+
+func TestEngineRequiresRealTCP(t *testing.T) {
+	ss := []Strategy{
+		{ID: "udp-only", Transport: "masque", Params: map[string]string{"colo": "HEL", "notcp": "1"}},
+		{ID: "full", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), true)
+	defer cancel()
+	st := waitStatus(t, e, "up через full", func(s Status) bool { return s.State == "up" && s.Strategy == "full" })
+	if st.Colo != "FRA" {
+		t.Fatalf("неверный дата-центр: %+v", st)
+	}
+}
+
+func TestEngineReactsToNetworkChange(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	var started int32
+	cfg := DefaultEngineConfig()
+	cfg.LocalIP = net.ParseIP("172.16.0.2")
+	cfg.Strategies = ss
+	cfg.Runner = fakeRunner(&started)
+	cfg.Policy = DefaultColoPolicy()
+	cfg.ProbeEvery = time.Hour // сам не заметит — только по сигналу
+	cfg.UpTimeout = 600 * time.Millisecond
+	cfg.TCPCheck = false
+	changed := make(chan struct{}, 1)
+	cfg.NetChanged = changed
+	e := NewEngine(newFakeTun(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+
+	waitStatus(t, e, "up", func(s Status) bool { return s.State == "up" })
+	before := atomic.LoadInt32(&started)
+	changed <- struct{}{}
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt32(&started) <= before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&started) <= before {
+		t.Fatal("после смены сети переподключения не произошло")
+	}
 }

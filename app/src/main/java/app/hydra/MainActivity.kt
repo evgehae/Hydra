@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val account = remember { AccountController(ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
+    val account = remember { AccountController(ctx.applicationContext, ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
     var tab by rememberSaveable { mutableStateOf(0) }
 

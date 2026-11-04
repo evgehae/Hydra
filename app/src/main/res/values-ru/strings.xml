@@ -86,7 +86,7 @@
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.3.0 · основано на идеях открытого клиента usque (MIT)</string>
+    <string name="about_text">Hydra 0.4 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
     <string name="engine_label">Движок: %1$s</string>
 
     <string name="vpn_off">Не подключено</string>
@@ -101,4 +101,21 @@
     <string name="tile_rtt">Задержка</string>
     <string name="tile_route">Маршрут</string>
     <string name="need_apps_toast">Сначала выбери приложения (вкладка «Приложения») или включи режим «Все, кроме выбранных»</string>
+
+    <string name="apps_header_chosen">Выбранные (%1$d)</string>
+    <string name="apps_header_rest">Все приложения</string>
+    <string name="journal_title">Журнал</string>
+    <string name="journal_copy">Копировать</string>
+    <string name="journal_clear">Очистить</string>
+    <string name="journal_empty">Пока пусто. Подключись или зарегистрируйся — каждый шаг появится здесь.</string>
+    <string name="journal_see">Подробности — в журнале (вкладка «Проверка»).</string>
+    <string name="channel_title">Канал связи</string>
+    <string name="channel_auto">Автоматически</string>
+    <string name="channel_cell">Мобильная сеть</string>
+    <string name="channel_hint">Мобильная сеть: туннель идёт через мобильный интернет, даже когда включён Wi-Fi. Помогает, если провайдер домашнего Wi-Fi ведёт только в запрещённый дата-центр. Расходует мобильный трафик.</string>
+    <string name="fallback_any">Подключаться, даже если иначе никак</string>
+    <string name="fallback_hint">Если все адреса ведут в запрещённый дата-центр — подключиться к нему, а не сидеть без интернета.</string>
+    <string name="action_register_cell">Зарегистрировать через мобильную сеть</string>
+    <string name="licenses_title">Лицензии</string>
+    <string name="licenses_text">Гидра использует открытые компоненты: usque (лицензия MIT), quic-go и другие под свободными лицензиями. Полные тексты — в файле NOTICE репозитория проекта.</string>
 </resources>
