@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=9
+NEW=10
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -618,7 +618,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v9 =====================
+# ===================== v10 =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -3539,6 +3539,7 @@ type route struct {
 	name string
 	d    NamedDialer
 	m    regMethod
+	base string // адрес API (у Cloudflare их два: api.cloudflareclient.com и api.devices.cloudflare.com)
 }
 
 type Registrar struct {
@@ -3593,10 +3594,25 @@ func (r *Registrar) routes() []route {
 			}
 		}
 	}
+	type baseSpec struct{ tag, url string }
+	bases := []baseSpec{
+		{"cf", apiBaseURL},
+		{"dev4471", "https://api.devices.cloudflare.com/v0a4471"},
+		{"dev5641", "https://api.devices.cloudflare.com/v0a5641"},
+	}
+	if r.BaseURL != "" { // тесты
+		bases = []baseSpec{{"", r.BaseURL}}
+	}
 	var out []route
 	for _, m := range ms { // сначала дешёвые способы на всех сетях
-		for _, d := range ds {
-			out = append(out, route{name: m.name + "@" + d.Name, d: d, m: m})
+		for _, b := range bases {
+			for _, d := range ds {
+				name := m.name + "@" + d.Name
+				if b.tag != "" {
+					name += "/" + b.tag
+				}
+				out = append(out, route{name: name, d: d, m: m, base: b.url})
+			}
 		}
 	}
 	return out
@@ -3730,7 +3746,7 @@ func randHex(n int) string {
 func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 	cl := r.client(rt)
 	if r.WG {
-		return r.attemptWG(ctx, cl)
+		return r.attemptWG(ctx, cl, rt.base)
 	}
 
 	wgPub := make([]byte, 32) // как у приложения: «ключ WireGuard», который мы не используем
@@ -3747,7 +3763,7 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 		"tunnel_type":   "wireguard",
 	}
 	var reg regResp
-	if err := r.do(ctx, cl, "POST", "/reg", "", regBody, &reg); err != nil {
+	if err := r.do(ctx, cl, rt.base, "POST", "/reg", "", regBody, &reg); err != nil {
 		return nil, err
 	}
 	rr := reg.norm()
@@ -3774,7 +3790,7 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 		"name":        "Hydra",
 	}
 	var en regResp
-	if err := r.do(ctx, cl, "PATCH", "/reg/"+rr.ID, rr.Token, enroll, &en); err != nil {
+	if err := r.do(ctx, cl, rt.base, "PATCH", "/reg/"+rr.ID, rr.Token, enroll, &en); err != nil {
 		return nil, err
 	}
 
@@ -3798,12 +3814,12 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 	return acc, nil
 }
 
-func (r *Registrar) do(ctx context.Context, cl *http.Client, verb, path, token string, body, out any) error {
+func (r *Registrar) do(ctx context.Context, cl *http.Client, base, verb, path, token string, body, out any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, verb, r.base()+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, verb, base+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -3974,7 +3990,7 @@ func dohQuery(ctx context.Context, d NamedDialer, u string) ([]string, error) {
 }
 
 // attemptWG — регистрация обычного (WireGuard) устройства WARP: как делает wgcf.
-func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client) (*Account, error) {
+func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client, base string) (*Account, error) {
 	k, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
@@ -3991,7 +4007,7 @@ func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client) (*Account, e
 		"tunnel_type":   "wireguard",
 	}
 	var reg regResp
-	if err := r.do(ctx, cl, "POST", "/reg", "", body, &reg); err != nil {
+	if err := r.do(ctx, cl, base, "POST", "/reg", "", body, &reg); err != nil {
 		return nil, err
 	}
 	rr := reg.norm()
