@@ -94,6 +94,14 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 	}
 }
 
+// Worked: стратегия уже хотя бы раз подключалась в этой сети.
+func (m *Memory) Worked(net, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	return st != nil && st.OK > 0
+}
+
 // Rank сортирует стратегии: лучшие для этой сети — первыми.
 // Неизвестные получают нейтральный балл и пробуются после проверенных.
 func (m *Memory) Rank(net string, all []Strategy) []Strategy {

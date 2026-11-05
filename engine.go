@@ -329,11 +329,15 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	errc := make(chan error, 1)
 	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
 
+	timeout := e.cfg.UpTimeout
+	if e.cfg.Mem.Worked(nk, s.ID) {
+		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+	}
 	start := time.Now()
 	var colo string
 	var rtt time.Duration
 	up := false
-	for !up && time.Since(start) < e.cfg.UpTimeout {
+	for !up && time.Since(start) < timeout {
 		select {
 		case err := <-errc:
 			msg := "туннель не поднялся"
@@ -363,7 +367,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 		} else if s.Params["h2"] != "1" {
 			hint = " — похоже, провайдер режет QUIC к этому адресу"
 		}
-		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(e.cfg.UpTimeout.Seconds()), hint)
+		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(timeout.Seconds()), hint)
 		Logf("   ✘ %s", msg)
 		return e.fail(nk, s, msg)
 	}

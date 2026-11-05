@@ -119,7 +119,7 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 			var fk FakeSpec
 			fk.TTL = atoiDefault(s.Params["fttl"], 5)
 			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
-				if p, err := BuildFakeQUICInitial(fsni, 1357); err == nil {
+				if p, err := BuildFakeQUICInitial(fsni, atoiDefault(s.Params["fsize"], 1357)); err == nil {
 					fk.Payloads = append(fk.Payloads, p)
 				}
 			}

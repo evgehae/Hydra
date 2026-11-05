@@ -29,17 +29,19 @@ type fakeVariant struct {
 	sni   string
 	ttl   int
 	count int
+	size  int // размер каждого фейкового пакета, байт
 }
 
-// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). Первая — та, что у
-// Zarp дала мгновенное подключение: «VK, TTL=5, ×6».
+// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). По журналам Zarp:
+// «google ×3» (3 пакета по 1200 байт) — основная стратегия, «VK ×6» (по 1357 байт) — запасная.
 var fakeVariants = []fakeVariant{
-	{"vk5x6", "vk.com", 5, 6},
-	{"vk4x6", "vk.com", 4, 6},
-	{"vk6x6", "vk.com", 6, 6},
-	{"ya5x6", "ya.ru", 5, 6},
-	{"g5x6", "www.google.com", 5, 6},
-	{"plain", "", 0, 0},
+	{"g3", "www.google.com", 5, 3, 1200},
+	{"vk5x6", "vk.com", 5, 6, 1357},
+	{"g6", "www.google.com", 5, 6, 1200},
+	{"vk4x6", "vk.com", 4, 6, 1357},
+	{"vk6x6", "vk.com", 6, 6, 1357},
+	{"ya5x6", "ya.ru", 5, 6, 1357},
+	{"plain", "", 0, 0, 0},
 }
 
 // MasqueStrategies — способы подключиться к WARP по MASQUE: адрес сервера ×
@@ -72,8 +74,12 @@ func MasqueStrategies(acc *Account) []Strategy {
 	}
 
 	mk := func(proto, ep, alias, sni string, fv *fakeVariant) Strategy {
+		hostPort := ep
+		if _, _, err := net.SplitHostPort(ep); err != nil {
+			hostPort = net.JoinHostPort(ep, "443")
+		}
 		p := map[string]string{
-			"endpoint": net.JoinHostPort(ep, "443"),
+			"endpoint": hostPort,
 			"sni":      sni,
 			"h2":       "0",
 		}
@@ -84,6 +90,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 			p["fake"] = fv.sni
 			p["fttl"] = strconv.Itoa(fv.ttl)
 			p["fcount"] = strconv.Itoa(fv.count)
+			p["fsize"] = strconv.Itoa(fv.size)
 		}
 		return Strategy{ID: fmt.Sprintf("%s/%s/%s", proto, ep, alias), Transport: "masque", Params: p}
 	}
@@ -102,6 +109,15 @@ func MasqueStrategies(acc *Account) []Strategy {
 	} {
 		for _, ep := range eps {
 			out = append(out, mk("h3", ep, fakeVariants[0].alias+"+"+alt.alias, alt.name, &fakeVariants[0]))
+		}
+	}
+	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
+	for _, port := range []string{"500", "1701", "4500"} {
+		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
+			for i := 0; i < 2; i++ {
+				fv := &fakeVariants[i]
+				out = append(out, mk("h3", net.JoinHostPort(ep, port), fv.alias, defaultMasqueSNI, fv))
+			}
 		}
 	}
 	for _, ep := range eps {
