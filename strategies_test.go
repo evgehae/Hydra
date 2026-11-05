@@ -5,7 +5,7 @@ import "testing"
 func TestMasqueStrategies(t *testing.T) {
 	acc := &Account{EndpointV4: "162.159.198.3:0"}
 	ss := MasqueStrategies(acc)
-	if len(ss) < 60 {
+	if len(ss) < 30 {
 		t.Fatalf("мало стратегий: %d", len(ss))
 	}
 	first := ss[0]

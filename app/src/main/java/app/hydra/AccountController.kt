@@ -50,6 +50,57 @@ class AccountController(
     private fun readId(): String =
         try { mobile.Mobile.accountID(dir) } catch (t: Throwable) { "" }
 
+    // ---- конфигурация WireGuard (обычный WARP как у wgcf или своя) ----
+    var wgId by mutableStateOf(readWgId())
+        private set
+    var wgBusy by mutableStateOf(false)
+        private set
+    var wgReport by mutableStateOf("")
+        private set
+
+    private fun readWgId(): String =
+        try { mobile.Mobile.wireguardAccountID(dir) } catch (t: Throwable) { "" }
+
+    val wgFailKind: String
+        get() = if (wgReport.startsWith("FAIL")) {
+            wgReport.lineSequence().first().removePrefix("FAIL").trim()
+        } else {
+            ""
+        }
+
+    fun registerWg() {
+        if (wgBusy) return
+        wgBusy = true
+        wgReport = ""
+        scope.launch {
+            wgReport = withContext(Dispatchers.IO) {
+                try {
+                    mobile.Mobile.setDNS(dnsProvider())
+                    mobile.Mobile.registerWireguardReport(dir)
+                } catch (t: Throwable) {
+                    "FAIL internal\n" + t.message
+                }
+            }
+            wgId = readWgId()
+            wgBusy = false
+        }
+    }
+
+    fun exportWg(): String =
+        try { mobile.Mobile.exportWireguardConfig(dir) } catch (t: Throwable) { "" }
+
+    /** Пустая строка — успех, иначе текст ошибки. */
+    fun importWg(text: String): String {
+        val err = try { mobile.Mobile.importWireguardConfig(dir, text) } catch (t: Throwable) { t.message ?: "error" }
+        wgId = readWgId()
+        return err
+    }
+
+    fun deleteWg() {
+        try { mobile.Mobile.deleteWireguardConfig(dir) } catch (t: Throwable) { }
+        wgId = readWgId()
+    }
+
     /** "" если ошибки нет, иначе вид: rate_limited | blocked | dns | api | storage | internal. */
     val failKind: String
         get() = if (report.startsWith("FAIL")) {

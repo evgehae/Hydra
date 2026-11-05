@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -52,6 +53,7 @@ func SetDNS(csv string) {
 }
 
 func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
+func wgPath(dir string) string      { return filepath.Join(dir, "wg.json") }
 
 // AccountID возвращает ID сохранённого аккаунта или "".
 func AccountID(dir string) string {
@@ -62,15 +64,20 @@ func AccountID(dir string) string {
 	return a.ID
 }
 
-// RegisterReport регистрирует аккаунт WARP (если его ещё нет). Первая строка
-// отчёта: "OK" или "FAIL <вид>", вид: rate_limited | blocked | api | storage.
-func RegisterReport(dir string) string {
-	path := accountPath(dir)
+// RegisterReport регистрирует аккаунт WARP для MASQUE (если его ещё нет). Первая строка
+// отчёта: "OK" или "FAIL <вид>", вид: rate_limited | blocked | dns | api | storage.
+func RegisterReport(dir string) string { return registerReport(accountPath(dir), false) }
+
+// RegisterWireguardReport создаёт обычную конфигурацию WARP (WireGuard), как wgcf.
+func RegisterWireguardReport(dir string) string { return registerReport(wgPath(dir), true) }
+
+func registerReport(path string, wg bool) string {
 	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
-		return "OK\nаккаунт уже есть: " + a.ID
+		return "OK\nуже есть: " + a.ID
 	}
 	var sb strings.Builder
 	r := hydra.NewRegistrar()
+	r.WG = wg
 	r.Log = func(s string) {
 		sb.WriteString(s + "\n")
 		hydra.Logf("регистрация: %s", s)
@@ -118,18 +125,62 @@ func stripMask(a string) string { return strings.TrimSpace(strings.Split(a, "/")
 
 // AccountAddr4 — IPv4-адрес устройства внутри туннеля ("" если аккаунта нет).
 func AccountAddr4(dir string) string {
-	a, err := hydra.LoadAccount(accountPath(dir))
-	if err != nil || a == nil {
+	a := primaryAccount(dir)
+	if a == nil {
 		return ""
 	}
 	return stripMask(a.AddrV4)
 }
 
+// primaryAccount: аккаунт MASQUE, а если его нет — конфигурация WireGuard.
+func primaryAccount(dir string) *hydra.Account {
+	if a, err := hydra.LoadAccount(accountPath(dir)); err == nil && a != nil {
+		return a
+	}
+	if a, err := hydra.LoadAccount(wgPath(dir)); err == nil && a != nil {
+		return a
+	}
+	return nil
+}
+
 // AccountAddr6 — IPv6-адрес устройства внутри туннеля.
 func AccountAddr6(dir string) string {
-	a, err := hydra.LoadAccount(accountPath(dir))
-	if err != nil || a == nil {
+	a := primaryAccount(dir)
+	if a == nil {
 		return ""
 	}
 	return stripMask(a.AddrV6)
 }
+
+// WireguardAccountID — ID конфигурации WireGuard ("custom" для импортированной) или "".
+func WireguardAccountID(dir string) string {
+	a, err := hydra.LoadAccount(wgPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.ID
+}
+
+// ExportWireguardConfig — текст .conf для других приложений (WireGuard/AmneziaWG) или "".
+func ExportWireguardConfig(dir string) string {
+	a, err := hydra.LoadAccount(wgPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.WGConfig()
+}
+
+// ImportWireguardConfig сохраняет свою конфигурацию (.conf); пустой ответ — успех.
+func ImportWireguardConfig(dir, text string) string {
+	a, err := hydra.ParseWGConfig(text)
+	if err != nil {
+		return err.Error()
+	}
+	if err := a.Save(wgPath(dir)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
+func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }

@@ -17,21 +17,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import kotlin.math.PI
 import kotlin.math.sin
 
-/** Что сейчас делает Гидра — решает, какая голова «оживает». */
-enum class HeroMode { Off, Registering, Connecting, Connected, Failed }
+/**
+ * Что делает Гидра. Головы зажигаются по очереди и остаются гореть:
+ * аккаунт готов — у левой горят глаза; регистрация — левая дышит огнём;
+ * подключение — к левой добавляется правая; «подключено» — горят все три.
+ */
+enum class HeroMode { Off, Registered, Registering, Connecting, Connected, Failed }
 
 private class HeadSpec(val eyes: List<Offset>, val mouth: Offset, val dir: Offset)
 
@@ -41,11 +45,21 @@ private val CENTER = HeadSpec(listOf(Offset(0.452f, 0.297f), Offset(0.554f, 0.29
 private val RIGHT = HeadSpec(listOf(Offset(0.845f, 0.345f)), Offset(0.897f, 0.426f), Offset(0.85f, 0.5f))
 private val KEYHOLE = Offset(0.49f, 0.713f)
 
-/**
- * Гидра в центре главного экрана:
- * регистрация — левая голова зажигает глаза и дышит огнём,
- * подключение — правая, «подключено» — центральная.
- */
+// Огонь везде огненный: от белого жара к оранжевому и красному.
+private val FIRE_IN = Color(0xFFFFF4B0)
+private val FIRE_MID = Color(0xFFFF9A2E)
+private val FIRE_OUT = Color(0xFFE8341A)
+
+// уровни: 0 — тёмная, 1 — горят глаза, 2 — спокойный огонь, 3 — сильный огонь
+private fun levels(mode: HeroMode): Triple<Int, Int, Int> = when (mode) {
+    HeroMode.Off -> Triple(0, 0, 0)
+    HeroMode.Registered -> Triple(1, 0, 0)
+    HeroMode.Registering -> Triple(3, 0, 0)
+    HeroMode.Connecting -> Triple(2, 0, 3)
+    HeroMode.Connected -> Triple(2, 3, 2)
+    HeroMode.Failed -> Triple(0, 0, 0)
+}
+
 @Composable
 fun HydraHero(mode: HeroMode, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val inf = rememberInfiniteTransition(label = "hero")
@@ -84,26 +98,19 @@ fun HydraHero(mode: HeroMode, onClick: () -> Unit, modifier: Modifier = Modifier
                 }
         )
         Canvas(Modifier.fillMaxSize()) {
-            when (mode) {
-                HeroMode.Registering -> {
-                    head(LEFT, NeonAmber, t, true, Color(0xFFFFF2A8), Color(0xFFFF9A2E), Color(0xFFE8431A))
-                    keyhole(NeonAmber, t, 0.5f)
-                }
-                HeroMode.Connecting -> {
-                    head(RIGHT, NeonCyan, t, true, Color(0xFFE9FBFF), Color(0xFF47D4FF), Color(0xFF3B5BFF))
-                    keyhole(NeonCyan, t, 0.7f)
-                }
-                HeroMode.Connected -> {
-                    head(CENTER, NeonGreen, t, true, Color(0xFFF2FFE9), Color(0xFF84E36B), Color(0xFF19B38A), calm = true)
-                    keyhole(NeonGreen, t, 1f)
-                }
-                HeroMode.Failed -> {
-                    head(LEFT, Color(0xFFFF5A5A), t, false, Color.Red, Color.Red, Color.Red)
-                    head(CENTER, Color(0xFFFF5A5A), t, false, Color.Red, Color.Red, Color.Red)
-                    head(RIGHT, Color(0xFFFF5A5A), t, false, Color.Red, Color.Red, Color.Red)
-                    keyhole(Color(0xFFFF5A5A), t, 0.6f)
-                }
-                HeroMode.Off -> {}
+            if (mode == HeroMode.Failed) {
+                val red = Color(0xFFFF5A5A)
+                head(LEFT, red, t, 1)
+                head(CENTER, red, t, 1)
+                head(RIGHT, red, t, 1)
+                keyhole(red, t, 0.6f)
+            } else {
+                val (l, c, r) = levels(mode)
+                head(LEFT, NeonAmber, t, l)
+                head(RIGHT, NeonPink, t, r)
+                head(CENTER, Color(0xFF4DFFD0), t, c)
+                val k = maxOf(l, c, r)
+                if (k > 0) keyhole(if (c > 0) NeonGreen else NeonAmber, t, if (c > 0) 1f else 0.6f)
             }
         }
     }
@@ -111,17 +118,9 @@ fun HydraHero(mode: HeroMode, onClick: () -> Unit, modifier: Modifier = Modifier
 
 private fun DrawScope.at(o: Offset) = Offset(o.x * size.width, o.y * size.height)
 
-/** Светящиеся глаза и (если fire) огонь изо рта. */
-private fun DrawScope.head(
-    h: HeadSpec,
-    eye: Color,
-    t: Float,
-    fire: Boolean,
-    inner: Color,
-    mid: Color,
-    outer: Color,
-    calm: Boolean = false
-) {
+/** Светящиеся глаза (level ≥ 1) и огонь изо рта (level ≥ 2; 3 — сильнее). */
+private fun DrawScope.head(h: HeadSpec, eye: Color, t: Float, level: Int) {
+    if (level <= 0) return
     val pulse = 0.78f + 0.22f * sin(t * 2f * PI.toFloat() * 2f)
     val r = size.width * 0.024f
     for (e in h.eyes) {
@@ -138,10 +137,11 @@ private fun DrawScope.head(
         )
         drawCircle(Color.White.copy(alpha = pulse), r * 0.55f, c)
     }
-    if (!fire) return
+    if (level < 2) return
 
-    val len = size.width * (if (calm) 0.13f else 0.24f)
-    val n = if (calm) 14 else 24
+    val strong = level >= 3
+    val len = size.width * (if (strong) 0.25f else 0.15f)
+    val n = if (strong) 26 else 16
     val dir = h.dir / h.dir.getDistance()
     val perp = Offset(-dir.y, dir.x)
     val origin = at(h.mouth)
@@ -151,9 +151,9 @@ private fun DrawScope.head(
         val p = origin + dir * (ph * len) + perp * wob
         val pr = len * 0.17f * (1f - ph * 0.85f)
         val col = when {
-            ph < 0.25f -> inner
-            ph < 0.6f -> mid
-            else -> outer
+            ph < 0.25f -> FIRE_IN
+            ph < 0.6f -> FIRE_MID
+            else -> FIRE_OUT
         }
         drawCircle(
             brush = Brush.radialGradient(

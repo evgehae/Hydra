@@ -28,14 +28,37 @@ func StartTunnel(dir string, tunFd int) string {
 	if vpnEngine != nil {
 		return "уже запущено"
 	}
-	acc, err := hydra.LoadAccount(accountPath(dir))
-	if err != nil || acc == nil {
+	macc, _ := hydra.LoadAccount(accountPath(dir))
+	wacc, _ := hydra.LoadAccount(wgPath(dir))
+	if macc == nil && wacc == nil {
 		return "нет аккаунта WARP"
 	}
-	runner, err := hydra.NewMasqueRunner(acc)
-	if err != nil {
-		return err.Error()
+	runners := map[string]hydra.Runner{}
+	var strategies []hydra.Strategy
+	if macc != nil {
+		r, err := hydra.NewMasqueRunner(macc)
+		if err != nil {
+			return err.Error()
+		}
+		runners["masque"] = r
+		strategies = append(strategies, hydra.MasqueStrategies(macc)...)
 	}
+	if wacc != nil {
+		r, err := hydra.NewWGRunner(wacc)
+		if err != nil {
+			return err.Error()
+		}
+		runners["wg"] = r
+		strategies = append(strategies, hydra.WGStrategies(wacc)...)
+	}
+	runner := func(ctx context.Context, d hydra.PacketDevice, s hydra.Strategy) error {
+		r := runners[s.Transport]
+		if r == nil {
+			return fmt.Errorf("нет транспорта %q", s.Transport)
+		}
+		return r(ctx, d, s)
+	}
+	acc := primaryAccount(dir)
 	ip := net.ParseIP(strings.Split(acc.AddrV4, "/")[0])
 	if ip == nil {
 		return "в аккаунте нет IPv4-адреса"
@@ -44,7 +67,7 @@ func StartTunnel(dir string, tunFd int) string {
 
 	cfg := hydra.DefaultEngineConfig()
 	cfg.LocalIP = ip
-	cfg.Strategies = hydra.MasqueStrategies(acc)
+	cfg.Strategies = strategies
 	cfg.Runner = runner
 	cfg.Policy = currentPolicy()
 	cfg.Mem = mem

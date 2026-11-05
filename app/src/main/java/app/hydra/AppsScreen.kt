@@ -96,12 +96,7 @@ fun AppsScreen(prefs: Prefs) {
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp)) {
-            Text(
-                stringResource(R.string.apps_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = NeonCyan
-            )
+            RainbowText(stringResource(R.string.apps_title))
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(

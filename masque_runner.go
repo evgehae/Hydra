@@ -102,6 +102,15 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 			return errors.New("адрес сервера не IP: " + host)
 		}
 		h2 := s.Params["h2"] == "1"
+		if !h2 {
+			// быстрая проверка маршрута: «network is unreachable» (например, нет IPv6) — сразу отказ
+			c, derr := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
+			if derr != nil {
+				Logf("   ✘ нет маршрута до %s: %v", host, derr)
+				return fmt.Errorf("нет маршрута до %s", host)
+			}
+			c.Close()
+		}
 		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
 		if h2 {
 			ep = &net.TCPAddr{IP: ip, Port: port}

@@ -23,6 +23,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.OutlinedButton
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,8 +44,9 @@ import androidx.compose.ui.unit.sp
 fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
     val ctx = LocalContext.current
     val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
-    val hasAccount = account.id.isNotEmpty()
+    val hasAccount = account.id.isNotEmpty() || account.wgId.isNotEmpty()
     val needAppsToast = stringResource(R.string.need_apps_toast)
+    val scope = rememberCoroutineScope()
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) vpn.start()
@@ -68,7 +73,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
         vpn.state == "up" -> HeroMode.Connected
         vpn.state == "connecting" || vpn.state == "reconnecting" -> HeroMode.Connecting
         vpn.state == "failed" -> HeroMode.Failed
-        else -> HeroMode.Off
+        else -> HeroMode.Registered
     }
 
     val title = when {
@@ -94,8 +99,8 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
         HeroMode.Connected -> NeonGreen
         HeroMode.Failed -> scheme.error
         HeroMode.Registering -> NeonAmber
-        HeroMode.Connecting -> NeonCyan
-        HeroMode.Off -> scheme.onBackground
+        HeroMode.Connecting -> NeonOrange
+        HeroMode.Off, HeroMode.Registered -> scheme.onBackground
     }
 
     Column(
@@ -113,15 +118,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
             )
             Spacer(Modifier.width(12.dp))
             Column {
-                Text(
-                    "HYDRA",
-                    style = TextStyle(
-                        brush = Brush.linearGradient(listOf(NeonCyan, NeonViolet, NeonPink)),
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 5.sp
-                    )
-                )
+                RainbowText("HYDRA", fontSize = 32.sp, letterSpacing = 5.sp)
                 Text(
                     stringResource(R.string.home_tagline),
                     style = MaterialTheme.typography.bodySmall,
@@ -142,6 +139,41 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(18.dp))
+
+        // Все маршруты ведут в запрещённый дата-центр: предлагаем выход одним нажатием.
+        if (vpn.state == "failed" && vpn.message.startsWith("⛔")) {
+            HCard(accent = NeonAmber) {
+                Text(
+                    stringResource(R.string.banner_blocked_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NeonAmber
+                )
+                Text(
+                    stringResource(R.string.banner_blocked_text),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            prefs.channel = "cell"
+                            scope.launch { vpn.stop(); delay(1200); vpn.start() }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.banner_use_cell)) }
+                    OutlinedButton(
+                        onClick = {
+                            prefs.fallbackAny = true
+                            scope.launch { vpn.stop(); delay(1200); vpn.start() }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(stringResource(R.string.banner_allow)) }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Tile(
@@ -178,7 +210,8 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
                 },
                 stringResource(R.string.step_account),
                 when {
-                    hasAccount -> stringResource(R.string.step_account_ok, account.id.take(8))
+                    account.id.isNotEmpty() -> stringResource(R.string.step_account_ok, account.id.take(8))
+                    account.wgId.isNotEmpty() -> stringResource(R.string.step_account_wg, account.wgId.take(8))
                     failKind.isNotEmpty() -> failText(failKind)
                     else -> stringResource(R.string.step_account_none)
                 },

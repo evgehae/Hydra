@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +84,68 @@ func TestJournal(t *testing.T) {
 	JournalClear()
 	if JournalText(0) != "" {
 		t.Fatal("журнал не очистился")
+	}
+}
+
+func TestJournalWriterFiltersNoise(t *testing.T) {
+	JournalClear()
+	w := JournalWriter{}
+	w.Write([]byte("dropping proxied packet (96 bytes) that can't be proxied: connect-ip: datagram Hop Limit too small: 1\n"))
+	w.Write([]byte("Connected to MASQUE server\n"))
+	txt := JournalText(0)
+	if !strings.Contains(txt, "Connected to MASQUE server") || strings.Contains(txt, "Hop Limit") {
+		t.Fatalf("журнал: %q", txt)
+	}
+}
+
+func TestUDPRelayJunkBeforeEveryWGInit(t *testing.T) {
+	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	got := make(chan int, 32)
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			n, _, err := srv.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			got <- n
+		}
+	}()
+	r, err := StartUDPRelay(srv.LocalAddr().(*net.UDPAddr), FakeSpec{
+		PerInit: func() [][]byte { return [][]byte{make([]byte, 41), make([]byte, 42)} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	c, _ := net.DialUDP("udp", nil, r.Addr())
+	defer c.Close()
+
+	init := append([]byte{1, 0, 0, 0}, make([]byte, 144)...)
+	for round := 0; round < 2; round++ {
+		c.Write(init)
+		for _, want := range []int{41, 42, 148} {
+			select {
+			case n := <-got:
+				if n != want {
+					t.Fatalf("раунд %d: ждали пакет %d байт, пришло %d", round, want, n)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("раунд %d: не дождались пакета %d байт", round, want)
+			}
+		}
+	}
+	c.Write(make([]byte, 20)) // не рукопожатие — без «мусора»
+	select {
+	case n := <-got:
+		if n != 20 {
+			t.Fatalf("после обычного пакета «мусора» быть не должно, пришло %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("обычный пакет не дошёл")
 	}
 }

@@ -62,9 +62,10 @@ func MasqueStrategies(acc *Account) []Strategy {
 	if acc != nil {
 		add(hostOnly(acc.EndpointV4))
 	}
+	// Только настоящие серверы MASQUE. Адреса WireGuard (162.159.192/193/195.x,
+	// 188.114.96/97.x) отвечают на QUIC, но на рукопожатии получают TLS handshake failure.
 	for _, h := range []string{
-		"162.159.198.1", "162.159.192.1", "162.159.193.1", "162.159.195.1",
-		"188.114.96.1", "188.114.97.1",
+		"162.159.198.1",
 		"2606:4700:103::2", "2606:4700:103::1",
 	} {
 		add(h)
@@ -110,6 +111,13 @@ func MasqueStrategies(acc *Account) []Strategy {
 }
 
 func describeStrategy(s Strategy) string {
+	if s.Transport == "wg" {
+		out := "WireGuard → " + s.Params["endpoint"]
+		if jc := s.Params["jc"]; jc != "" {
+			out += fmt.Sprintf(", «мусор» перед рукопожатием: %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
+		}
+		return out
+	}
 	proto := "HTTP/3 (QUIC)"
 	if s.Params["h2"] == "1" {
 		proto = "HTTP/2 (TCP)"

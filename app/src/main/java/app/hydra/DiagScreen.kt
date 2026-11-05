@@ -53,12 +53,7 @@ fun DiagScreen(prefs: Prefs) {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 18.dp, vertical = 12.dp)
     ) {
-        Text(
-            stringResource(R.string.diag_title),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = NeonCyan
-        )
+        RainbowText(stringResource(R.string.diag_title))
         Text(
             stringResource(R.string.diag_sub),
             style = MaterialTheme.typography.bodyMedium,

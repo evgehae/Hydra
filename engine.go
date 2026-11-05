@@ -48,7 +48,7 @@ type EngineConfig struct {
 }
 
 func DefaultEngineConfig() EngineConfig {
-	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 8 * time.Second, BadProbes: 3, TCPCheck: true}
+	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 6 * time.Second, BadProbes: 3, TCPCheck: true}
 }
 
 type Status struct {
@@ -314,6 +314,14 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	case <-e.cfg.NetChanged:
 	default:
 	}
+	// старые пробы от прошлых попыток в очереди только мешают
+	for drained := false; !drained; {
+		select {
+		case <-e.probeQ:
+		default:
+			drained = true
+		}
+	}
 
 	actx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -350,7 +358,9 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	}
 	if !up {
 		hint := ""
-		if s.Params["h2"] != "1" {
+		if s.Transport == "wg" {
+			hint = " — похоже, провайдер режет WireGuard (UDP) к этому адресу"
+		} else if s.Params["h2"] != "1" {
 			hint = " — похоже, провайдер режет QUIC к этому адресу"
 		}
 		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(e.cfg.UpTimeout.Seconds()), hint)
@@ -537,11 +547,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		msg := lastReason
 		switch {
 		case ran == 0 && skipped > 0:
-			msg = "все адреса сейчас ведут в запрещённые дата-центры — жду"
+			msg = "⛔ все адреса сейчас ведут в запрещённые дата-центры — жду"
 		case ran == 0:
 			msg = "нет стратегий"
 		case sawBlocked:
-			msg = "рабочие маршруты ведут только в запрещённые дата-центры"
+			msg = "⛔ рабочие маршруты ведут только в запрещённые дата-центры"
 		}
 		Logf("✘ подключиться не удалось: %s; повтор через %s", msg, backoff)
 		e.setStatus(Status{State: "failed", Message: msg})

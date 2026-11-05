@@ -17,6 +17,11 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.Canvas as GfxCanvas
+import androidx.compose.material3.Text
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
 
 // Неоновая палитра Гидры.
 val NeonCyan = Color(0xFF47D4FF)
@@ -24,15 +29,22 @@ val NeonViolet = Color(0xFFA98BFF)
 val NeonPink = Color(0xFFFF7AD9)
 val NeonGreen = Color(0xFF84E36B)
 val NeonAmber = Color(0xFFFFC857)
+val NeonOrange = Color(0xFFFF9A62)
+
+/** Радуга для заголовков: голубой → синий → фиолетовый → розовый → оранжевый → янтарный. */
+val RainbowColors = listOf(
+    Color(0xFF4DD2FF), Color(0xFF7C8CFF), Color(0xFFB06BFF),
+    Color(0xFFFF6BD6), Color(0xFFFF9A62), Color(0xFFFFD166)
+)
 val HydraGreen = NeonGreen
 
 private val HydraColors = darkColorScheme(
-    primary = NeonCyan,
-    onPrimary = Color(0xFF00243D),
+    primary = NeonViolet,
+    onPrimary = Color(0xFF1B0F52),
     primaryContainer = Color(0xFF0F2A57),
     onPrimaryContainer = Color(0xFFCFE8FF),
-    secondary = NeonViolet,
-    onSecondary = Color(0xFF1B0F52),
+    secondary = NeonCyan,
+    onSecondary = Color(0xFF00243D),
     tertiary = NeonGreen,
     background = Color(0xFF080C18),
     onBackground = Color(0xFFE6ECFA),
@@ -75,8 +87,22 @@ fun HydraBackground(content: @Composable () -> Unit) {
             .drawBehind { drawRect(brush = carbon) }
             .background(
                 Brush.verticalGradient(
-                    listOf(NeonViolet.copy(alpha = 0.10f), Color.Transparent, NeonCyan.copy(alpha = 0.06f))
+                    listOf(NeonPink.copy(alpha = 0.10f), Color.Transparent, NeonOrange.copy(alpha = 0.07f))
                 )
             )
     ) { content() }
+}
+
+/** Заголовок с радужной заливкой, как у RotatorOS. */
+@Composable
+fun RainbowText(text: String, fontSize: TextUnit = 28.sp, letterSpacing: TextUnit = 0.sp) {
+    Text(
+        text,
+        style = TextStyle(
+            brush = Brush.linearGradient(RainbowColors),
+            fontSize = fontSize,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = letterSpacing
+        )
+    )
 }

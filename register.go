@@ -3,6 +3,7 @@ package hydra
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -58,6 +59,14 @@ type Account struct {
 	AddrV4        string    `json:"addr_v4"`
 	AddrV6        string    `json:"addr_v6"`
 	Created       time.Time `json:"created"`
+
+	// Для конфигураций WireGuard (Kind == "wg"): ключ — X25519 в base64.
+	Kind     string `json:"kind,omitempty"`
+	Custom   bool   `json:"custom,omitempty"` // импортирована пользователем
+	Jc       int    `json:"jc,omitempty"`     // «мусорные» пакеты перед рукопожатием (как в AmneziaWG)
+	Jmin     int    `json:"jmin,omitempty"`
+	Jmax     int    `json:"jmax,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
 }
 
 const exportPrefix = "hydra1:"
@@ -236,6 +245,7 @@ type Registrar struct {
 	Timeout  time.Duration // на один маршрут
 	Attempts int           // сколько раундов гонки
 	Backoff  time.Duration // базовая пауза между раундами (удваивается)
+	WG       bool          // регистрировать конфигурацию WireGuard (а не MASQUE)
 	Log      func(string)
 }
 
@@ -375,6 +385,7 @@ func (r *Registrar) raceOnce(ctx context.Context) (*Account, error) {
 // ---------- один маршрут ----------
 
 type regConfig struct {
+	ClientID string `json:"client_id"`
 	Peers []struct {
 		PublicKey string `json:"public_key"`
 		Endpoint  struct {
@@ -414,6 +425,9 @@ func randHex(n int) string {
 
 func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 	cl := r.client(rt)
+	if r.WG {
+		return r.attemptWG(ctx, cl)
+	}
 
 	wgPub := make([]byte, 32) // как у приложения: «ключ WireGuard», который мы не используем
 	rand.Read(wgPub)
@@ -653,4 +667,52 @@ func dohQuery(ctx context.Context, d NamedDialer, u string) ([]string, error) {
 		}
 	}
 	return ips, nil
+}
+
+// attemptWG — регистрация обычного (WireGuard) устройства WARP: как делает wgcf.
+func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client) (*Account, error) {
+	k, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]any{
+		"key":           base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()),
+		"install_id":    "",
+		"fcm_token":     "",
+		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		"model":         "Android",
+		"serial_number": randHex(8),
+		"locale":        "en_US",
+		"key_type":      "curve25519",
+		"tunnel_type":   "wireguard",
+	}
+	var reg regResp
+	if err := r.do(ctx, cl, "POST", "/reg", "", body, &reg); err != nil {
+		return nil, err
+	}
+	rr := reg.norm()
+	if rr.ID == "" || rr.Token == "" || len(rr.Config.Peers) == 0 {
+		return nil, &protoError{"в ответе API нет данных о сервере WireGuard"}
+	}
+	cfg := rr.Config
+	host := hostOnly(cfg.Peers[0].Endpoint.V4)
+	if host == "" {
+		host = hostOnly(cfg.Peers[0].Endpoint.Host)
+	}
+	if host == "" {
+		host = "162.159.192.1"
+	}
+	return &Account{
+		Kind:          "wg",
+		ID:            rr.ID,
+		Token:         rr.Token,
+		PrivateKey:    base64.StdEncoding.EncodeToString(k.Bytes()),
+		PeerPublicKey: cfg.Peers[0].PublicKey,
+		EndpointV4:    net.JoinHostPort(host, "2408"),
+		AddrV4:        cfg.Interface.Addresses.V4,
+		AddrV6:        cfg.Interface.Addresses.V6,
+		ClientID:      cfg.ClientID,
+		Jc:            4, Jmin: 40, Jmax: 70,
+		Created: time.Now().UTC(),
+	}, nil
 }

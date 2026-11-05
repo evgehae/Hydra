@@ -14,7 +14,9 @@ import (
 // FakeSpec описывает фейковые пакеты: Payloads шлются по очереди с TTL.
 type FakeSpec struct {
 	Payloads [][]byte
-	TTL      int
+	TTL      int // 0 — отправлять с обычным TTL
+	// PerInit — «мусор» перед каждым рукопожатием WireGuard (сообщение типа 1).
+	PerInit func() [][]byte
 }
 
 type UDPRelay struct {
@@ -58,6 +60,11 @@ func (r *UDPRelay) loop() {
 			return
 		}
 		if up := r.peer(from); up != nil {
+			if r.fake.PerInit != nil && IsWGInit(buf[:n]) {
+				for _, j := range r.fake.PerInit() {
+					up.Write(j)
+				}
+			}
 			up.Write(buf[:n])
 		}
 	}
@@ -93,12 +100,14 @@ func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
 }
 
 func (r *UDPRelay) sendFakes(c *net.UDPConn) {
-	if len(r.fake.Payloads) == 0 || r.fake.TTL <= 0 {
+	if len(r.fake.Payloads) == 0 {
 		return
 	}
-	if err := setTTL(c, r.fake.TTL); err != nil {
-		Logf("   ⚠ не удалось выставить TTL=%d (%v) — фейки не отправляю", r.fake.TTL, err)
-		return
+	if r.fake.TTL > 0 {
+		if err := setTTL(c, r.fake.TTL); err != nil {
+			Logf("   ⚠ не удалось выставить TTL=%d (%v) — фейки не отправляю", r.fake.TTL, err)
+			return
+		}
 	}
 	total := 0
 	for _, p := range r.fake.Payloads {
@@ -106,7 +115,9 @@ func (r *UDPRelay) sendFakes(c *net.UDPConn) {
 			total += len(p)
 		}
 	}
-	setTTL(c, 64)
+	if r.fake.TTL > 0 {
+		setTTL(c, 64)
+	}
 	Logf("   фейковых пакетов: %d, %d байт, TTL=%d → %s", len(r.fake.Payloads), total, r.fake.TTL, r.remote)
 }
 

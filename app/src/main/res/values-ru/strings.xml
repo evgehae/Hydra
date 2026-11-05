@@ -86,7 +86,7 @@
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.4 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
+    <string name="about_text">Hydra 0.5 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
     <string name="engine_label">Движок: %1$s</string>
 
     <string name="vpn_off">Не подключено</string>
@@ -117,5 +117,23 @@
     <string name="fallback_hint">Если все адреса ведут в запрещённый дата-центр — подключиться к нему, а не сидеть без интернета.</string>
     <string name="action_register_cell">Зарегистрировать через мобильную сеть</string>
     <string name="licenses_title">Лицензии</string>
-    <string name="licenses_text">Гидра использует открытые компоненты: usque (лицензия MIT), quic-go и другие под свободными лицензиями. Полные тексты — в файле NOTICE репозитория проекта.</string>
+    <string name="licenses_text">Гидра использует открытые компоненты: usque (лицензия MIT), quic-go, wireguard-go и другие под свободными лицензиями. Полные тексты — в файле NOTICE репозитория проекта.</string>
+
+    <string name="banner_blocked_title">Все маршруты ведут в запрещённый дата-центр</string>
+    <string name="banner_blocked_text">В этой сети Cloudflare всегда отправляет тебя в дата-центр, который ты запретил. Выбери выход:</string>
+    <string name="banner_use_cell">Через мобильную сеть</string>
+    <string name="banner_allow">Подключиться всё равно</string>
+
+    <string name="step_account_wg">Конфигурация WireGuard · %1$s</string>
+    <string name="wg_title">Конфигурации WARP (WireGuard)</string>
+    <string name="wg_none">Конфигурации WireGuard ещё нет</string>
+    <string name="wg_ok">Конфигурация готова · %1$s</string>
+    <string name="wg_hint">Гидра создаёт обычную конфигурацию WARP (как wgcf) и подключается по ней. Серверы WireGuard у Cloudflare нередко ведут в другой дата-центр, чем MASQUE (например, во Франкфурт вместо Москвы). Конфигурацию можно скопировать в другие приложения или импортировать свою .conf (WireGuard / AmneziaWG с Jc, Jmin, Jmax).</string>
+    <string name="wg_create">Создать конфигурацию WARP (WireGuard)</string>
+    <string name="wg_copy">Копировать .conf</string>
+    <string name="wg_import">Импорт .conf</string>
+    <string name="wg_delete">Удалить конфигурацию</string>
+    <string name="wg_copied">Конфигурация скопирована</string>
+    <string name="wg_nothing">Конфигурации ещё нет</string>
+    <string name="wg_imported">Конфигурация импортирована</string>
 </resources>

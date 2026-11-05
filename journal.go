@@ -52,9 +52,11 @@ type JournalWriter struct{}
 
 func (JournalWriter) Write(p []byte) (int, error) {
 	for _, l := range strings.Split(strings.TrimRight(string(p), "\r\n"), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			Logf("· %s", l)
+		l = strings.TrimSpace(l)
+		if l == "" || strings.Contains(l, "Hop Limit too small") {
+			continue // служебные пакеты с hop limit 1 — не интересны
 		}
+		Logf("· %s", l)
 	}
 	return len(p), nil
 }

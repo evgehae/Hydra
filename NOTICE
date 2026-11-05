@@ -4,6 +4,7 @@ Hydra использует открытые компоненты:
 - usque — https://github.com/Diniboy1123/usque — MIT License (Copyright (c) Diniboy1123 and contributors)
 - форк usque, подключаемый как библиотека — https://github.com/inipew/usque — MIT License
 - quic-go и connect-ip-go — https://github.com/quic-go — MIT License
+- wireguard-go (golang.zx2c4.com/wireguard) — MIT License (Copyright (C) Jason A. Donenfeld)
 - Go и golang.org/x/... — BSD-3-Clause License
 - AndroidX и Jetpack Compose — Apache License 2.0
 

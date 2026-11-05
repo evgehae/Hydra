@@ -86,7 +86,7 @@
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.4 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
+    <string name="about_text">Hydra 0.5 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
     <string name="engine_label">Engine: %1$s</string>
 
     <string name="vpn_off">Not connected</string>
@@ -117,5 +117,23 @@
     <string name="fallback_hint">If every address leads to a blocked datacenter, connect to it rather than stay offline.</string>
     <string name="action_register_cell">Register via mobile network</string>
     <string name="licenses_title">Licenses</string>
-    <string name="licenses_text">Hydra uses open-source components: usque (MIT License), quic-go and others under permissive licenses. Full notices are in the NOTICE file of the project repository.</string>
+    <string name="licenses_text">Hydra uses open-source components: usque (MIT License), quic-go, wireguard-go and others under permissive licenses. Full notices are in the NOTICE file of the project repository.</string>
+
+    <string name="banner_blocked_title">Every route leads to a blocked datacenter</string>
+    <string name="banner_blocked_text">On this network Cloudflare always sends you to a datacenter you blocked. Pick a way out:</string>
+    <string name="banner_use_cell">Via mobile network</string>
+    <string name="banner_allow">Connect anyway</string>
+
+    <string name="step_account_wg">WireGuard config · %1$s</string>
+    <string name="wg_title">WARP configurations (WireGuard)</string>
+    <string name="wg_none">No WireGuard config yet</string>
+    <string name="wg_ok">Config ready · %1$s</string>
+    <string name="wg_hint">Hydra creates a regular WARP config (like wgcf) and connects with it. WireGuard servers of Cloudflare often lead to another datacenter than MASQUE (for example Frankfurt instead of Moscow). You can copy the config to other apps or import your own .conf (WireGuard / AmneziaWG with Jc, Jmin, Jmax).</string>
+    <string name="wg_create">Create WARP config (WireGuard)</string>
+    <string name="wg_copy">Copy .conf</string>
+    <string name="wg_import">Import .conf</string>
+    <string name="wg_delete">Delete config</string>
+    <string name="wg_copied">Config copied</string>
+    <string name="wg_nothing">No config yet</string>
+    <string name="wg_imported">Config imported</string>
 </resources>

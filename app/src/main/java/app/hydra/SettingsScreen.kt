@@ -45,11 +45,15 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var kill by remember { mutableStateOf(prefs.killSwitch) }
     var note by remember { mutableStateOf("") }
+    var wgNote by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
 
     val copiedMsg = stringResource(R.string.account_copied)
     val nothingMsg = stringResource(R.string.account_nothing)
     val importedMsg = stringResource(R.string.account_imported)
+    val wgCopiedMsg = stringResource(R.string.wg_copied)
+    val wgNothingMsg = stringResource(R.string.wg_nothing)
+    val wgImportedMsg = stringResource(R.string.wg_imported)
     val scheme = MaterialTheme.colorScheme
 
     Column(
@@ -59,12 +63,7 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            stringResource(R.string.settings_title),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = NeonCyan
-        )
+        RainbowText(stringResource(R.string.settings_title))
 
         // Язык
         HCard(accent = NeonCyan) {
@@ -252,9 +251,90 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             }
         }
 
-        // Подключение
+        // Конфигурации WARP (WireGuard): создать как wgcf или импортировать свою
         HCard(accent = NeonAmber) {
-            SectionTitle(stringResource(R.string.conn_title), NeonAmber)
+            SectionTitle(stringResource(R.string.wg_title), NeonAmber)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (account.wgId.isEmpty()) {
+                    stringResource(R.string.wg_none)
+                } else {
+                    stringResource(R.string.wg_ok, account.wgId.take(8))
+                },
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                stringResource(R.string.wg_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+            Button(
+                onClick = { account.registerWg() },
+                enabled = !account.wgBusy && account.wgId.isEmpty(),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                if (account.wgBusy) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = scheme.onPrimary)
+                } else {
+                    Text(stringResource(R.string.wg_create))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val s = account.exportWg()
+                        if (s.isEmpty()) {
+                            wgNote = wgNothingMsg
+                        } else {
+                            clipboard.setText(AnnotatedString(s))
+                            wgNote = wgCopiedMsg
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(R.string.wg_copy)) }
+                OutlinedButton(
+                    onClick = {
+                        val text = clipboard.getText()?.text.orEmpty()
+                        val err = account.importWg(text)
+                        wgNote = if (err.isEmpty()) wgImportedMsg else err
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(R.string.wg_import)) }
+            }
+            if (account.wgId.isNotEmpty()) {
+                TextButton(onClick = { account.deleteWg(); wgNote = "" }) {
+                    Text(stringResource(R.string.wg_delete))
+                }
+            }
+            if (wgNote.isNotEmpty()) {
+                Text(
+                    wgNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.primary,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            if (account.wgFailKind.isNotEmpty()) {
+                Text(
+                    failText(account.wgFailKind),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.error,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+                Text(
+                    stringResource(R.string.journal_see),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Подключение
+        HCard(accent = NeonOrange) {
+            SectionTitle(stringResource(R.string.conn_title), NeonOrange)
             SwitchRow(stringResource(R.string.settings_autostart), auto) {
                 auto = it
                 prefs.autoStart = it
