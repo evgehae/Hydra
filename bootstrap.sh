@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=8
+NEW=9
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -618,7 +618,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v8 =====================
+# ===================== v9 =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -1237,11 +1237,15 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	errc := make(chan error, 1)
 	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
 
+	timeout := e.cfg.UpTimeout
+	if e.cfg.Mem.Worked(nk, s.ID) {
+		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+	}
 	start := time.Now()
 	var colo string
 	var rtt time.Duration
 	up := false
-	for !up && time.Since(start) < e.cfg.UpTimeout {
+	for !up && time.Since(start) < timeout {
 		select {
 		case err := <-errc:
 			msg := "туннель не поднялся"
@@ -1271,7 +1275,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 		} else if s.Params["h2"] != "1" {
 			hint = " — похоже, провайдер режет QUIC к этому адресу"
 		}
-		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(e.cfg.UpTimeout.Seconds()), hint)
+		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(timeout.Seconds()), hint)
 		Logf("   ✘ %s", msg)
 		return e.fail(nk, s, msg)
 	}
@@ -1856,7 +1860,7 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 			var fk FakeSpec
 			fk.TTL = atoiDefault(s.Params["fttl"], 5)
 			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
-				if p, err := BuildFakeQUICInitial(fsni, 1357); err == nil {
+				if p, err := BuildFakeQUICInitial(fsni, atoiDefault(s.Params["fsize"], 1357)); err == nil {
 					fk.Payloads = append(fk.Payloads, p)
 				}
 			}
@@ -1883,6 +1887,135 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 		})
 		return ctx.Err()
 	}, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/memory.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/json"
+	"math"
+	"os"
+	"sort"
+	"sync"
+	"time"
+)
+
+type stat struct {
+	OK     int       `json:"ok"`
+	Fail   int       `json:"fail"`
+	EWMAms float64   `json:"ewma_ms"`
+	LastOK time.Time `json:"last_ok"`
+}
+
+// Memory — «память Гидры»: что работало в какой сети.
+// Ключ сети (net) выдаёт Android-часть: например "wifi:<hash>" или "cell:25001".
+type Memory struct {
+	mu   sync.Mutex
+	path string
+	Nets map[string]map[string]*stat `json:"nets"`
+}
+
+func LoadMemory(path string) (*Memory, error) {
+	m := &Memory{path: path, Nets: map[string]map[string]*stat{}}
+	if path == "" {
+		return m, nil
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return m, nil
+	}
+	if err != nil {
+		return m, err
+	}
+	if err := json.Unmarshal(b, m); err != nil {
+		m.Nets = map[string]map[string]*stat{}
+		return m, err
+	}
+	if m.Nets == nil {
+		m.Nets = map[string]map[string]*stat{}
+	}
+	return m, nil
+}
+
+func (m *Memory) Save() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.path == "" {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	tmp := m.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.path)
+}
+
+func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := m.Nets[net]
+	if n == nil {
+		n = map[string]*stat{}
+		m.Nets[net] = n
+	}
+	s := n[id]
+	if s == nil {
+		s = &stat{}
+		n[id] = s
+	}
+	if ok {
+		s.OK++
+		s.LastOK = time.Now()
+		ms := float64(d.Milliseconds())
+		if s.EWMAms == 0 {
+			s.EWMAms = ms
+		} else {
+			s.EWMAms = 0.7*s.EWMAms + 0.3*ms
+		}
+	} else {
+		s.Fail++
+	}
+	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
+		s.OK /= 2
+		s.Fail /= 2
+	}
+}
+
+// Worked: стратегия уже хотя бы раз подключалась в этой сети.
+func (m *Memory) Worked(net, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	return st != nil && st.OK > 0
+}
+
+// Rank сортирует стратегии: лучшие для этой сети — первыми.
+// Неизвестные получают нейтральный балл и пробуются после проверенных.
+func (m *Memory) Rank(net string, all []Strategy) []Strategy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := append([]Strategy(nil), all...)
+	score := func(s Strategy) float64 {
+		st := m.Nets[net][s.ID]
+		if st == nil {
+			return 0.5
+		}
+		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
+		pen := math.Min(st.EWMAms/5000, 0.3)
+		bonus := 0.0
+		if time.Since(st.LastOK) < 24*time.Hour {
+			bonus = 0.1
+		}
+		return rate - pen + bonus
+	}
+	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
+	return out
 }
 HYDRA_EOF
 
@@ -4088,17 +4221,19 @@ type fakeVariant struct {
 	sni   string
 	ttl   int
 	count int
+	size  int // размер каждого фейкового пакета, байт
 }
 
-// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). Первая — та, что у
-// Zarp дала мгновенное подключение: «VK, TTL=5, ×6».
+// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). По журналам Zarp:
+// «google ×3» (3 пакета по 1200 байт) — основная стратегия, «VK ×6» (по 1357 байт) — запасная.
 var fakeVariants = []fakeVariant{
-	{"vk5x6", "vk.com", 5, 6},
-	{"vk4x6", "vk.com", 4, 6},
-	{"vk6x6", "vk.com", 6, 6},
-	{"ya5x6", "ya.ru", 5, 6},
-	{"g5x6", "www.google.com", 5, 6},
-	{"plain", "", 0, 0},
+	{"g3", "www.google.com", 5, 3, 1200},
+	{"vk5x6", "vk.com", 5, 6, 1357},
+	{"g6", "www.google.com", 5, 6, 1200},
+	{"vk4x6", "vk.com", 4, 6, 1357},
+	{"vk6x6", "vk.com", 6, 6, 1357},
+	{"ya5x6", "ya.ru", 5, 6, 1357},
+	{"plain", "", 0, 0, 0},
 }
 
 // MasqueStrategies — способы подключиться к WARP по MASQUE: адрес сервера ×
@@ -4131,8 +4266,12 @@ func MasqueStrategies(acc *Account) []Strategy {
 	}
 
 	mk := func(proto, ep, alias, sni string, fv *fakeVariant) Strategy {
+		hostPort := ep
+		if _, _, err := net.SplitHostPort(ep); err != nil {
+			hostPort = net.JoinHostPort(ep, "443")
+		}
 		p := map[string]string{
-			"endpoint": net.JoinHostPort(ep, "443"),
+			"endpoint": hostPort,
 			"sni":      sni,
 			"h2":       "0",
 		}
@@ -4143,6 +4282,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 			p["fake"] = fv.sni
 			p["fttl"] = strconv.Itoa(fv.ttl)
 			p["fcount"] = strconv.Itoa(fv.count)
+			p["fsize"] = strconv.Itoa(fv.size)
 		}
 		return Strategy{ID: fmt.Sprintf("%s/%s/%s", proto, ep, alias), Transport: "masque", Params: p}
 	}
@@ -4161,6 +4301,15 @@ func MasqueStrategies(acc *Account) []Strategy {
 	} {
 		for _, ep := range eps {
 			out = append(out, mk("h3", ep, fakeVariants[0].alias+"+"+alt.alias, alt.name, &fakeVariants[0]))
+		}
+	}
+	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
+	for _, port := range []string{"500", "1701", "4500"} {
+		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
+			for i := 0; i < 2; i++ {
+				fv := &fakeVariants[i]
+				out = append(out, mk("h3", net.JoinHostPort(ep, port), fv.alias, defaultMasqueSNI, fv))
+			}
 		}
 	}
 	for _, ep := range eps {
@@ -4201,9 +4350,18 @@ func TestMasqueStrategies(t *testing.T) {
 		t.Fatalf("мало стратегий: %d", len(ss))
 	}
 	first := ss[0]
-	if first.ID != "h3/162.159.198.2/vk5x6" || first.Params["fake"] != "vk.com" ||
-		first.Params["fttl"] != "5" || first.Params["fcount"] != "6" {
-		t.Fatalf("первой должна идти проверенная «VK ttl=5 ×6»: %+v", first)
+	if first.ID != "h3/162.159.198.2/g3" || first.Params["fake"] != "www.google.com" ||
+		first.Params["fcount"] != "3" || first.Params["fsize"] != "1200" {
+		t.Fatalf("первой должна идти основная стратегия Zarp «google ×3»: %+v", first)
+	}
+	sawPort500 := false
+	for _, s := range ss {
+		if s.Params["endpoint"] == "162.159.198.2:500" {
+			sawPort500 = true
+		}
+	}
+	if !sawPort500 {
+		t.Fatal("нет стратегий с портом 500")
 	}
 	if ss[1].Params["endpoint"] != "162.159.198.3:443" {
 		t.Fatalf("вторым должен идти адрес из аккаунта: %+v", ss[1])
