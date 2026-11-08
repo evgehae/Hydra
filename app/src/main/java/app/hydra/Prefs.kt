@@ -18,7 +18,7 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putStringSet("split_apps", v.toSet()).apply() }
 
     var autoStart: Boolean
-        get() = sp.getBoolean("auto_start", false)
+        get() = sp.getBoolean("auto_start", true)
         set(v) { sp.edit().putBoolean("auto_start", v).apply() }
 
     var killSwitch: Boolean
@@ -44,6 +44,16 @@ class Prefs(ctx: Context) {
     var fallbackAny: Boolean
         get() = sp.getBoolean("fallback_any", false)
         set(v) { sp.edit().putBoolean("fallback_any", v).apply() }
+
+    /** Пользователь нажал «подключить» и не отключал: держим VPN, пока он сам не выключит. */
+    var wantConnected: Boolean
+        get() = sp.getBoolean("want_connected", false)
+        set(v) { sp.edit().putBoolean("want_connected", v).apply() }
+
+    /** Протокол: "auto" (оба, запасной подхватывает), "masque" или "wg". */
+    var protocol: String
+        get() = sp.getString("protocol", "auto") ?: "auto"
+        set(v) { sp.edit().putString("protocol", v).apply() }
 
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }

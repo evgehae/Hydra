@@ -78,10 +78,12 @@ func NewWGRunner(acc *Account) (Runner, error) {
 		}
 
 		var fk FakeSpec
-		if jc := atoiDefault(s.Params["jc"], 0); jc > 0 {
-			jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
-			fk.PerInit = func() [][]byte { return GenJunk(jc, jmin, jmax) }
-			Logf("   «мусорные» пакеты перед рукопожатием: %d × %d–%d байт", jc, jmin, jmax)
+		sig := s.Params["sig"]
+		jc := atoiDefault(s.Params["jc"], 0)
+		jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
+		if sig != "" || jc > 0 {
+			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
+			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)
 		}
 		relay, err := StartUDPRelay(remote, fk)
 		if err != nil {

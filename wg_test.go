@@ -75,12 +75,55 @@ func TestWGUAPIAndJunk(t *testing.T) {
 func TestWGStrategies(t *testing.T) {
 	a := &Account{Kind: "wg", EndpointV4: "162.159.192.1:2408"}
 	ss := WGStrategies(a)
-	if len(ss) < 15 || ss[0].Params["jc"] != "4" || ss[0].Transport != "wg" {
+	if len(ss) < 30 || ss[0].Params["sig"] != "quic" || ss[0].Params["jc"] != "3" || ss[0].Transport != "wg" {
 		t.Fatalf("стратегии: %d, первая %+v", len(ss), ss[0])
+	}
+	saw188, saw8 := false, false
+	for _, s := range ss {
+		h := hostOnly(s.Params["endpoint"])
+		if strings.HasPrefix(h, "188.114.") {
+			saw188 = true
+		}
+		if strings.HasPrefix(h, "8.34.") || strings.HasPrefix(h, "8.39.") {
+			saw8 = true
+		}
+	}
+	if !saw188 || !saw8 {
+		t.Fatalf("не хватает подсетей: 188.114=%v 8.x=%v", saw188, saw8)
 	}
 	own := &Account{Kind: "wg", Custom: true, EndpointV4: "vpn.example.com:51820"}
 	os := WGStrategies(own)
 	if len(os) != 2 || os[0].Params["endpoint"] != "vpn.example.com:51820" {
 		t.Fatalf("свой конфиг: %+v", os)
+	}
+}
+
+func TestWGPrefixLooksLikeVarvara(t *testing.T) {
+	q := BuildQUICLike()
+	if len(q) != 108 || q[0] != 0xC0 || q[4] != 1 || q[5] != 8 || q[16] != 0x40 || q[17] != 90 {
+		t.Fatalf("QUIC-подобный пакет: %x", q[:20])
+	}
+	pre := WGPrefix("quic", 3, 41, 78)
+	if len(pre) != 1+4+3 || len(pre[0]) != 108 {
+		t.Fatalf("пролог: %d пакетов, первый %d байт", len(pre), len(pre[0]))
+	}
+	if len(WGPrefix("", 0, 0, 0)) != 0 {
+		t.Fatal("без сигнатуры и мусора пролога быть не должно")
+	}
+	st := BuildSTUNLike()
+	if len(st) != 20 || st[4] != 0x21 || st[7] != 0x42 {
+		t.Fatalf("STUN-подобный пакет: %x", st)
+	}
+}
+
+func TestInterleave(t *testing.T) {
+	a := []Strategy{{ID: "a1"}, {ID: "a2"}, {ID: "a3"}, {ID: "a4"}}
+	b := []Strategy{{ID: "b1"}, {ID: "b2"}}
+	var ids []string
+	for _, s := range Interleave(a, b, 2) {
+		ids = append(ids, s.ID)
+	}
+	if strings.Join(ids, ",") != "a1,a2,b1,b2,a3,a4" {
+		t.Fatalf("порядок: %v", ids)
 	}
 }

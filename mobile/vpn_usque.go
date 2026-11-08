@@ -41,7 +41,6 @@ func StartTunnel(dir string, tunFd int) string {
 			return err.Error()
 		}
 		runners["masque"] = r
-		strategies = append(strategies, hydra.MasqueStrategies(macc)...)
 	}
 	if wacc != nil {
 		r, err := hydra.NewWGRunner(wacc)
@@ -49,8 +48,25 @@ func StartTunnel(dir string, tunFd int) string {
 			return err.Error()
 		}
 		runners["wg"] = r
-		strategies = append(strategies, hydra.WGStrategies(wacc)...)
 	}
+	var mS, wS []hydra.Strategy
+	if macc != nil {
+		mS = hydra.MasqueStrategies(macc)
+	}
+	if wacc != nil {
+		wS = hydra.WGStrategies(wacc)
+	}
+	switch currentProtocol() {
+	case "masque":
+		if len(mS) > 0 {
+			wS = nil
+		}
+	case "wg":
+		if len(wS) > 0 {
+			mS = nil
+		}
+	}
+	strategies = hydra.Interleave(mS, wS, 3)
 	runner := func(ctx context.Context, d hydra.PacketDevice, s hydra.Strategy) error {
 		r := runners[s.Transport]
 		if r == nil {

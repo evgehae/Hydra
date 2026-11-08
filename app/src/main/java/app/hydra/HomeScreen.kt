@@ -54,7 +54,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
 
     val onTap: () -> Unit = {
         when {
-            account.busy -> {}
+            account.working -> {}
             !hasAccount -> account.register()
             vpn.active -> vpn.stop()
             prefs.splitOnlySelected && prefs.splitApps.isEmpty() ->
@@ -68,7 +68,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
 
     val scheme = MaterialTheme.colorScheme
     val mode = when {
-        account.busy -> HeroMode.Registering
+        account.working -> HeroMode.Registering
         !hasAccount -> HeroMode.Off
         vpn.state == "up" -> HeroMode.Connected
         vpn.state == "connecting" || vpn.state == "reconnecting" -> HeroMode.Connecting
@@ -77,7 +77,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
     }
 
     val title = when {
-        account.busy -> stringResource(R.string.home_status_registering)
+        account.working -> stringResource(R.string.home_status_registering)
         !hasAccount -> stringResource(R.string.home_status_need_account)
         vpn.state == "up" -> stringResource(R.string.vpn_up)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting)
@@ -86,7 +86,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
         else -> stringResource(R.string.vpn_off)
     }
     val sub = when {
-        account.busy -> stringResource(R.string.home_sub_registering)
+        account.working -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
         vpn.state == "up" ->
             if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_up_sub, coloLabel(vpn.colo))
@@ -215,7 +215,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
                     failKind.isNotEmpty() -> failText(failKind)
                     else -> stringResource(R.string.step_account_none)
                 },
-                actionLabel = if (hasAccount || account.busy) null else registerLabel,
+                actionLabel = if (hasAccount || account.working) null else registerLabel,
                 onAction = { account.register() }
             )
             StepRow(

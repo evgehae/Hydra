@@ -21,7 +21,13 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,6 +81,17 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
     var tab by rememberSaveable { mutableStateOf(0) }
 
+    // разрешение на уведомления (Android 13+): постоянное уведомление держит VPN живым
+    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        account.ensureAll()
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
@@ -110,7 +127,7 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
             when (tab) {
                 0 -> HomeScreen(prefs, account, vpn)
                 1 -> AppsScreen(prefs)
-                2 -> DiagScreen(prefs)
+                2 -> DiagScreen(prefs, vpn)
                 else -> SettingsScreen(prefs, account, onLanguageChanged)
             }
         }

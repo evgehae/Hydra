@@ -73,14 +73,7 @@ class AccountController(
         wgBusy = true
         wgReport = ""
         scope.launch {
-            wgReport = withContext(Dispatchers.IO) {
-                try {
-                    mobile.Mobile.setDNS(dnsProvider())
-                    mobile.Mobile.registerWireguardReport(dir)
-                } catch (t: Throwable) {
-                    "FAIL internal\n" + t.message
-                }
-            }
+            wgReport = withContext(Dispatchers.IO) { runRegisterWg() }
             wgId = readWgId()
             wgBusy = false
         }
@@ -116,6 +109,40 @@ class AccountController(
         } catch (t: Throwable) {
             "FAIL internal\n" + t.message
         }
+
+    private var autoTried = false
+
+    val working: Boolean get() = busy || wgBusy
+
+    private fun runRegisterWg(): String =
+        try {
+            mobile.Mobile.setDNS(dnsProvider())
+            mobile.Mobile.registerWireguardReport(dir)
+        } catch (t: Throwable) {
+            "FAIL internal\n" + t.message
+        }
+
+    /** При первом запуске тихо создаёт оба аккаунта (MASQUE и WireGuard): протоколы страхуют друг друга. */
+    fun ensureAll() {
+        if (autoTried) return
+        autoTried = true
+        scope.launch {
+            if (id.isEmpty() && !busy) {
+                busy = true
+                report = ""
+                report = withContext(Dispatchers.IO) { runRegister() }
+                id = readId()
+                busy = false
+            }
+            if (wgId.isEmpty() && !wgBusy) {
+                wgBusy = true
+                wgReport = ""
+                wgReport = withContext(Dispatchers.IO) { runRegisterWg() }
+                wgId = readWgId()
+                wgBusy = false
+            }
+        }
+    }
 
     fun register() {
         if (busy) return

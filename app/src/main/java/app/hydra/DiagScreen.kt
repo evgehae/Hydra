@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun DiagScreen(prefs: Prefs) {
+fun DiagScreen(prefs: Prefs, vpn: VpnController) {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
     var res by remember { mutableStateOf<DiagResult?>(null) }
@@ -60,6 +60,28 @@ fun DiagScreen(prefs: Prefs) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
+
+        // Что делает сам туннель Гидры (проверяется изнутри, а не снаружи)
+        HCard(accent = NeonOrange) {
+            SectionTitle(stringResource(R.string.diag_tunnel_title), NeonOrange)
+            if (vpn.state == "up") {
+                StepRow(StepState.Done, stringResource(R.string.diag_proto), stringResource(protoRes(vpn.strategy)))
+                StepRow(
+                    if (vpn.colo in blocked) StepState.Failed else StepState.Done,
+                    stringResource(R.string.diag_dc),
+                    coloLabel(vpn.colo)
+                )
+                StepRow(StepState.Done, stringResource(R.string.diag_ping), stringResource(R.string.diag_ms, vpn.rttMs))
+            } else {
+                Text(
+                    stringResource(R.string.diag_tunnel_off),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
 
         Button(
             onClick = {
@@ -90,6 +112,13 @@ fun DiagScreen(prefs: Prefs) {
         if (r != null) {
             Spacer(Modifier.height(14.dp))
             HCard(accent = NeonGreen) {
+                SectionTitle(stringResource(R.string.diag_direct_title), NeonGreen)
+                Text(
+                    stringResource(R.string.diag_direct_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                )
                 val failed = stringResource(R.string.diag_fail)
                 val dnsText = if (r.dnsOk) stringResource(R.string.diag_ms, r.dnsMs.toInt()) else failed
                 val httpsText = if (r.httpsOk) stringResource(R.string.diag_ms, r.httpsMs.toInt()) else failed

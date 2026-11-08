@@ -129,8 +129,11 @@ func MasqueStrategies(acc *Account) []Strategy {
 func describeStrategy(s Strategy) string {
 	if s.Transport == "wg" {
 		out := "WireGuard → " + s.Params["endpoint"]
+		if sg := s.Params["sig"]; sg != "" {
+			out += ", сигнатура " + sg
+		}
 		if jc := s.Params["jc"]; jc != "" {
-			out += fmt.Sprintf(", «мусор» перед рукопожатием: %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
+			out += fmt.Sprintf(", мусор %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
 		}
 		return out
 	}

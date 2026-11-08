@@ -1,6 +1,12 @@
 package app.hydra
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -25,6 +31,8 @@ class HydraVpnService : VpnService() {
         const val ACTION_START = "app.hydra.action.START"
         const val ACTION_STOP = "app.hydra.action.STOP"
         private const val TAG = "Hydra"
+        private const val CHANNEL = "hydra_status"
+        private const val NOTIF_ID = 1
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -33,12 +41,72 @@ class HydraVpnService : VpnService() {
     private var forceCell = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return if (intent?.action == ACTION_STOP) {
+        goForeground(getString(R.string.notif_connecting))
+        val prefs = Prefs(this)
+        if (intent?.action == ACTION_STOP) {
             stopVpn()
-            START_NOT_STICKY
-        } else {
-            startVpn()
-            START_STICKY
+            return START_NOT_STICKY
+        }
+        // перезапуск системой (intent == null) — только если пользователь хотел VPN
+        if (intent == null && !(prefs.wantConnected || prefs.autoStart)) {
+            stopVpn()
+            return START_NOT_STICKY
+        }
+        startVpn()
+        return START_STICKY
+    }
+
+    private fun buildNotification(text: String): Notification {
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+        )
+        return Notification.Builder(this, CHANNEL)
+            .setContentTitle("Hydra")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setContentIntent(pi)
+            .setOngoing(true)
+            .build()
+    }
+
+    /** Постоянное уведомление держит сервис на переднем плане: система его не убивает. */
+    private fun goForeground(text: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Hydra", NotificationManager.IMPORTANCE_LOW)
+            )
+            val n = buildNotification(text)
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIF_ID, n)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "передний план: " + t.message)
+        }
+    }
+
+    /** Раз в 3 секунды: обновляет уведомление и, если ядро остановилось, а VPN нужен, поднимает заново. */
+    private val statusUpdater = object : Runnable {
+        override fun run() {
+            try {
+                val raw = mobile.Mobile.engineStatus()
+                val p = raw.split("|")
+                val text = when (p.getOrElse(0) { "off" }) {
+                    "up" -> getString(R.string.notif_up, p.getOrElse(2) { "" }, p.getOrElse(3) { "0" }.toIntOrNull() ?: 0)
+                    "reconnecting" -> getString(R.string.notif_reconnecting)
+                    "failed" -> getString(R.string.notif_failed)
+                    else -> getString(R.string.notif_connecting)
+                }
+                getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
+                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected) {
+                    Log.w(TAG, "ядро остановилось — поднимаю заново")
+                    startVpn()
+                }
+            } catch (t: Throwable) {
+            }
+            handler.postDelayed(this, 3000)
         }
     }
 
@@ -53,6 +121,7 @@ class HydraVpnService : VpnService() {
         try {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
+            mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
         } catch (t: Throwable) {
@@ -165,6 +234,8 @@ class HydraVpnService : VpnService() {
             return
         }
         watchNetwork()
+        handler.removeCallbacks(statusUpdater)
+        handler.postDelayed(statusUpdater, 3000)
     }
 
     /** Ключ сети: "cell" при принудительном канале, иначе "wifi"/"cell"/"default" (сам VPN не считается). */
@@ -214,6 +285,8 @@ class HydraVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        Prefs(this).wantConnected = false
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (t: Throwable) { }
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         netCallback = null
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
@@ -230,6 +303,7 @@ class HydraVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }

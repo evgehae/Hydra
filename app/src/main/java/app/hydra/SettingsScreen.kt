@@ -1,5 +1,13 @@
 package app.hydra
 
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,7 +51,37 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
-    var kill by remember { mutableStateOf(prefs.killSwitch) }
+    var proto by remember { mutableStateOf(prefs.protocol) }
+    var editing by remember { mutableStateOf(false) }
+    var conf by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
+    val openVpnSettings: () -> Unit = {
+        try { ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } catch (t: Throwable) { }
+    }
+    val openBattery: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName))
+            )
+        } catch (t: Throwable) {
+            try { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (t2: Throwable) { }
+        }
+    }
+    val openAutostart: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent().setComponent(
+                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                )
+            )
+        } catch (t: Throwable) {
+            try {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName))
+                )
+            } catch (t2: Throwable) { }
+        }
+    }
     var note by remember { mutableStateOf("") }
     var wgNote by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
@@ -108,6 +146,34 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             }
             Text(
                 stringResource(R.string.channel_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+
+        // Протокол
+        HCard(accent = NeonCyan) {
+            SectionTitle(stringResource(R.string.proto_title), NeonCyan)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "auto" to R.string.proto_auto,
+                    "masque" to R.string.proto_masque_chip,
+                    "wg" to R.string.proto_wg_chip
+                ).forEach { (code, res) ->
+                    FilterChip(
+                        selected = proto == code,
+                        onClick = {
+                            proto = code
+                            prefs.protocol = code
+                        },
+                        label = { Text(stringResource(res)) }
+                    )
+                }
+            }
+            Text(
+                stringResource(R.string.proto_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
@@ -304,6 +370,41 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.wg_import)) }
             }
+            OutlinedButton(
+                onClick = {
+                    if (editing) {
+                        editing = false
+                    } else {
+                        conf = account.exportWg().ifEmpty { WG_TEMPLATE }
+                        editing = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(stringResource(if (editing) R.string.wg_cancel else R.string.wg_edit)) }
+            if (editing) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = conf,
+                    onValueChange = { conf = it },
+                    minLines = 8,
+                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val err = account.importWg(conf)
+                        if (err.isEmpty()) {
+                            editing = false
+                            wgNote = wgImportedMsg
+                        } else {
+                            wgNote = err
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text(stringResource(R.string.wg_save)) }
+            }
             if (account.wgId.isNotEmpty()) {
                 TextButton(onClick = { account.deleteWg(); wgNote = "" }) {
                     Text(stringResource(R.string.wg_delete))
@@ -334,19 +435,33 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
 
         // Подключение
         HCard(accent = NeonOrange) {
-            SectionTitle(stringResource(R.string.conn_title), NeonOrange)
+            SectionTitle(stringResource(R.string.persist_title), NeonOrange)
             SwitchRow(stringResource(R.string.settings_autostart), auto) {
                 auto = it
                 prefs.autoStart = it
             }
-            SwitchRow(stringResource(R.string.settings_killswitch), kill) {
-                kill = it
-                prefs.killSwitch = it
+            Text(
+                stringResource(R.string.persist_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+            OutlinedButton(onClick = openVpnSettings, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_always_on))
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = openBattery, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_battery))
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = openAutostart, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_autostart_xiaomi))
             }
             Text(
-                stringResource(R.string.settings_soon),
+                stringResource(R.string.kill_info),
                 style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
 
@@ -376,3 +491,15 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
         Spacer(Modifier.height(8.dp))
     }
 }
+
+private const val WG_TEMPLATE = """[Interface]
+PrivateKey = 
+Address = 172.16.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = 
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.192.3:2408
+PersistentKeepalive = 25
+"""

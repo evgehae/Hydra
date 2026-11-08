@@ -86,7 +86,7 @@
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.5 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
+    <string name="about_text">Hydra 0.6 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
     <string name="engine_label">Движок: %1$s</string>
 
     <string name="vpn_off">Не подключено</string>
@@ -136,4 +136,33 @@
     <string name="wg_copied">Конфигурация скопирована</string>
     <string name="wg_nothing">Конфигурации ещё нет</string>
     <string name="wg_imported">Конфигурация импортирована</string>
+
+    <string name="notif_connecting">Подключаюсь…</string>
+    <string name="notif_up">Подключено · %1$s · %2$d мс</string>
+    <string name="notif_reconnecting">Переподключаюсь…</string>
+    <string name="notif_failed">Нет соединения, повторяю</string>
+    <string name="diag_tunnel_title">Через Гидру (туннель)</string>
+    <string name="diag_tunnel_off">Туннель выключен. Подключись, чтобы увидеть его проверки.</string>
+    <string name="diag_proto">Протокол</string>
+    <string name="diag_ping">Задержка</string>
+    <string name="proto_masque">MASQUE (HTTP/3, QUIC)</string>
+    <string name="proto_masque2">MASQUE (HTTP/2)</string>
+    <string name="proto_wg">WireGuard</string>
+    <string name="proto_unknown">неизвестно</string>
+    <string name="diag_direct_title">Прямое соединение (мимо VPN)</string>
+    <string name="diag_direct_hint">Сама Гидра работает мимо VPN, поэтому эти проверки идут напрямую. «WARP: выключен» здесь нормально.</string>
+    <string name="persist_title">Постоянная работа</string>
+    <string name="persist_hint">Гидра подключается после загрузки телефона и держит соединение, пока ты сам не выключишь. Для самой крепкой хватки включи системный «Всегда включённый VPN», разреши работу в фоне и (на Xiaomi) автозапуск.</string>
+    <string name="btn_always_on">Системный «Всегда включённый VPN»</string>
+    <string name="btn_battery">Разрешить работу в фоне</string>
+    <string name="btn_autostart_xiaomi">Автозапуск (Xiaomi)</string>
+    <string name="kill_info">Пока туннель не работает или переключается, трафик приложений в VPN блокируется, а не утекает. Системный пункт «Блокировать подключения без VPN» делает это ещё строже.</string>
+    <string name="proto_title">Протокол</string>
+    <string name="proto_auto">Авто</string>
+    <string name="proto_masque_chip">MASQUE</string>
+    <string name="proto_wg_chip">WireGuard</string>
+    <string name="proto_hint">Авто: оба протокола страхуют друг друга. Если один перестал работать, второй подхватывает.</string>
+    <string name="wg_edit">Править конфигурацию</string>
+    <string name="wg_cancel">Отменить правку</string>
+    <string name="wg_save">Сохранить конфигурацию</string>
 </resources>

@@ -2,6 +2,7 @@ package app.hydra
 
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -54,16 +55,29 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
     }
 
     fun start() {
-        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START))
+        Prefs(ctx).wantConnected = true
+        ContextCompat.startForegroundService(
+            ctx, Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START)
+        )
     }
 
     fun stop() {
+        Prefs(ctx).wantConnected = false
         ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP))
     }
 }
 
-/** "h3/162.159.198.1/std" -> "H3 · std" */
-fun routeLabel(strategy: String): String {
-    val p = strategy.split("/")
-    return if (p.size == 3) p[0].uppercase() + " · " + p[2] else "—"
+/** "wg/162.159.192.3:2408/q3" -> "WireGuard", "h3/..." -> "MASQUE·H3". */
+fun routeLabel(strategy: String): String = when (strategy.substringBefore("/")) {
+    "wg" -> "WireGuard"
+    "h2" -> "MASQUE·H2"
+    "h3" -> "MASQUE·H3"
+    else -> "—"
+}
+
+fun protoRes(strategy: String): Int = when (strategy.substringBefore("/")) {
+    "wg" -> R.string.proto_wg
+    "h2" -> R.string.proto_masque2
+    "h3" -> R.string.proto_masque
+    else -> R.string.proto_unknown
 }

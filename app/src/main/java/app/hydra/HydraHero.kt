@@ -40,9 +40,9 @@ enum class HeroMode { Off, Registered, Registering, Connecting, Connected, Faile
 private class HeadSpec(val eyes: List<Offset>, val mouth: Offset, val dir: Offset)
 
 // Координаты — доли картинки hero_hydra (глаза, пасти, замочная скважина).
-private val LEFT = HeadSpec(listOf(Offset(0.155f, 0.345f)), Offset(0.093f, 0.416f), Offset(-0.85f, 0.5f))
-private val CENTER = HeadSpec(listOf(Offset(0.452f, 0.297f), Offset(0.554f, 0.297f)), Offset(0.5f, 0.408f), Offset(0f, 1f))
-private val RIGHT = HeadSpec(listOf(Offset(0.845f, 0.345f)), Offset(0.897f, 0.426f), Offset(0.85f, 0.5f))
+private val LEFT = HeadSpec(listOf(Offset(0.155f, 0.345f)), Offset(0.1125f, 0.4418f), Offset(-0.85f, 0.45f))
+private val CENTER = HeadSpec(listOf(Offset(0.452f, 0.297f), Offset(0.554f, 0.297f)), Offset(0.5f, 0.4418f), Offset(0f, 1f))
+private val RIGHT = HeadSpec(listOf(Offset(0.845f, 0.345f)), Offset(0.873f, 0.463f), Offset(0.85f, 0.45f))
 private val KEYHOLE = Offset(0.49f, 0.713f)
 
 // Огонь везде огненный: от белого жара к оранжевому и красному.
@@ -140,24 +140,37 @@ private fun DrawScope.head(h: HeadSpec, eye: Color, t: Float, level: Int) {
     if (level < 2) return
 
     val strong = level >= 3
-    val len = size.width * (if (strong) 0.25f else 0.15f)
-    val n = if (strong) 26 else 16
+    val len = size.width * (if (strong) 0.36f else 0.22f)
+    val n = if (strong) 40 else 24
     val dir = h.dir / h.dir.getDistance()
     val perp = Offset(-dir.y, dir.x)
     val origin = at(h.mouth)
+
+    // раскалённое свечение у пасти
+    drawCircle(
+        brush = Brush.radialGradient(
+            listOf(FIRE_MID.copy(alpha = 0.55f * pulse), Color.Transparent),
+            center = origin,
+            radius = len * 0.45f
+        ),
+        radius = len * 0.45f,
+        center = origin,
+        blendMode = BlendMode.Plus
+    )
+    // языки пламени
     for (i in 0 until n) {
         val ph = (t + i.toFloat() / n) % 1f
-        val wob = sin(ph * 2f * PI.toFloat() * 1.5f + i * 1.7f) * len * 0.11f * ph
+        val wob = sin(ph * 2f * PI.toFloat() * 2.2f + i * 1.9f) * len * 0.16f * ph
         val p = origin + dir * (ph * len) + perp * wob
-        val pr = len * 0.17f * (1f - ph * 0.85f)
+        val pr = len * 0.20f * (1f - ph * 0.8f)
         val col = when {
-            ph < 0.25f -> FIRE_IN
-            ph < 0.6f -> FIRE_MID
+            ph < 0.22f -> FIRE_IN
+            ph < 0.55f -> FIRE_MID
             else -> FIRE_OUT
         }
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(col.copy(alpha = 0.9f * (1f - ph)), Color.Transparent),
+                listOf(col.copy(alpha = 0.95f * (1f - ph)), Color.Transparent),
                 center = p,
                 radius = pr * 2.1f
             ),
@@ -165,6 +178,14 @@ private fun DrawScope.head(h: HeadSpec, eye: Color, t: Float, level: Int) {
             center = p,
             blendMode = BlendMode.Plus
         )
+    }
+    // искры
+    val sparks = if (strong) 10 else 5
+    for (i in 0 until sparks) {
+        val ph = (t * 1.5f + i * 0.37f) % 1f
+        val side = sin(i * 12.9898f) * len * 0.35f * ph
+        val p = origin + dir * (ph * len * 1.25f) + perp * side
+        drawCircle(FIRE_IN.copy(alpha = 0.9f * (1f - ph)), size.width * 0.006f, p)
     }
 }
 

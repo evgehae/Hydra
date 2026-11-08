@@ -12,6 +12,7 @@ var (
 	polBlock = ""
 	polAllow = ""
 	polSoft  = false
+	polProto = "auto"
 	netKey   = "default"
 	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
 	netEvents = make(chan struct{}, 1)
@@ -30,6 +31,19 @@ func SetFallback(on bool) {
 	polMu.Lock()
 	polSoft = on
 	polMu.Unlock()
+}
+
+// SetProtocol выбирает протокол: "auto" (оба, запасной подхватывает), "masque" или "wg".
+func SetProtocol(p string) {
+	polMu.Lock()
+	polProto = strings.TrimSpace(p)
+	polMu.Unlock()
+}
+
+func currentProtocol() string {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polProto
 }
 
 // SetNetKey сообщает ядру, в какой сети телефон ("wifi", "cell"). Смена ключа

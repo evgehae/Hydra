@@ -86,7 +86,7 @@
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.5 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
+    <string name="about_text">Hydra 0.6 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
     <string name="engine_label">Engine: %1$s</string>
 
     <string name="vpn_off">Not connected</string>
@@ -136,4 +136,33 @@
     <string name="wg_copied">Config copied</string>
     <string name="wg_nothing">No config yet</string>
     <string name="wg_imported">Config imported</string>
+
+    <string name="notif_connecting">Connecting…</string>
+    <string name="notif_up">Connected · %1$s · %2$d ms</string>
+    <string name="notif_reconnecting">Reconnecting…</string>
+    <string name="notif_failed">No connection, retrying</string>
+    <string name="diag_tunnel_title">Through Hydra (tunnel)</string>
+    <string name="diag_tunnel_off">The tunnel is off. Connect to see its checks.</string>
+    <string name="diag_proto">Protocol</string>
+    <string name="diag_ping">Latency</string>
+    <string name="proto_masque">MASQUE (HTTP/3, QUIC)</string>
+    <string name="proto_masque2">MASQUE (HTTP/2)</string>
+    <string name="proto_wg">WireGuard</string>
+    <string name="proto_unknown">unknown</string>
+    <string name="diag_direct_title">Direct connection (bypasses VPN)</string>
+    <string name="diag_direct_hint">Hydra itself stays outside the VPN, so these checks go directly. “WARP: off” here is normal.</string>
+    <string name="persist_title">Always running</string>
+    <string name="persist_hint">Hydra connects after the phone boots and holds the connection until you turn it off. For the strongest hold, enable the system Always-on VPN, allow background work and (Xiaomi) autostart.</string>
+    <string name="btn_always_on">System Always-on VPN</string>
+    <string name="btn_battery">Allow background work</string>
+    <string name="btn_autostart_xiaomi">Autostart (Xiaomi)</string>
+    <string name="kill_info">While the tunnel is down or switching, traffic of routed apps is blocked, not leaked. The system option “Block connections without VPN” makes it even stricter.</string>
+    <string name="proto_title">Protocol</string>
+    <string name="proto_auto">Auto</string>
+    <string name="proto_masque_chip">MASQUE</string>
+    <string name="proto_wg_chip">WireGuard</string>
+    <string name="proto_hint">Auto: both protocols back each other up. If one stops working, the other takes over.</string>
+    <string name="wg_edit">Edit config</string>
+    <string name="wg_cancel">Cancel editing</string>
+    <string name="wg_save">Save config</string>
 </resources>
