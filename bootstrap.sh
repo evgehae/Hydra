@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=10
+NEW=11
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -618,7 +618,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v10 =====================
+# ===================== v11 =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -1413,7 +1413,8 @@ func (e *Engine) Run(ctx context.Context) error {
 				continue
 			}
 			ep := s.Params["endpoint"]
-			if until, ok := blocked[ep]; ep != "" && ok && time.Now().Before(until) {
+			epKey := hostOnly(ep)
+			if until, ok := blocked[epKey]; ep != "" && ok && time.Now().Before(until) {
 				skipped++
 				continue
 			}
@@ -1426,7 +1427,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			if r.coloBlocked != "" {
 				sawBlocked = true
 				if ep != "" {
-					blocked[ep] = time.Now().Add(10 * time.Minute)
+					blocked[epKey] = time.Now().Add(10 * time.Minute)
 					Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
 				}
 			}
@@ -2037,7 +2038,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -2223,6 +2224,7 @@ var (
 	polBlock = ""
 	polAllow = ""
 	polSoft  = false
+	polProto = "auto"
 	netKey   = "default"
 	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
 	netEvents = make(chan struct{}, 1)
@@ -2241,6 +2243,19 @@ func SetFallback(on bool) {
 	polMu.Lock()
 	polSoft = on
 	polMu.Unlock()
+}
+
+// SetProtocol выбирает протокол: "auto" (оба, запасной подхватывает), "masque" или "wg".
+func SetProtocol(p string) {
+	polMu.Lock()
+	polProto = strings.TrimSpace(p)
+	polMu.Unlock()
+}
+
+func currentProtocol() string {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polProto
 }
 
 // SetNetKey сообщает ядру, в какой сети телефон ("wifi", "cell"). Смена ключа
@@ -2338,7 +2353,6 @@ func StartTunnel(dir string, tunFd int) string {
 			return err.Error()
 		}
 		runners["masque"] = r
-		strategies = append(strategies, hydra.MasqueStrategies(macc)...)
 	}
 	if wacc != nil {
 		r, err := hydra.NewWGRunner(wacc)
@@ -2346,8 +2360,25 @@ func StartTunnel(dir string, tunFd int) string {
 			return err.Error()
 		}
 		runners["wg"] = r
-		strategies = append(strategies, hydra.WGStrategies(wacc)...)
 	}
+	var mS, wS []hydra.Strategy
+	if macc != nil {
+		mS = hydra.MasqueStrategies(macc)
+	}
+	if wacc != nil {
+		wS = hydra.WGStrategies(wacc)
+	}
+	switch currentProtocol() {
+	case "masque":
+		if len(mS) > 0 {
+			wS = nil
+		}
+	case "wg":
+		if len(wS) > 0 {
+			mS = nil
+		}
+	}
+	strategies = hydra.Interleave(mS, wS, 3)
 	runner := func(ctx context.Context, d hydra.PacketDevice, s hydra.Strategy) error {
 		r := runners[s.Transport]
 		if r == nil {
@@ -4337,8 +4368,11 @@ func MasqueStrategies(acc *Account) []Strategy {
 func describeStrategy(s Strategy) string {
 	if s.Transport == "wg" {
 		out := "WireGuard → " + s.Params["endpoint"]
+		if sg := s.Params["sig"]; sg != "" {
+			out += ", сигнатура " + sg
+		}
 		if jc := s.Params["jc"]; jc != "" {
-			out += fmt.Sprintf(", «мусор» перед рукопожатием: %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
+			out += fmt.Sprintf(", мусор %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
 		}
 		return out
 	}
@@ -4887,13 +4921,64 @@ func ParseWGConfig(text string) (*Account, error) {
 	return acc, nil
 }
 
-// WGStrategies — способы подключиться по WireGuard: адрес × порт × «мусор».
+// BuildQUICLike — пакет, похожий на заголовок QUIC Initial (108 байт), как первый
+// пакет Варвары в её захвате: длинный заголовок, версия 1, DCID 8 байт, длина 90.
+func BuildQUICLike() []byte {
+	b := make([]byte, 108)
+	rand.Read(b)
+	b[0] = 0xC0
+	b[1], b[2], b[3], b[4] = 0, 0, 0, 1
+	b[5] = 8
+	b[14], b[15] = 0, 0
+	b[16], b[17] = 0x40, 90
+	return b
+}
+
+// BuildSTUNLike — пакет, похожий на запрос STUN Binding (20 байт, magic cookie 2112A442).
+func BuildSTUNLike() []byte {
+	b := make([]byte, 20)
+	rand.Read(b)
+	b[0], b[1], b[2], b[3] = 0, 1, 0, 0
+	b[4], b[5], b[6], b[7] = 0x21, 0x12, 0xA4, 0x42
+	return b
+}
+
+// WGPrefix — «пролог» перед каждым рукопожатием WireGuard. По захвату Варвары:
+// сначала пакет, похожий на QUIC (или STUN), затем несколько пакетов случайной
+// длины, затем настоящее рукопожатие. Сервер Cloudflare всё лишнее отбрасывает.
+func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
+	var out [][]byte
+	switch sig {
+	case "quic":
+		out = append(out, BuildQUICLike())
+	case "stun":
+		out = append(out, BuildSTUNLike())
+	}
+	if sig != "" {
+		out = append(out, GenJunk(4, 80, 120)...)
+	}
+	return append(out, GenJunk(jc, jmin, jmax)...)
+}
+
+// Подсети WireGuard-серверов Cloudflare (по данным Варвары). Разные подсети
+// по-разному маршрутизируются провайдерами: на одном Wi-Fi 162.159.192.x ведёт в HEL,
+// а 188.114.x — во FRA, тогда как MASQUE (162.159.198.x) — в DME.
+var wgSubnets = []string{
+	"162.159.192", "188.114.97", "188.114.96", "162.159.193", "162.159.195",
+	"188.114.98", "188.114.99", "8.34.70", "8.34.146", "8.35.211",
+	"8.39.125", "8.39.204", "8.39.214", "8.47.69", "8.6.112",
+}
+
+// WGStrategies — способы подключиться по WireGuard: адрес × порт × пролог.
 func WGStrategies(acc *Account) []Strategy {
 	if acc == nil || acc.Kind != "wg" {
 		return nil
 	}
-	mk := func(ep string, jc, jmin, jmax int, alias string) Strategy {
+	mk := func(ep, sig string, jc, jmin, jmax int, alias string) Strategy {
 		p := map[string]string{"endpoint": ep}
+		if sig != "" {
+			p["sig"] = sig
+		}
 		if jc > 0 {
 			p["jc"] = strconv.Itoa(jc)
 			p["jmin"] = strconv.Itoa(jmin)
@@ -4903,12 +4988,12 @@ func WGStrategies(acc *Account) []Strategy {
 	}
 	var out []Strategy
 	if acc.Custom {
-		// своя конфигурация: сначала ровно как написано, потом тот же адрес с «мусором» и без
-		out = append(out, mk(acc.EndpointV4, acc.Jc, acc.Jmin, acc.Jmax, "cfg"))
+		// своя конфигурация: сначала ровно как написано, потом тот же адрес с прологом или без него
+		out = append(out, mk(acc.EndpointV4, "", acc.Jc, acc.Jmin, acc.Jmax, "cfg"))
 		if acc.Jc == 0 {
-			out = append(out, mk(acc.EndpointV4, 4, 40, 70, "j4"))
+			out = append(out, mk(acc.EndpointV4, "quic", 3, 41, 78, "q3"))
 		} else {
-			out = append(out, mk(acc.EndpointV4, 0, 0, 0, "plain"))
+			out = append(out, mk(acc.EndpointV4, "", 0, 0, 0, "plain"))
 		}
 		return out
 	}
@@ -4920,21 +5005,56 @@ func WGStrategies(acc *Account) []Strategy {
 			hosts = append(hosts, h)
 		}
 	}
-	add(hostOnly(acc.EndpointV4))
-	for _, h := range []string{"162.159.192.1", "162.159.193.1", "162.159.195.1",
-		"188.114.96.1", "188.114.97.1", "188.114.98.1", "188.114.99.1"} {
+	// 1) адрес из аккаунта и проверенный у Варвары 162.159.192.3 — с разными прологами
+	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3"}
+	for _, h := range first {
 		add(h)
 	}
 	for _, h := range hosts {
-		out = append(out, mk(net.JoinHostPort(h, "2408"), 4, 40, 70, "j4"))
+		ep := net.JoinHostPort(h, "2408")
+		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
+		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
+		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
+		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
 	}
-	for _, h := range hosts {
-		out = append(out, mk(net.JoinHostPort(h, "2408"), 0, 0, 0, "plain"))
-	}
-	for _, port := range []string{"500", "4500", "1701"} {
-		for _, h := range hosts[:2] {
-			out = append(out, mk(net.JoinHostPort(h, port), 4, 40, 70, "j4"))
+	// 2) по одному адресу из каждой подсети (разные подсети — разные дата-центры)
+	for _, host := range []int{3, 1} {
+		for _, sub := range wgSubnets {
+			h := fmt.Sprintf("%s.%d", sub, host)
+			if seen[h] {
+				continue
+			}
+			seen[h] = true
+			out = append(out, mk(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
 		}
+	}
+	// 3) другие порты: некоторые провайдеры режут именно 2408
+	for _, port := range []string{"500", "4500", "1701"} {
+		out = append(out, mk(net.JoinHostPort("162.159.192.3", port), "quic", 3, 41, 78, "q3"))
+	}
+	return out
+}
+
+// Interleave перемешивает два списка стратегий пачками по chunk: так запасной
+// протокол начинает пробоваться сразу, а не после десятков попыток основного.
+func Interleave(a, b []Strategy, chunk int) []Strategy {
+	if chunk < 1 {
+		chunk = 3
+	}
+	var out []Strategy
+	for len(a) > 0 || len(b) > 0 {
+		n := chunk
+		if n > len(a) {
+			n = len(a)
+		}
+		out = append(out, a[:n]...)
+		a = a[n:]
+		n = chunk
+		if n > len(b) {
+			n = len(b)
+		}
+		out = append(out, b[:n]...)
+		b = b[n:]
 	}
 	return out
 }
@@ -5021,10 +5141,12 @@ func NewWGRunner(acc *Account) (Runner, error) {
 		}
 
 		var fk FakeSpec
-		if jc := atoiDefault(s.Params["jc"], 0); jc > 0 {
-			jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
-			fk.PerInit = func() [][]byte { return GenJunk(jc, jmin, jmax) }
-			Logf("   «мусорные» пакеты перед рукопожатием: %d × %d–%d байт", jc, jmin, jmax)
+		sig := s.Params["sig"]
+		jc := atoiDefault(s.Params["jc"], 0)
+		jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
+		if sig != "" || jc > 0 {
+			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
+			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)
 		}
 		relay, err := StartUDPRelay(remote, fk)
 		if err != nil {
@@ -5140,13 +5262,56 @@ func TestWGUAPIAndJunk(t *testing.T) {
 func TestWGStrategies(t *testing.T) {
 	a := &Account{Kind: "wg", EndpointV4: "162.159.192.1:2408"}
 	ss := WGStrategies(a)
-	if len(ss) < 15 || ss[0].Params["jc"] != "4" || ss[0].Transport != "wg" {
+	if len(ss) < 30 || ss[0].Params["sig"] != "quic" || ss[0].Params["jc"] != "3" || ss[0].Transport != "wg" {
 		t.Fatalf("стратегии: %d, первая %+v", len(ss), ss[0])
+	}
+	saw188, saw8 := false, false
+	for _, s := range ss {
+		h := hostOnly(s.Params["endpoint"])
+		if strings.HasPrefix(h, "188.114.") {
+			saw188 = true
+		}
+		if strings.HasPrefix(h, "8.34.") || strings.HasPrefix(h, "8.39.") {
+			saw8 = true
+		}
+	}
+	if !saw188 || !saw8 {
+		t.Fatalf("не хватает подсетей: 188.114=%v 8.x=%v", saw188, saw8)
 	}
 	own := &Account{Kind: "wg", Custom: true, EndpointV4: "vpn.example.com:51820"}
 	os := WGStrategies(own)
 	if len(os) != 2 || os[0].Params["endpoint"] != "vpn.example.com:51820" {
 		t.Fatalf("свой конфиг: %+v", os)
+	}
+}
+
+func TestWGPrefixLooksLikeVarvara(t *testing.T) {
+	q := BuildQUICLike()
+	if len(q) != 108 || q[0] != 0xC0 || q[4] != 1 || q[5] != 8 || q[16] != 0x40 || q[17] != 90 {
+		t.Fatalf("QUIC-подобный пакет: %x", q[:20])
+	}
+	pre := WGPrefix("quic", 3, 41, 78)
+	if len(pre) != 1+4+3 || len(pre[0]) != 108 {
+		t.Fatalf("пролог: %d пакетов, первый %d байт", len(pre), len(pre[0]))
+	}
+	if len(WGPrefix("", 0, 0, 0)) != 0 {
+		t.Fatal("без сигнатуры и мусора пролога быть не должно")
+	}
+	st := BuildSTUNLike()
+	if len(st) != 20 || st[4] != 0x21 || st[7] != 0x42 {
+		t.Fatalf("STUN-подобный пакет: %x", st)
+	}
+}
+
+func TestInterleave(t *testing.T) {
+	a := []Strategy{{ID: "a1"}, {ID: "a2"}, {ID: "a3"}, {ID: "a4"}}
+	b := []Strategy{{ID: "b1"}, {ID: "b2"}}
+	var ids []string
+	for _, s := range Interleave(a, b, 2) {
+		ids = append(ids, s.ID)
+	}
+	if strings.Join(ids, ",") != "a1,a2,b1,b2,a3,a4" {
+		t.Fatalf("порядок: %v", ids)
 	}
 }
 HYDRA_EOF
@@ -5180,8 +5345,8 @@ android {
         applicationId = "app.hydra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.5.0"
+        versionCode = 7
+        versionName = "0.6.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -5249,6 +5414,74 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+    </application>
+</manifest>
+HYDRA_EOF
+
+putv app/src/main/java/AndroidManifest.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Работает и на Android TV: сенсорный экран не обязателен -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.Hydra">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".HydraVpnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+        </service>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
 HYDRA_EOF
@@ -5329,14 +5562,7 @@ class AccountController(
         wgBusy = true
         wgReport = ""
         scope.launch {
-            wgReport = withContext(Dispatchers.IO) {
-                try {
-                    mobile.Mobile.setDNS(dnsProvider())
-                    mobile.Mobile.registerWireguardReport(dir)
-                } catch (t: Throwable) {
-                    "FAIL internal\n" + t.message
-                }
-            }
+            wgReport = withContext(Dispatchers.IO) { runRegisterWg() }
             wgId = readWgId()
             wgBusy = false
         }
@@ -5372,6 +5598,40 @@ class AccountController(
         } catch (t: Throwable) {
             "FAIL internal\n" + t.message
         }
+
+    private var autoTried = false
+
+    val working: Boolean get() = busy || wgBusy
+
+    private fun runRegisterWg(): String =
+        try {
+            mobile.Mobile.setDNS(dnsProvider())
+            mobile.Mobile.registerWireguardReport(dir)
+        } catch (t: Throwable) {
+            "FAIL internal\n" + t.message
+        }
+
+    /** При первом запуске тихо создаёт оба аккаунта (MASQUE и WireGuard): протоколы страхуют друг друга. */
+    fun ensureAll() {
+        if (autoTried) return
+        autoTried = true
+        scope.launch {
+            if (id.isEmpty() && !busy) {
+                busy = true
+                report = ""
+                report = withContext(Dispatchers.IO) { runRegister() }
+                id = readId()
+                busy = false
+            }
+            if (wgId.isEmpty() && !wgBusy) {
+                wgBusy = true
+                wgReport = ""
+                wgReport = withContext(Dispatchers.IO) { runRegisterWg() }
+                wgId = readWgId()
+                wgBusy = false
+            }
+        }
+    }
 
     fun register() {
         if (busy) return
@@ -5653,6 +5913,45 @@ private fun AppRow(a: AppItem, checked: Boolean, onClick: () -> Unit) {
 }
 HYDRA_EOF
 
+putv app/src/main/java/app/hydra/BootReceiver.kt <<'HYDRA_EOF'
+package app.hydra
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.net.VpnService
+import android.util.Log
+import androidx.core.content.ContextCompat
+
+/** После загрузки телефона (и после обновления приложения) сразу поднимает VPN. */
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val a = intent.action ?: return
+        val ok = a == Intent.ACTION_BOOT_COMPLETED ||
+            a == Intent.ACTION_MY_PACKAGE_REPLACED ||
+            a == "android.intent.action.QUICKBOOT_POWERON" ||
+            a == "com.htc.intent.action.QUICKBOOT_POWERON"
+        if (!ok) return
+        val prefs = Prefs(context)
+        val replaced = a == Intent.ACTION_MY_PACKAGE_REPLACED
+        if (!prefs.autoStart && !(replaced && prefs.wantConnected)) return
+        if (VpnService.prepare(context) != null) {
+            Log.w("Hydra", "автозапуск: нет разрешения на VPN — открой приложение один раз")
+            return
+        }
+        prefs.wantConnected = true
+        try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START)
+            )
+        } catch (t: Throwable) {
+            Log.e("Hydra", "автозапуск: " + t.message)
+        }
+    }
+}
+HYDRA_EOF
+
 putv app/src/main/java/app/hydra/DiagScreen.kt <<'HYDRA_EOF'
 package app.hydra
 
@@ -5697,7 +5996,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun DiagScreen(prefs: Prefs) {
+fun DiagScreen(prefs: Prefs, vpn: VpnController) {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
     var res by remember { mutableStateOf<DiagResult?>(null) }
@@ -5716,6 +6015,28 @@ fun DiagScreen(prefs: Prefs) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
+
+        // Что делает сам туннель Гидры (проверяется изнутри, а не снаружи)
+        HCard(accent = NeonOrange) {
+            SectionTitle(stringResource(R.string.diag_tunnel_title), NeonOrange)
+            if (vpn.state == "up") {
+                StepRow(StepState.Done, stringResource(R.string.diag_proto), stringResource(protoRes(vpn.strategy)))
+                StepRow(
+                    if (vpn.colo in blocked) StepState.Failed else StepState.Done,
+                    stringResource(R.string.diag_dc),
+                    coloLabel(vpn.colo)
+                )
+                StepRow(StepState.Done, stringResource(R.string.diag_ping), stringResource(R.string.diag_ms, vpn.rttMs))
+            } else {
+                Text(
+                    stringResource(R.string.diag_tunnel_off),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
 
         Button(
             onClick = {
@@ -5746,6 +6067,13 @@ fun DiagScreen(prefs: Prefs) {
         if (r != null) {
             Spacer(Modifier.height(14.dp))
             HCard(accent = NeonGreen) {
+                SectionTitle(stringResource(R.string.diag_direct_title), NeonGreen)
+                Text(
+                    stringResource(R.string.diag_direct_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                )
                 val failed = stringResource(R.string.diag_fail)
                 val dnsText = if (r.dnsOk) stringResource(R.string.diag_ms, r.dnsMs.toInt()) else failed
                 val httpsText = if (r.httpsOk) stringResource(R.string.diag_ms, r.httpsMs.toInt()) else failed
@@ -5963,7 +6291,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
 
     val onTap: () -> Unit = {
         when {
-            account.busy -> {}
+            account.working -> {}
             !hasAccount -> account.register()
             vpn.active -> vpn.stop()
             prefs.splitOnlySelected && prefs.splitApps.isEmpty() ->
@@ -5977,7 +6305,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
 
     val scheme = MaterialTheme.colorScheme
     val mode = when {
-        account.busy -> HeroMode.Registering
+        account.working -> HeroMode.Registering
         !hasAccount -> HeroMode.Off
         vpn.state == "up" -> HeroMode.Connected
         vpn.state == "connecting" || vpn.state == "reconnecting" -> HeroMode.Connecting
@@ -5986,7 +6314,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
     }
 
     val title = when {
-        account.busy -> stringResource(R.string.home_status_registering)
+        account.working -> stringResource(R.string.home_status_registering)
         !hasAccount -> stringResource(R.string.home_status_need_account)
         vpn.state == "up" -> stringResource(R.string.vpn_up)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting)
@@ -5995,7 +6323,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
         else -> stringResource(R.string.vpn_off)
     }
     val sub = when {
-        account.busy -> stringResource(R.string.home_sub_registering)
+        account.working -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
         vpn.state == "up" ->
             if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_up_sub, coloLabel(vpn.colo))
@@ -6124,7 +6452,7 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
                     failKind.isNotEmpty() -> failText(failKind)
                     else -> stringResource(R.string.step_account_none)
                 },
-                actionLabel = if (hasAccount || account.busy) null else registerLabel,
+                actionLabel = if (hasAccount || account.working) null else registerLabel,
                 onAction = { account.register() }
             )
             StepRow(
@@ -6210,9 +6538,9 @@ enum class HeroMode { Off, Registered, Registering, Connecting, Connected, Faile
 private class HeadSpec(val eyes: List<Offset>, val mouth: Offset, val dir: Offset)
 
 // Координаты — доли картинки hero_hydra (глаза, пасти, замочная скважина).
-private val LEFT = HeadSpec(listOf(Offset(0.155f, 0.345f)), Offset(0.093f, 0.416f), Offset(-0.85f, 0.5f))
-private val CENTER = HeadSpec(listOf(Offset(0.452f, 0.297f), Offset(0.554f, 0.297f)), Offset(0.5f, 0.408f), Offset(0f, 1f))
-private val RIGHT = HeadSpec(listOf(Offset(0.845f, 0.345f)), Offset(0.897f, 0.426f), Offset(0.85f, 0.5f))
+private val LEFT = HeadSpec(listOf(Offset(0.155f, 0.345f)), Offset(0.1125f, 0.4418f), Offset(-0.85f, 0.45f))
+private val CENTER = HeadSpec(listOf(Offset(0.452f, 0.297f), Offset(0.554f, 0.297f)), Offset(0.5f, 0.4418f), Offset(0f, 1f))
+private val RIGHT = HeadSpec(listOf(Offset(0.845f, 0.345f)), Offset(0.873f, 0.463f), Offset(0.85f, 0.45f))
 private val KEYHOLE = Offset(0.49f, 0.713f)
 
 // Огонь везде огненный: от белого жара к оранжевому и красному.
@@ -6310,24 +6638,37 @@ private fun DrawScope.head(h: HeadSpec, eye: Color, t: Float, level: Int) {
     if (level < 2) return
 
     val strong = level >= 3
-    val len = size.width * (if (strong) 0.25f else 0.15f)
-    val n = if (strong) 26 else 16
+    val len = size.width * (if (strong) 0.36f else 0.22f)
+    val n = if (strong) 40 else 24
     val dir = h.dir / h.dir.getDistance()
     val perp = Offset(-dir.y, dir.x)
     val origin = at(h.mouth)
+
+    // раскалённое свечение у пасти
+    drawCircle(
+        brush = Brush.radialGradient(
+            listOf(FIRE_MID.copy(alpha = 0.55f * pulse), Color.Transparent),
+            center = origin,
+            radius = len * 0.45f
+        ),
+        radius = len * 0.45f,
+        center = origin,
+        blendMode = BlendMode.Plus
+    )
+    // языки пламени
     for (i in 0 until n) {
         val ph = (t + i.toFloat() / n) % 1f
-        val wob = sin(ph * 2f * PI.toFloat() * 1.5f + i * 1.7f) * len * 0.11f * ph
+        val wob = sin(ph * 2f * PI.toFloat() * 2.2f + i * 1.9f) * len * 0.16f * ph
         val p = origin + dir * (ph * len) + perp * wob
-        val pr = len * 0.17f * (1f - ph * 0.85f)
+        val pr = len * 0.20f * (1f - ph * 0.8f)
         val col = when {
-            ph < 0.25f -> FIRE_IN
-            ph < 0.6f -> FIRE_MID
+            ph < 0.22f -> FIRE_IN
+            ph < 0.55f -> FIRE_MID
             else -> FIRE_OUT
         }
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(col.copy(alpha = 0.9f * (1f - ph)), Color.Transparent),
+                listOf(col.copy(alpha = 0.95f * (1f - ph)), Color.Transparent),
                 center = p,
                 radius = pr * 2.1f
             ),
@@ -6335,6 +6676,14 @@ private fun DrawScope.head(h: HeadSpec, eye: Color, t: Float, level: Int) {
             center = p,
             blendMode = BlendMode.Plus
         )
+    }
+    // искры
+    val sparks = if (strong) 10 else 5
+    for (i in 0 until sparks) {
+        val ph = (t * 1.5f + i * 0.37f) % 1f
+        val side = sin(i * 12.9898f) * len * 0.35f * ph
+        val p = origin + dir * (ph * len * 1.25f) + perp * side
+        drawCircle(FIRE_IN.copy(alpha = 0.9f * (1f - ph)), size.width * 0.006f, p)
     }
 }
 
@@ -6353,7 +6702,13 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/HydraVpnService.kt <<'HYDRA_EOF'
 package app.hydra
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -6378,6 +6733,8 @@ class HydraVpnService : VpnService() {
         const val ACTION_START = "app.hydra.action.START"
         const val ACTION_STOP = "app.hydra.action.STOP"
         private const val TAG = "Hydra"
+        private const val CHANNEL = "hydra_status"
+        private const val NOTIF_ID = 1
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -6386,12 +6743,72 @@ class HydraVpnService : VpnService() {
     private var forceCell = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return if (intent?.action == ACTION_STOP) {
+        goForeground(getString(R.string.notif_connecting))
+        val prefs = Prefs(this)
+        if (intent?.action == ACTION_STOP) {
             stopVpn()
-            START_NOT_STICKY
-        } else {
-            startVpn()
-            START_STICKY
+            return START_NOT_STICKY
+        }
+        // перезапуск системой (intent == null) — только если пользователь хотел VPN
+        if (intent == null && !(prefs.wantConnected || prefs.autoStart)) {
+            stopVpn()
+            return START_NOT_STICKY
+        }
+        startVpn()
+        return START_STICKY
+    }
+
+    private fun buildNotification(text: String): Notification {
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+        )
+        return Notification.Builder(this, CHANNEL)
+            .setContentTitle("Hydra")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setContentIntent(pi)
+            .setOngoing(true)
+            .build()
+    }
+
+    /** Постоянное уведомление держит сервис на переднем плане: система его не убивает. */
+    private fun goForeground(text: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Hydra", NotificationManager.IMPORTANCE_LOW)
+            )
+            val n = buildNotification(text)
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIF_ID, n)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "передний план: " + t.message)
+        }
+    }
+
+    /** Раз в 3 секунды: обновляет уведомление и, если ядро остановилось, а VPN нужен, поднимает заново. */
+    private val statusUpdater = object : Runnable {
+        override fun run() {
+            try {
+                val raw = mobile.Mobile.engineStatus()
+                val p = raw.split("|")
+                val text = when (p.getOrElse(0) { "off" }) {
+                    "up" -> getString(R.string.notif_up, p.getOrElse(2) { "" }, p.getOrElse(3) { "0" }.toIntOrNull() ?: 0)
+                    "reconnecting" -> getString(R.string.notif_reconnecting)
+                    "failed" -> getString(R.string.notif_failed)
+                    else -> getString(R.string.notif_connecting)
+                }
+                getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
+                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected) {
+                    Log.w(TAG, "ядро остановилось — поднимаю заново")
+                    startVpn()
+                }
+            } catch (t: Throwable) {
+            }
+            handler.postDelayed(this, 3000)
         }
     }
 
@@ -6406,6 +6823,7 @@ class HydraVpnService : VpnService() {
         try {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
+            mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
         } catch (t: Throwable) {
@@ -6518,6 +6936,8 @@ class HydraVpnService : VpnService() {
             return
         }
         watchNetwork()
+        handler.removeCallbacks(statusUpdater)
+        handler.postDelayed(statusUpdater, 3000)
     }
 
     /** Ключ сети: "cell" при принудительном канале, иначе "wifi"/"cell"/"default" (сам VPN не считается). */
@@ -6567,6 +6987,8 @@ class HydraVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        Prefs(this).wantConnected = false
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (t: Throwable) { }
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         netCallback = null
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
@@ -6583,6 +7005,7 @@ class HydraVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }
@@ -6616,7 +7039,13 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -6670,6 +7099,17 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
     var tab by rememberSaveable { mutableStateOf(0) }
 
+    // разрешение на уведомления (Android 13+): постоянное уведомление держит VPN живым
+    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        account.ensureAll()
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
@@ -6705,7 +7145,7 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
             when (tab) {
                 0 -> HomeScreen(prefs, account, vpn)
                 1 -> AppsScreen(prefs)
-                2 -> DiagScreen(prefs)
+                2 -> DiagScreen(prefs, vpn)
                 else -> SettingsScreen(prefs, account, onLanguageChanged)
             }
         }
@@ -6734,7 +7174,7 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putStringSet("split_apps", v.toSet()).apply() }
 
     var autoStart: Boolean
-        get() = sp.getBoolean("auto_start", false)
+        get() = sp.getBoolean("auto_start", true)
         set(v) { sp.edit().putBoolean("auto_start", v).apply() }
 
     var killSwitch: Boolean
@@ -6761,6 +7201,16 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("fallback_any", false)
         set(v) { sp.edit().putBoolean("fallback_any", v).apply() }
 
+    /** Пользователь нажал «подключить» и не отключал: держим VPN, пока он сам не выключит. */
+    var wantConnected: Boolean
+        get() = sp.getBoolean("want_connected", false)
+        set(v) { sp.edit().putBoolean("want_connected", v).apply() }
+
+    /** Протокол: "auto" (оба, запасной подхватывает), "masque" или "wg". */
+    var protocol: String
+        get() = sp.getString("protocol", "auto") ?: "auto"
+        set(v) { sp.edit().putString("protocol", v).apply() }
+
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
 }
@@ -6769,6 +7219,14 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/SettingsScreen.kt <<'HYDRA_EOF'
 package app.hydra
 
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -6812,7 +7270,37 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
-    var kill by remember { mutableStateOf(prefs.killSwitch) }
+    var proto by remember { mutableStateOf(prefs.protocol) }
+    var editing by remember { mutableStateOf(false) }
+    var conf by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
+    val openVpnSettings: () -> Unit = {
+        try { ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } catch (t: Throwable) { }
+    }
+    val openBattery: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName))
+            )
+        } catch (t: Throwable) {
+            try { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (t2: Throwable) { }
+        }
+    }
+    val openAutostart: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent().setComponent(
+                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                )
+            )
+        } catch (t: Throwable) {
+            try {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName))
+                )
+            } catch (t2: Throwable) { }
+        }
+    }
     var note by remember { mutableStateOf("") }
     var wgNote by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
@@ -6877,6 +7365,34 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             }
             Text(
                 stringResource(R.string.channel_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+
+        // Протокол
+        HCard(accent = NeonCyan) {
+            SectionTitle(stringResource(R.string.proto_title), NeonCyan)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "auto" to R.string.proto_auto,
+                    "masque" to R.string.proto_masque_chip,
+                    "wg" to R.string.proto_wg_chip
+                ).forEach { (code, res) ->
+                    FilterChip(
+                        selected = proto == code,
+                        onClick = {
+                            proto = code
+                            prefs.protocol = code
+                        },
+                        label = { Text(stringResource(res)) }
+                    )
+                }
+            }
+            Text(
+                stringResource(R.string.proto_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
@@ -7073,6 +7589,41 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.wg_import)) }
             }
+            OutlinedButton(
+                onClick = {
+                    if (editing) {
+                        editing = false
+                    } else {
+                        conf = account.exportWg().ifEmpty { WG_TEMPLATE }
+                        editing = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(stringResource(if (editing) R.string.wg_cancel else R.string.wg_edit)) }
+            if (editing) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = conf,
+                    onValueChange = { conf = it },
+                    minLines = 8,
+                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val err = account.importWg(conf)
+                        if (err.isEmpty()) {
+                            editing = false
+                            wgNote = wgImportedMsg
+                        } else {
+                            wgNote = err
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text(stringResource(R.string.wg_save)) }
+            }
             if (account.wgId.isNotEmpty()) {
                 TextButton(onClick = { account.deleteWg(); wgNote = "" }) {
                     Text(stringResource(R.string.wg_delete))
@@ -7103,19 +7654,33 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
 
         // Подключение
         HCard(accent = NeonOrange) {
-            SectionTitle(stringResource(R.string.conn_title), NeonOrange)
+            SectionTitle(stringResource(R.string.persist_title), NeonOrange)
             SwitchRow(stringResource(R.string.settings_autostart), auto) {
                 auto = it
                 prefs.autoStart = it
             }
-            SwitchRow(stringResource(R.string.settings_killswitch), kill) {
-                kill = it
-                prefs.killSwitch = it
+            Text(
+                stringResource(R.string.persist_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+            OutlinedButton(onClick = openVpnSettings, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_always_on))
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = openBattery, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_battery))
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = openAutostart, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.btn_autostart_xiaomi))
             }
             Text(
-                stringResource(R.string.settings_soon),
+                stringResource(R.string.kill_info),
                 style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
 
@@ -7145,6 +7710,18 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
         Spacer(Modifier.height(8.dp))
     }
 }
+
+private const val WG_TEMPLATE = """[Interface]
+PrivateKey = 
+Address = 172.16.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = 
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.192.3:2408
+PersistentKeepalive = 25
+"""
 HYDRA_EOF
 
 putv app/src/main/java/app/hydra/Theme.kt <<'HYDRA_EOF'
@@ -7412,6 +7989,7 @@ package app.hydra
 
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -7464,18 +8042,31 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
     }
 
     fun start() {
-        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START))
+        Prefs(ctx).wantConnected = true
+        ContextCompat.startForegroundService(
+            ctx, Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_START)
+        )
     }
 
     fun stop() {
+        Prefs(ctx).wantConnected = false
         ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP))
     }
 }
 
-/** "h3/162.159.198.1/std" -> "H3 · std" */
-fun routeLabel(strategy: String): String {
-    val p = strategy.split("/")
-    return if (p.size == 3) p[0].uppercase() + " · " + p[2] else "—"
+/** "wg/162.159.192.3:2408/q3" -> "WireGuard", "h3/..." -> "MASQUE·H3". */
+fun routeLabel(strategy: String): String = when (strategy.substringBefore("/")) {
+    "wg" -> "WireGuard"
+    "h2" -> "MASQUE·H2"
+    "h3" -> "MASQUE·H3"
+    else -> "—"
+}
+
+fun protoRes(strategy: String): Int = when (strategy.substringBefore("/")) {
+    "wg" -> R.string.proto_wg
+    "h2" -> R.string.proto_masque2
+    "h3" -> R.string.proto_masque
+    else -> R.string.proto_unknown
 }
 HYDRA_EOF
 
@@ -9884,7 +10475,7 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
 
     <string name="about_title">О программе</string>
-    <string name="about_text">Hydra 0.5 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
+    <string name="about_text">Hydra 0.6 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
     <string name="engine_label">Движок: %1$s</string>
 
     <string name="vpn_off">Не подключено</string>
@@ -9934,6 +10525,35 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="wg_copied">Конфигурация скопирована</string>
     <string name="wg_nothing">Конфигурации ещё нет</string>
     <string name="wg_imported">Конфигурация импортирована</string>
+
+    <string name="notif_connecting">Подключаюсь…</string>
+    <string name="notif_up">Подключено · %1$s · %2$d мс</string>
+    <string name="notif_reconnecting">Переподключаюсь…</string>
+    <string name="notif_failed">Нет соединения, повторяю</string>
+    <string name="diag_tunnel_title">Через Гидру (туннель)</string>
+    <string name="diag_tunnel_off">Туннель выключен. Подключись, чтобы увидеть его проверки.</string>
+    <string name="diag_proto">Протокол</string>
+    <string name="diag_ping">Задержка</string>
+    <string name="proto_masque">MASQUE (HTTP/3, QUIC)</string>
+    <string name="proto_masque2">MASQUE (HTTP/2)</string>
+    <string name="proto_wg">WireGuard</string>
+    <string name="proto_unknown">неизвестно</string>
+    <string name="diag_direct_title">Прямое соединение (мимо VPN)</string>
+    <string name="diag_direct_hint">Сама Гидра работает мимо VPN, поэтому эти проверки идут напрямую. «WARP: выключен» здесь нормально.</string>
+    <string name="persist_title">Постоянная работа</string>
+    <string name="persist_hint">Гидра подключается после загрузки телефона и держит соединение, пока ты сам не выключишь. Для самой крепкой хватки включи системный «Всегда включённый VPN», разреши работу в фоне и (на Xiaomi) автозапуск.</string>
+    <string name="btn_always_on">Системный «Всегда включённый VPN»</string>
+    <string name="btn_battery">Разрешить работу в фоне</string>
+    <string name="btn_autostart_xiaomi">Автозапуск (Xiaomi)</string>
+    <string name="kill_info">Пока туннель не работает или переключается, трафик приложений в VPN блокируется, а не утекает. Системный пункт «Блокировать подключения без VPN» делает это ещё строже.</string>
+    <string name="proto_title">Протокол</string>
+    <string name="proto_auto">Авто</string>
+    <string name="proto_masque_chip">MASQUE</string>
+    <string name="proto_wg_chip">WireGuard</string>
+    <string name="proto_hint">Авто: оба протокола страхуют друг друга. Если один перестал работать, второй подхватывает.</string>
+    <string name="wg_edit">Править конфигурацию</string>
+    <string name="wg_cancel">Отменить правку</string>
+    <string name="wg_save">Сохранить конфигурацию</string>
 </resources>
 HYDRA_EOF
 
@@ -10033,7 +10653,7 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="settings_soon">These options take effect once connecting is ready.</string>
 
     <string name="about_title">About</string>
-    <string name="about_text">Hydra 0.5 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
+    <string name="about_text">Hydra 0.6 · cut off one head and two grow back. Built for people who want the internet without compromises.</string>
     <string name="engine_label">Engine: %1$s</string>
 
     <string name="vpn_off">Not connected</string>
@@ -10083,6 +10703,35 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="wg_copied">Config copied</string>
     <string name="wg_nothing">No config yet</string>
     <string name="wg_imported">Config imported</string>
+
+    <string name="notif_connecting">Connecting…</string>
+    <string name="notif_up">Connected · %1$s · %2$d ms</string>
+    <string name="notif_reconnecting">Reconnecting…</string>
+    <string name="notif_failed">No connection, retrying</string>
+    <string name="diag_tunnel_title">Through Hydra (tunnel)</string>
+    <string name="diag_tunnel_off">The tunnel is off. Connect to see its checks.</string>
+    <string name="diag_proto">Protocol</string>
+    <string name="diag_ping">Latency</string>
+    <string name="proto_masque">MASQUE (HTTP/3, QUIC)</string>
+    <string name="proto_masque2">MASQUE (HTTP/2)</string>
+    <string name="proto_wg">WireGuard</string>
+    <string name="proto_unknown">unknown</string>
+    <string name="diag_direct_title">Direct connection (bypasses VPN)</string>
+    <string name="diag_direct_hint">Hydra itself stays outside the VPN, so these checks go directly. “WARP: off” here is normal.</string>
+    <string name="persist_title">Always running</string>
+    <string name="persist_hint">Hydra connects after the phone boots and holds the connection until you turn it off. For the strongest hold, enable the system Always-on VPN, allow background work and (Xiaomi) autostart.</string>
+    <string name="btn_always_on">System Always-on VPN</string>
+    <string name="btn_battery">Allow background work</string>
+    <string name="btn_autostart_xiaomi">Autostart (Xiaomi)</string>
+    <string name="kill_info">While the tunnel is down or switching, traffic of routed apps is blocked, not leaked. The system option “Block connections without VPN” makes it even stricter.</string>
+    <string name="proto_title">Protocol</string>
+    <string name="proto_auto">Auto</string>
+    <string name="proto_masque_chip">MASQUE</string>
+    <string name="proto_wg_chip">WireGuard</string>
+    <string name="proto_hint">Auto: both protocols back each other up. If one stops working, the other takes over.</string>
+    <string name="wg_edit">Edit config</string>
+    <string name="wg_cancel">Cancel editing</string>
+    <string name="wg_save">Save config</string>
 </resources>
 HYDRA_EOF
 
