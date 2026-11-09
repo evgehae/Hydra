@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=11
+NEW=12
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -23,6 +23,8 @@ putb() {
   mkdir -p "$(dirname "$f")"
   if [ ! -e "$f" ] || [ "$OLD" -lt "$NEW" ]; then base64 -d > "$f"; else cat > /dev/null; fi
 }
+# убрать лишний файл из прошлой версии (манифест лежал не там)
+rm -f app/src/main/java/AndroidManifest.xml
 
 GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
 
@@ -618,7 +620,7 @@ fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 HYDRA_EOF
 
-# ===================== v11 =====================
+# ===================== v12 =====================
 putv "$GODIR/colo.go" <<'HYDRA_EOF'
 package hydra
 
@@ -5372,53 +5374,6 @@ dependencies {
 HYDRA_EOF
 
 putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-
-    <!-- Работает и на Android TV: сенсорный экран не обязателен -->
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <uses-feature android:name="android.software.leanback" android:required="false" />
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-    </queries>
-
-    <application
-        android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="@string/app_name"
-        android:theme="@style/Theme.Hydra">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name=".HydraVpnService"
-            android:exported="false"
-            android:permission="android.permission.BIND_VPN_SERVICE">
-            <intent-filter>
-                <action android:name="android.net.VpnService" />
-            </intent-filter>
-        </service>
-    </application>
-</manifest>
-HYDRA_EOF
-
-putv app/src/main/java/AndroidManifest.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
