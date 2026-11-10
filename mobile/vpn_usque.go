@@ -52,6 +52,15 @@ func StartTunnel(dir string, tunFd int) string {
 	var mS, wS []hydra.Strategy
 	if macc != nil {
 		mS = hydra.MasqueStrategies(macc)
+		sni, cep := currentCustom()
+		if cep != "" {
+			mS = append(hydra.CustomEndpointStrategies(cep), mS...) // свой адрес — первым
+		}
+		if sni != "" {
+			for i := range mS {
+				mS[i].Params["sni"] = sni
+			}
+		}
 	}
 	if wacc != nil {
 		wS = hydra.WGStrategies(wacc)
@@ -90,6 +99,7 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.NetKey = currentNetKey
 	cfg.NetChanged = netEvents
 	cfg.SoftFallback = currentFallback()
+	cfg.DropV6 = stripMask(acc.AddrV6) == ""
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,6 +139,7 @@ func EngineStatus() string {
 		return "off||||"
 	}
 	st := e.Status()
-	return fmt.Sprintf("%s|%s|%s|%d|%s", st.State, st.Strategy, st.Colo,
-		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"))
+	rx, tx := e.Traffic()
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d", st.State, st.Strategy, st.Colo,
+		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"), rx, tx)
 }

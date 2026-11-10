@@ -100,6 +100,9 @@ func registerReport(path string, wg bool) string {
 	return "OK\n" + sb.String() + "id: " + acc.ID
 }
 
+// DeleteAccount удаляет аккаунт MASQUE (для «Сбросить ключи»).
+func DeleteAccount(dir string) { os.Remove(accountPath(dir)) }
+
 // ExportAccount возвращает строку для переноса аккаунта или "".
 func ExportAccount(dir string) string {
 	a, err := hydra.LoadAccount(accountPath(dir))

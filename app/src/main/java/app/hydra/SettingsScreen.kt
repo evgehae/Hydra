@@ -101,7 +101,6 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        RainbowText(stringResource(R.string.settings_title))
 
         // Язык
         HCard(accent = NeonCyan) {

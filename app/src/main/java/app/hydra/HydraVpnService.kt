@@ -14,6 +14,7 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
+import android.telephony.TelephonyManager
 import android.util.Log
 
 /**
@@ -122,6 +123,8 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
+            mobile.Mobile.setCustomSNI(prefs.customSni)
+            mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
         } catch (t: Throwable) {
@@ -182,12 +185,40 @@ class HydraVpnService : VpnService() {
             .setMtu(1280)
             .addAddress(v4, 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("1.0.0.1")
+
+        // свой DNS (внутри туннеля) или по умолчанию Cloudflare
+        var dnsAdded = 0
+        if (prefs.customDnsOn) {
+            for (d in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                if (!d.matches(Regex("[0-9a-fA-F:.]+"))) continue
+                try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
+            }
+        }
+        if (dnsAdded == 0) {
+            b.addDnsServer("1.1.1.1")
+            b.addDnsServer("1.0.0.1")
+        }
+
+        // подсети, которые идут напрямую, мимо VPN (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33) {
+            for (r in prefs.excludedRoutes.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                try {
+                    val parts = r.split("/")
+                    if (!parts[0].matches(Regex("[0-9a-fA-F:.]+"))) continue
+                    val len = parts.getOrNull(1)?.toIntOrNull() ?: if (parts[0].contains(":")) 128 else 32
+                    b.excludeRoute(android.net.IpPrefix(java.net.InetAddress.getByName(parts[0]), len))
+                } catch (e: Exception) { }
+            }
+        }
         if (v6.isNotEmpty()) {
             b.addAddress(v6, 128)
             b.addRoute("::", 0)
             b.addDnsServer("2606:4700:4700::1111")
+        } else {
+            // IPv6 в аккаунте нет: всё равно забираем ::/0 в TUN, ядро его отбросит —
+            // иначе IPv6-трафик пошёл бы мимо VPN
+            b.addAddress("fd00:7a7a::2", 128)
+            b.addRoute("::", 0)
         }
 
         val apps = prefs.splitApps
@@ -238,21 +269,38 @@ class HydraVpnService : VpnService() {
         handler.postDelayed(statusUpdater, 3000)
     }
 
-    /** Ключ сети: "cell" при принудительном канале, иначе "wifi"/"cell"/"default" (сам VPN не считается). */
+    /** Оператор сотовой сети (MCC+MNC, без разрешений): у разных операторов разный DPI. */
+    private fun cellOperator(): String = try {
+        (getSystemService(TELEPHONY_SERVICE) as TelephonyManager).networkOperator.orEmpty()
+    } catch (t: Throwable) { "" }
+
+    /** Отпечаток Wi-Fi: шлюз + DNS (SSID без разрешения на геолокацию недоступен). */
+    private fun wifiPrint(n: Network): String = try {
+        val lp = cm().getLinkProperties(n)
+        val gw = lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress.orEmpty()
+        val dns = lp?.dnsServers?.joinToString(",") { it.hostAddress.orEmpty() }.orEmpty()
+        Integer.toHexString((gw + "|" + dns).hashCode())
+    } catch (t: Throwable) { "" }
+
+    /**
+     * Ключ сети для памяти стратегий: "wifi:<отпечаток>", "cell:<MCC+MNC>" или "default".
+     * Сам VPN не считается. При принудительном канале — всегда сотовая.
+     */
     private fun currentNetKey(): String {
-        if (forceCell) return "cell"
+        val op = cellOperator()
+        if (forceCell) return "cell:$op"
         return try {
-            var wifi = false
+            var wifi: String? = null
             var cell = false
             for (n in cm().allNetworks) {
                 val c = cm().getNetworkCapabilities(n) ?: continue
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
-                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = true
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = wifiPrint(n)
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) cell = true
             }
             when {
-                wifi -> "wifi"
-                cell -> "cell"
+                wifi != null -> "wifi:$wifi"
+                cell -> "cell:$op"
                 else -> "default"
             }
         } catch (t: Throwable) {

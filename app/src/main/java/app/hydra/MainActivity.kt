@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +17,6 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,13 +73,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+enum class Dest { Home, Advanced, Conn, Dns, Routes, Apps, More, Diag, Errors, Journal }
+
 @Composable
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = remember { AccountController(ctx.applicationContext, ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
-    var tab by rememberSaveable { mutableStateOf(0) }
+    val stack = remember { mutableStateListOf(Dest.Home) }
+
+    fun go(d: Dest) { stack.add(d) }
+    fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    BackHandler(enabled = stack.size > 1) { back() }
 
     // разрешение на уведомления (Android 13+): постоянное уведомление держит VPN живым
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -92,44 +98,27 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
         account.ensureAll()
     }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
-                NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_home)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_split)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
-                    icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_diag)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 3,
-                    onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_settings)) }
-                )
+    Box(Modifier.fillMaxSize().statusBarsPadding()) {
+        when (stack.last()) {
+            Dest.Home -> HomeScreen(prefs, account, vpn, onAdvanced = { go(Dest.Advanced) }, onDiag = { go(Dest.Diag) })
+            Dest.Advanced -> AdvancedScreen(onBack = { back() }, onConn = { go(Dest.Conn) }, onMore = { go(Dest.More) })
+            Dest.Conn -> ConnScreen(
+                prefs, account, vpn, onBack = { back() },
+                onApps = { go(Dest.Apps) }, onRoutes = { go(Dest.Routes) }, onDns = { go(Dest.Dns) },
+                onResetAll = onLanguageChanged
+            )
+            Dest.Dns -> DnsScreen(prefs, vpn, onBack = { back() })
+            Dest.Routes -> RoutesScreen(prefs, vpn, onBack = { back() })
+            Dest.Apps -> SubPage(stringResource(R.string.conn_apps), onBack = { back() }, scroll = false) { AppsScreen(prefs) }
+            Dest.More -> SubPage(stringResource(R.string.adv_more), onBack = { back() }, scroll = false) {
+                SettingsScreen(prefs, account, onLanguageChanged)
             }
-        }
-    ) { pad ->
-        Box(Modifier.padding(pad).statusBarsPadding().fillMaxSize()) {
-            when (tab) {
-                0 -> HomeScreen(prefs, account, vpn)
-                1 -> AppsScreen(prefs)
-                2 -> DiagScreen(prefs, vpn)
-                else -> SettingsScreen(prefs, account, onLanguageChanged)
-            }
+            Dest.Diag -> DiagnosticsScreen(
+                prefs, account, vpn, onBack = { back() },
+                onErrors = { go(Dest.Errors) }, onJournal = { go(Dest.Journal) }
+            )
+            Dest.Errors -> ErrorsScreen(onBack = { back() })
+            Dest.Journal -> JournalScreen(onBack = { back() })
         }
     }
 }

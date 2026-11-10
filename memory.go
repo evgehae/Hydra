@@ -19,8 +19,9 @@ type stat struct {
 // Memory — «память Гидры»: что работало в какой сети.
 // Ключ сети (net) выдаёт Android-часть: например "wifi:<hash>" или "cell:25001".
 type Memory struct {
-	mu   sync.Mutex
-	path string
+	mu      sync.Mutex
+	path    string
+	pending bool // отложенное сохранение уже запланировано
 	Nets map[string]map[string]*stat `json:"nets"`
 }
 
@@ -91,6 +92,17 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
 		s.OK /= 2
 		s.Fail /= 2
+	}
+	// Сохраняем сразу после результата (с паузой, чтобы не писать на каждый чих):
+	// если систему убьёт процесс, накопленный опыт не пропадёт.
+	if m.path != "" && !m.pending {
+		m.pending = true
+		time.AfterFunc(2*time.Second, func() {
+			m.mu.Lock()
+			m.pending = false
+			m.mu.Unlock()
+			_ = m.Save()
+		})
 	}
 }
 

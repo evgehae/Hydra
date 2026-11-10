@@ -45,6 +45,7 @@ type EngineConfig struct {
 	BadProbes    int           // сколько проб подряд без ответа = туннель умер
 	TCPCheck     bool          // проверять реальную передачу TCP
 	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
+	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -71,6 +72,7 @@ type Engine struct {
 	nextID  uint32
 	events  chan Event
 	tunDead chan struct{}
+	rx, tx  uint64 // байты из туннеля в приложения / из приложений в туннель
 	once    sync.Once
 	soft    bool
 
@@ -153,6 +155,10 @@ func (e *Engine) readTun() {
 		if err != nil {
 			return
 		}
+		if e.cfg.DropV6 && n > 0 && buf[0]>>4 == 6 {
+			continue
+		}
+		atomic.AddUint64(&e.tx, uint64(n))
 		select {
 		case e.out <- buf[:n]:
 		default:
@@ -197,8 +203,14 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 		}
 		return nil
 	}
+	atomic.AddUint64(&d.e.rx, uint64(len(pkt)))
 	_, err := d.e.tun.Write(pkt)
 	return err
+}
+
+// Traffic — сколько байт получено из туннеля и отправлено в него с запуска.
+func (e *Engine) Traffic() (rx, tx uint64) {
+	return atomic.LoadUint64(&e.rx), atomic.LoadUint64(&e.tx)
 }
 
 func (e *Engine) deliver(id uint16, colo string) {

@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Состояние VPN для интерфейса: раз в секунду спрашивает у Go-ядра, как дела. */
-class VpnController(private val ctx: Context, scope: CoroutineScope) {
+class VpnController(private val ctx: Context, private val scope: CoroutineScope) {
 
     var state by mutableStateOf("off")
         private set
@@ -27,7 +27,22 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
     var message by mutableStateOf("")
         private set
 
+    var rxBytes by mutableStateOf(0L)
+        private set
+    var txBytes by mutableStateOf(0L)
+        private set
+
     val active: Boolean get() = state != "off"
+
+    /** Применить изменённые настройки: если VPN включён — переподключить. */
+    fun restartIfActive() {
+        if (!active) return
+        scope.launch {
+            stop()
+            delay(1200)
+            start()
+        }
+    }
 
     init {
         scope.launch {
@@ -52,6 +67,8 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
         colo = p.getOrElse(2) { "" }
         rttMs = p.getOrElse(3) { "0" }.toIntOrNull() ?: 0
         message = p.getOrElse(4) { "" }
+        rxBytes = p.getOrElse(5) { "0" }.toLongOrNull() ?: 0L
+        txBytes = p.getOrElse(6) { "0" }.toLongOrNull() ?: 0L
     }
 
     fun start() {

@@ -144,6 +144,18 @@ class AccountController(
         }
     }
 
+    /** «Сбросить ключи безопасности»: удаляет оба аккаунта и регистрирует заново. */
+    fun resetKeys() {
+        try { mobile.Mobile.deleteAccount(dir) } catch (t: Throwable) { }
+        try { mobile.Mobile.deleteWireguardConfig(dir) } catch (t: Throwable) { }
+        id = readId()
+        wgId = readWgId()
+        report = ""
+        wgReport = ""
+        autoTried = false
+        ensureAll()
+    }
+
     fun register() {
         if (busy) return
         busy = true

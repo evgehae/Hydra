@@ -39,21 +39,21 @@ val RainbowColors = listOf(
 val HydraGreen = NeonGreen
 
 private val HydraColors = darkColorScheme(
-    primary = NeonViolet,
-    onPrimary = Color(0xFF1B0F52),
+    primary = Color(0xFF2F6BFF),
+    onPrimary = Color.White,
     primaryContainer = Color(0xFF0F2A57),
     onPrimaryContainer = Color(0xFFCFE8FF),
-    secondary = NeonCyan,
-    onSecondary = Color(0xFF00243D),
+    secondary = Color(0xFF3949D8),
+    onSecondary = Color.White,
     tertiary = NeonGreen,
-    background = Color(0xFF080C18),
-    onBackground = Color(0xFFE6ECFA),
-    surface = Color(0xFF080C18),
-    onSurface = Color(0xFFE6ECFA),
-    surfaceVariant = Color(0xFF111B33),
-    onSurfaceVariant = Color(0xFFA9B6D3),
-    outline = Color(0xFF3C4B70),
-    error = Color(0xFFFF8A80),
+    background = Color.Black,
+    onBackground = Color.White,
+    surface = Color.Black,
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF1E1E1E),
+    onSurfaceVariant = Color(0xFF9E9E9E),
+    outline = Color(0xFF3A3A3A),
+    error = Color(0xFFFF6B6B),
     onError = Color(0xFF410002)
 )
 
@@ -63,46 +63,14 @@ fun HydraTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = HydraColors, content = content)
 }
 
-/** Плитка «карбона» 24×24: тёмные и чуть светлее квадраты в шахматном порядке. */
-private fun carbonTile(): ImageBitmap {
-    val bmp = ImageBitmap(24, 24)
-    val c = GfxCanvas(bmp)
-    val dark = Paint().apply { color = Color(0xFF0A0F1D) }
-    val light = Paint().apply { color = Color(0xFF0F1628) }
-    c.drawRect(0f, 0f, 24f, 24f, dark)
-    c.drawRect(0f, 0f, 12f, 12f, light)
-    c.drawRect(12f, 12f, 24f, 24f, light)
-    return bmp
-}
-
-/** Фон приложения: карбон с мягким неоновым свечением сверху. */
+/** Фон приложения: чистый чёрный, как у 1.1.1.1. */
 @Composable
 fun HydraBackground(content: @Composable () -> Unit) {
-    val tile = remember { carbonTile() }
-    val carbon = remember(tile) { ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated)) }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xFF080C18))
-            .drawBehind { drawRect(brush = carbon) }
-            .background(
-                Brush.verticalGradient(
-                    listOf(NeonPink.copy(alpha = 0.10f), Color.Transparent, NeonOrange.copy(alpha = 0.07f))
-                )
-            )
-    ) { content() }
+    Box(Modifier.fillMaxSize().background(Color.Black)) { content() }
 }
 
-/** Заголовок с радужной заливкой, как у RotatorOS. */
+/** Заголовок экрана: обычный жирный белый текст (имя оставлено для совместимости). */
 @Composable
 fun RainbowText(text: String, fontSize: TextUnit = 28.sp, letterSpacing: TextUnit = 0.sp) {
-    Text(
-        text,
-        style = TextStyle(
-            brush = Brush.linearGradient(RainbowColors),
-            fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = letterSpacing
-        )
-    )
+    Text(text, style = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Bold, letterSpacing = letterSpacing))
 }

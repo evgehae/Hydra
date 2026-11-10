@@ -14,6 +14,8 @@ var (
 	polSoft  = false
 	polProto = "auto"
 	netKey   = "default"
+	polSNI   = "" // свой SNI для туннеля MASQUE ("" — по умолчанию)
+	polEP    = "" // свой адрес сервера "IP" или "IP:порт" ("" — не задан)
 	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
 	netEvents = make(chan struct{}, 1)
 )
@@ -78,4 +80,24 @@ func currentPolicy() *hydra.ColoPolicy {
 	polMu.Lock()
 	defer polMu.Unlock()
 	return &hydra.ColoPolicy{Block: hydra.ParseColoList(polBlock), Allow: hydra.ParseColoList(polAllow)}
+}
+
+// SetCustomSNI переопределяет SNI в TLS-рукопожатии туннеля MASQUE ("" — сброс).
+func SetCustomSNI(s string) {
+	polMu.Lock()
+	polSNI = strings.TrimSpace(s)
+	polMu.Unlock()
+}
+
+// SetCustomEndpoint задаёт свой адрес сервера MASQUE ("IP" или "IP:порт"): он пробуется первым.
+func SetCustomEndpoint(s string) {
+	polMu.Lock()
+	polEP = strings.TrimSpace(s)
+	polMu.Unlock()
+}
+
+func currentCustom() (sni, ep string) {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polSNI, polEP
 }

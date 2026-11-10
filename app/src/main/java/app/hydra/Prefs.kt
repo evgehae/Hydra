@@ -55,6 +55,38 @@ class Prefs(ctx: Context) {
         get() = sp.getString("protocol", "auto") ?: "auto"
         set(v) { sp.edit().putString("protocol", v).apply() }
 
+    /** Свой SNI для туннеля MASQUE ("" — по умолчанию). */
+    var customSni: String
+        get() = sp.getString("custom_sni", "") ?: ""
+        set(v) { sp.edit().putString("custom_sni", v).apply() }
+
+    /** Свой адрес сервера MASQUE: "IP" или "IP:порт". */
+    var customEndpoint: String
+        get() = sp.getString("custom_endpoint", "") ?: ""
+        set(v) { sp.edit().putString("custom_endpoint", v).apply() }
+
+    /** Свой DNS внутри туннеля: IP-адреса через запятую. */
+    var customDns: String
+        get() = sp.getString("custom_dns", "") ?: ""
+        set(v) { sp.edit().putString("custom_dns", v).apply() }
+
+    var customDnsOn: Boolean
+        get() = sp.getBoolean("custom_dns_on", false)
+        set(v) { sp.edit().putBoolean("custom_dns_on", v).apply() }
+
+    /** Подсети, которые идут напрямую, мимо VPN (Android 13+). */
+    var excludedRoutes: String
+        get() = sp.getString("excl_routes", null) ?: DEFAULT_ROUTES
+        set(v) { sp.edit().putString("excl_routes", v).apply() }
+
+    fun resetAll() { sp.edit().clear().apply() }
+
+    companion object {
+        const val DEFAULT_ROUTES =
+            "10.0.0.0/8,100.64.0.0/10,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.168.0.0/16," +
+            "224.0.0.0/24,240.0.0.0/4,239.255.255.250/32,255.255.255.255/32,17.249.0.0/16"
+    }
+
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
 }
