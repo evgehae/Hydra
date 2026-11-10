@@ -39,9 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,7 +51,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val TitleBlue = Color(0xFF3949D8)
+private val TitleBlue = Color(0xFF3F5BFF)
 
 /** Главный экран: как у 1.1.1.1 — название, большой ползунок, статус. Меню (три полоски) — справа сверху. */
 @Composable
@@ -127,15 +129,29 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.weight(1.1f))
+        Spacer(Modifier.weight(0.8f))
+        // «WARP» крупными огненно-красными буквами, под ним синим «CLAUDE» поменьше
         Text(
-            "WARP CLAUDE",
+            "WARP",
+            style = TextStyle(
+                brush = Brush.linearGradient(
+                    listOf(Color(0xFFFF3B2F), Color(0xFFFF7A33), Color(0xFFE5301F), Color(0xFFFF5A3C))
+                ),
+                fontSize = 86.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-2).sp,
+                textAlign = TextAlign.Center
+            )
+        )
+        Text(
+            "CLAUDE",
             color = TitleBlue,
-            fontSize = 40.sp,
+            fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
+            letterSpacing = 10.sp,
             textAlign = TextAlign.Center
         )
-        Spacer(Modifier.weight(0.9f))
+        Spacer(Modifier.weight(0.7f))
 
         BigToggle(on = up, busy = busy, onClick = onTap)
 
@@ -149,6 +165,24 @@ fun HomeScreen(
             color = Color.White,
             textAlign = TextAlign.Center
         )
+        // регистрация: идёт ли она сейчас или устройство ещё не зарегистрировано
+        if (account.working || !hasAccount) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "● " + stringResource(if (account.working) R.string.reg_working else R.string.reg_none),
+                style = MaterialTheme.typography.bodyMedium,
+                color = NeonAmber,
+                textAlign = TextAlign.Center
+            )
+            if (!account.working && account.failKind.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.reg_retry),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
         if (up && vpn.colo.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text(

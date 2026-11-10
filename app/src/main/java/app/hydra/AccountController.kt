@@ -144,6 +144,27 @@ class AccountController(
         }
     }
 
+    private var healTries = 0
+    private var nextHealAt = 0L
+
+    /**
+     * Самовосстановление регистрации: вызывается раз в несколько секунд. Если аккаунта нет —
+     * пробует снова с нарастающей паузой (15 с … 5 мин), чередуя обычную сеть и мобильную.
+     */
+    fun heal() {
+        if (working) return
+        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; return }
+        val now = System.currentTimeMillis()
+        if (now < nextHealAt) return
+        healTries++
+        nextHealAt = now + minOf(300_000L, 15_000L shl minOf(healTries - 1, 5))
+        when {
+            id.isNotEmpty() -> registerWg()
+            healTries % 2 == 0 -> registerViaCellular()
+            else -> register()
+        }
+    }
+
     /** «Сбросить ключи безопасности»: удаляет оба аккаунта и регистрирует заново. */
     fun resetKeys() {
         try { mobile.Mobile.deleteAccount(dir) } catch (t: Throwable) { }

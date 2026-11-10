@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,8 @@ type Memory struct {
 	path    string
 	pending bool // отложенное сохранение уже запланировано
 	Nets map[string]map[string]*stat `json:"nets"`
+	// Gen — стратегии, которые Гидра придумала сама, по сетям.
+	Gen map[string][]Strategy `json:"gen"`
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -93,17 +96,121 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 		s.OK /= 2
 		s.Fail /= 2
 	}
-	// Сохраняем сразу после результата (с паузой, чтобы не писать на каждый чих):
-	// если систему убьёт процесс, накопленный опыт не пропадёт.
-	if m.path != "" && !m.pending {
-		m.pending = true
-		time.AfterFunc(2*time.Second, func() {
-			m.mu.Lock()
-			m.pending = false
-			m.mu.Unlock()
-			_ = m.Save()
-		})
+	m.saveSoonLocked()
+}
+
+// saveSoonLocked планирует сохранение через 2 с (вызывать под m.mu): если систему убьёт процесс,
+// накопленный опыт не пропадёт, а на диск пишем не на каждый чих.
+func (m *Memory) saveSoonLocked() {
+	if m.path == "" || m.pending {
+		return
 	}
+	m.pending = true
+	time.AfterFunc(2*time.Second, func() {
+		m.mu.Lock()
+		m.pending = false
+		m.mu.Unlock()
+		_ = m.Save()
+	})
+}
+
+const maxGenerated = 24
+
+// Generated — придуманные Гидрой стратегии для этой сети.
+func (m *Memory) Generated(net string) []Strategy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Strategy(nil), m.Gen[net]...)
+}
+
+// AddGenerated запоминает новые стратегии; при переполнении выбрасывает самые старые, не имевшие побед.
+func (m *Memory) AddGenerated(net string, list []Strategy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Gen == nil {
+		m.Gen = map[string][]Strategy{}
+	}
+	have := map[string]bool{}
+	for _, s := range m.Gen[net] {
+		have[s.ID] = true
+	}
+	for _, s := range list {
+		if !have[s.ID] {
+			m.Gen[net] = append(m.Gen[net], s)
+			have[s.ID] = true
+		}
+	}
+	over := len(m.Gen[net]) - maxGenerated
+	if over > 0 {
+		var kept []Strategy
+		for _, s := range m.Gen[net] {
+			st := m.Nets[net][s.ID]
+			if over > 0 && (st == nil || st.OK == 0) {
+				over--
+				delete(m.Nets[net], s.ID)
+				continue
+			}
+			kept = append(kept, s)
+		}
+		m.Gen[net] = kept
+	}
+	m.saveSoonLocked()
+}
+
+// Prune удаляет придуманные стратегии, которые в этой сети не работают. Возвращает, сколько удалено.
+func (m *Memory) Prune(net string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	removed := 0
+	var kept []Strategy
+	for _, s := range m.Gen[net] {
+		st := m.Nets[net][s.ID]
+		dead := st != nil && ((st.OK == 0 && st.Fail >= 3) ||
+			(st.Fail >= 8 && float64(st.OK)/float64(st.OK+st.Fail) < 0.15))
+		if dead {
+			delete(m.Nets[net], s.ID)
+			removed++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if removed > 0 {
+		m.Gen[net] = kept
+		m.saveSoonLocked()
+	}
+	return removed
+}
+
+// Doomed: стратегия в этой сети уже не раз подводила и ни разу не работала.
+func (m *Memory) Doomed(net, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	return st != nil && st.OK == 0 && st.Fail >= 3
+}
+
+// priorLocked — оценка стратегии для сети без истории: опыт в других сетях того же класса
+// (все "wifi:*" или все "cell:*") с пониженным доверием. Вызывать под m.mu.
+func (m *Memory) priorLocked(net, id string) float64 {
+	class := net
+	if i := strings.Index(net, ":"); i > 0 {
+		class = net[:i]
+	}
+	ok, fail := 0, 0
+	for k, ns := range m.Nets {
+		if k == net || !strings.HasPrefix(k, class+":") {
+			continue
+		}
+		if st := ns[id]; st != nil {
+			ok += st.OK
+			fail += st.Fail
+		}
+	}
+	if ok+fail == 0 {
+		return 0.5
+	}
+	rate := float64(ok+1) / float64(ok+fail+2)
+	return 0.5 + (rate-0.5)*0.6
 }
 
 // Worked: стратегия уже хотя бы раз подключалась в этой сети.
@@ -123,7 +230,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
 		if st == nil {
-			return 0.5
+			return m.priorLocked(net, s.ID)
 		}
 		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
 		pen := math.Min(st.EWMAms/5000, 0.3)

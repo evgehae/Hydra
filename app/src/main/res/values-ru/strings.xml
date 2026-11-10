@@ -237,4 +237,11 @@
     <string name="chk_masque">Сервер MASQUE (TCP 443)</string>
     <string name="chk_v6">IPv6</string>
     <string name="chk_web">Интернет (google.com)</string>
+    <string name="reg_working">Идёт регистрация устройства…</string>
+    <string name="reg_none">Устройство не зарегистрировано</string>
+    <string name="reg_retry">Повторю регистрацию сам: то по Wi-Fi, то через мобильную сеть</string>
+    <string name="value_none">нет</string>
+    <string name="adv_sec_apps">Приложения и сеть</string>
+    <string name="adv_sec_conn">Подключение</string>
+    <string name="adv_sec_other">Прочее</string>
 </resources>

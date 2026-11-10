@@ -237,4 +237,11 @@
     <string name="chk_masque">MASQUE server (TCP 443)</string>
     <string name="chk_v6">IPv6</string>
     <string name="chk_web">Internet (google.com)</string>
+    <string name="reg_working">Registering the device…</string>
+    <string name="reg_none">Device is not registered</string>
+    <string name="reg_retry">I will retry on my own: via Wi-Fi, then via mobile network</string>
+    <string name="value_none">none</string>
+    <string name="adv_sec_apps">Apps and network</string>
+    <string name="adv_sec_conn">Connection</string>
+    <string name="adv_sec_other">Other</string>
 </resources>

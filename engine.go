@@ -45,6 +45,7 @@ type EngineConfig struct {
 	BadProbes    int           // сколько проб подряд без ответа = туннель умер
 	TCPCheck     bool          // проверять реальную передачу TCP
 	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
+	NetAlive     func() bool   // есть ли вообще интернет мимо туннеля (nil — не проверять)
 	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
 }
 
@@ -298,6 +299,7 @@ type outcome struct {
 	netChanged  bool
 	coloBlocked string
 	reason      string
+	offline     bool // интернета нет совсем: стратегию не винить, ждать сеть
 }
 
 func policyText(p *ColoPolicy) string {
@@ -312,7 +314,9 @@ func policyText(p *ColoPolicy) string {
 }
 
 func (e *Engine) fail(nk string, s Strategy, msg string) outcome {
-	e.cfg.Mem.Record(nk, s.ID, false, 0)
+	if !e.blame(nk, s.ID) {
+		return outcome{reason: "нет интернета", offline: true}
+	}
 	e.emit("failed", s.ID, msg)
 	return outcome{reason: msg}
 }
@@ -344,6 +348,8 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	timeout := e.cfg.UpTimeout
 	if e.cfg.Mem.Worked(nk, s.ID) {
 		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+	} else if e.cfg.Mem.Doomed(nk, s.ID) {
+		timeout = timeout * 2 / 3 // не раз подводила: не тратим на неё время
 	}
 	start := time.Now()
 	var colo string
@@ -437,7 +443,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 				msg = err.Error()
 			}
 			Logf("✘ %s", msg)
-			e.cfg.Mem.Record(nk, s.ID, false, 0)
+			e.blame(nk, s.ID)
 			return outcome{wasUp: true, reason: msg}
 		case <-tk.C:
 			if e.cfg.NetKey() != nk {
@@ -453,7 +459,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 				bad++
 				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
 				if bad >= e.cfg.BadProbes {
-					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.blame(nk, s.ID)
 					e.emit("degraded", s.ID, "туннель перестал отвечать")
 					Logf("✘ туннель перестал отвечать — меняю стратегию")
 					return outcome{wasUp: true, reason: "туннель перестал отвечать"}
@@ -503,8 +509,11 @@ func (e *Engine) Run(ctx context.Context) error {
 			blocked = map[string]time.Time{}
 			e.soft = false
 			skip = ""
+			if n := e.cfg.Mem.Prune(nk); n > 0 {
+				Logf("🧹 убрал %d придуманных способов, которые в этой сети не работают", n)
+			}
 		}
-		cands := e.cfg.Mem.Rank(nk, e.cfg.Strategies)
+		cands := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
 		ran, skipped := 0, 0
 		lastReason := ""
 		sawBlocked := false
@@ -528,6 +537,13 @@ func (e *Engine) Run(ctx context.Context) error {
 				break
 			}
 			lastReason = r.reason
+			if r.offline {
+				e.setStatus(Status{State: "reconnecting", Message: "нет интернета — жду сеть"})
+				e.waitOnline(ctx)
+				skip = ""
+				restart = true
+				break
+			}
 			if r.coloBlocked != "" {
 				sawBlocked = true
 				if ep != "" {
@@ -561,6 +577,9 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 		skip = ""
+		if ran > 0 && !sawBlocked {
+			e.learn(nk) // все способы подвели — придумываем новые на основе лучших
+		}
 		msg := lastReason
 		switch {
 		case ran == 0 && skipped > 0:

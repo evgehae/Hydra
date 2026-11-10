@@ -1,24 +1,23 @@
 package app.hydra
 
-import androidx.compose.foundation.clickable
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,23 +25,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 
-/** «Дополнительно»: список как в 1.1.1.1. */
+/** «Дополнительно»: все настройки в одном меню, как в 1.1.1.1. */
 @Composable
-fun AdvancedScreen(onBack: () -> Unit, onConn: () -> Unit, onMore: () -> Unit) {
-    SubPage(stringResource(R.string.menu_advanced), onBack) {
-        Spacer(Modifier.height(16.dp))
-        RowDivider()
-        SettingRow(stringResource(R.string.conn_params), onClick = onConn)
-        SettingRow(stringResource(R.string.adv_more), stringResource(R.string.adv_more_sub), onClick = onMore)
-    }
-}
-
-/** «Параметры подключения»: приложения, маршруты, DNS, протокол, SNI, конечная точка, сбросы. */
-@Composable
-fun ConnScreen(
+fun AdvancedScreen(
     prefs: Prefs,
     account: AccountController,
     vpn: VpnController,
@@ -50,32 +39,77 @@ fun ConnScreen(
     onApps: () -> Unit,
     onRoutes: () -> Unit,
     onDns: () -> Unit,
-    onResetAll: () -> Unit
+    onResetAll: () -> Unit,
+    onLanguageChanged: () -> Unit
 ) {
+    val ctx = LocalContext.current
     var sni by remember { mutableStateOf(prefs.customSni) }
     var ep by remember { mutableStateOf(prefs.customEndpoint) }
     var proto by remember { mutableStateOf(prefs.protocol) }
-    var dlg by remember { mutableStateOf("") } // sni | ep | proto | keys | all
+    var channel by remember { mutableStateOf(prefs.channel) }
+    var lang by remember { mutableStateOf(prefs.lang) }
+    var block by remember { mutableStateOf(prefs.blockedColos) }
+    var allow by remember { mutableStateOf(prefs.allowColos) }
+    var fallback by remember { mutableStateOf(prefs.fallbackAny) }
+    var auto by remember { mutableStateOf(prefs.autoStart) }
+    var dlg by remember { mutableStateOf("") }
+    var showLicenses by remember { mutableStateOf(false) }
 
-    val protoName = stringResource(
-        when (proto) {
-            "masque" -> R.string.proto_masque_chip
-            "wg" -> R.string.proto_wg_chip
-            else -> R.string.proto_auto
+    val openVpnSettings: () -> Unit = {
+        try { ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } catch (t: Throwable) { }
+    }
+    val openBattery: () -> Unit = {
+        try {
+            ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)))
+        } catch (t: Throwable) {
+            try { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (t2: Throwable) { }
         }
-    )
-    val dflt = stringResource(R.string.value_default)
+    }
+    val openAutostart: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent().setComponent(
+                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                )
+            )
+        } catch (t: Throwable) {
+            try {
+                ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
+            } catch (t2: Throwable) { }
+        }
+    }
 
-    SubPage(stringResource(R.string.conn_params), onBack) {
-        Spacer(Modifier.height(16.dp))
+    val dflt = stringResource(R.string.value_default)
+    val none = stringResource(R.string.value_none)
+    val protoOpts = listOf(
+        "auto" to stringResource(R.string.proto_auto),
+        "masque" to stringResource(R.string.proto_masque_chip),
+        "wg" to stringResource(R.string.proto_wg_chip)
+    )
+    val channelOpts = listOf(
+        "auto" to stringResource(R.string.channel_auto),
+        "cell" to stringResource(R.string.channel_cell)
+    )
+    val langOpts = listOf(
+        "system" to stringResource(R.string.lang_system),
+        "en" to stringResource(R.string.lang_en),
+        "ru" to stringResource(R.string.lang_ru)
+    )
+    val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
+
+    SubPage(stringResource(R.string.menu_advanced), onBack) {
+        SectionLabel(stringResource(R.string.adv_sec_apps))
         RowDivider()
         SettingRow(stringResource(R.string.conn_apps), onClick = onApps)
         SettingRow(stringResource(R.string.conn_routes), onClick = onRoutes)
         SettingRow(stringResource(R.string.conn_dns), onClick = onDns)
-        SettingRow(stringResource(R.string.conn_proto), value = protoName, onClick = { dlg = "proto" })
-        NoteText(stringResource(R.string.proto_hint))
-        SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
-        SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+
+        SectionLabel(stringResource(R.string.adv_sec_conn))
+        RowDivider()
+        SettingRow(stringResource(R.string.conn_proto), subtitle = stringResource(R.string.proto_hint),
+            value = protoOpts.firstOrNull { it.first == proto }?.second, onClick = { dlg = "proto" })
+        SettingRow(stringResource(R.string.channel_title), subtitle = stringResource(R.string.channel_hint),
+            value = channelOpts.firstOrNull { it.first == channel }?.second, onClick = { dlg = "channel" })
         SettingRow(
             stringResource(R.string.conn_sni), stringResource(R.string.conn_sni_sub),
             value = if (sni.isEmpty()) dflt else sni, onClick = { dlg = "sni" }
@@ -84,10 +118,58 @@ fun ConnScreen(
             stringResource(R.string.conn_endpoint), stringResource(R.string.conn_endpoint_sub),
             value = if (ep.isEmpty()) dflt else ep, onClick = { dlg = "ep" }
         )
+
+        SectionLabel(stringResource(R.string.colo_title))
+        RowDivider()
+        SettingRow(stringResource(R.string.colo_block), value = block.ifEmpty { none }, onClick = { dlg = "block" })
+        SettingRow(stringResource(R.string.colo_allow), value = allow.ifEmpty { none }, onClick = { dlg = "allow" })
+        SettingSwitchRow(stringResource(R.string.fallback_any), stringResource(R.string.fallback_hint), fallback) {
+            fallback = it
+            prefs.fallbackAny = it
+            vpn.restartIfActive()
+        }
+        SettingRow(stringResource(R.string.colo_reset), onClick = {
+            block = prefs.defaultBlockedColos()
+            prefs.blockedColos = block
+            allow = ""
+            prefs.allowColos = ""
+            vpn.restartIfActive()
+        })
+        NoteText(stringResource(R.string.colo_hint))
+
+        SectionLabel(stringResource(R.string.persist_title))
+        RowDivider()
+        SettingSwitchRow(stringResource(R.string.settings_autostart), stringResource(R.string.persist_hint), auto) {
+            auto = it
+            prefs.autoStart = it
+        }
+        SettingRow(stringResource(R.string.btn_always_on), onClick = openVpnSettings)
+        SettingRow(stringResource(R.string.btn_battery), onClick = openBattery)
+        SettingRow(stringResource(R.string.btn_autostart_xiaomi), onClick = openAutostart)
+        NoteText(stringResource(R.string.kill_info))
+
+        SectionLabel(stringResource(R.string.adv_sec_other))
+        RowDivider()
+        SettingRow(stringResource(R.string.settings_language),
+            value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
+        SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
+        SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+        SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
+            onClick = { showLicenses = !showLicenses })
+        if (showLicenses) {
+            NoteText(stringResource(R.string.about_text))
+            NoteText(stringResource(R.string.licenses_text))
+        }
         Spacer(Modifier.height(24.dp))
     }
 
     when (dlg) {
+        "proto" -> ChoiceDialog(stringResource(R.string.conn_proto), protoOpts, proto,
+            onPick = { proto = it; prefs.protocol = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
+        "channel" -> ChoiceDialog(stringResource(R.string.channel_title), channelOpts, channel,
+            onPick = { channel = it; prefs.channel = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
+        "lang" -> ChoiceDialog(stringResource(R.string.settings_language), langOpts, lang,
+            onPick = { lang = it; prefs.lang = it; dlg = ""; onLanguageChanged() }, onDismiss = { dlg = "" })
         "sni" -> TextDialog(
             stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
             onDismiss = { dlg = "" },
@@ -100,43 +182,22 @@ fun ConnScreen(
             onApply = { ep = it; prefs.customEndpoint = it; dlg = ""; vpn.restartIfActive() },
             onReset = { ep = ""; prefs.customEndpoint = ""; dlg = ""; vpn.restartIfActive() }
         )
-        "proto" -> AlertDialog(
-            onDismissRequest = { dlg = "" },
-            title = { Text(stringResource(R.string.conn_proto)) },
-            text = {
-                Column {
-                    listOf(
-                        "auto" to R.string.proto_auto,
-                        "masque" to R.string.proto_masque_chip,
-                        "wg" to R.string.proto_wg_chip
-                    ).forEach { (code, res) ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable {
-                                proto = code
-                                prefs.protocol = code
-                                dlg = ""
-                                vpn.restartIfActive()
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = proto == code, onClick = null)
-                            Spacer(Modifier.width(12.dp))
-                            Text(stringResource(res), modifier = Modifier.padding(vertical = 12.dp))
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { dlg = "" }) { Text(stringResource(R.string.btn_cancel)) } }
+        "block" -> TextDialog(
+            stringResource(R.string.colo_block), block, "DME",
+            onDismiss = { dlg = "" },
+            onApply = { block = it.uppercase(); prefs.blockedColos = block; dlg = ""; vpn.restartIfActive() },
+            onReset = { block = ""; prefs.blockedColos = ""; dlg = ""; vpn.restartIfActive() }
+        )
+        "allow" -> TextDialog(
+            stringResource(R.string.colo_allow), allow, "HEL, FRA, AMS",
+            onDismiss = { dlg = "" },
+            onApply = { allow = it.uppercase(); prefs.allowColos = allow; dlg = ""; vpn.restartIfActive() },
+            onReset = { allow = ""; prefs.allowColos = ""; dlg = ""; vpn.restartIfActive() }
         )
         "keys" -> ConfirmDialog(
             stringResource(R.string.conn_reset_keys), stringResource(R.string.conn_reset_keys_q),
             onDismiss = { dlg = "" },
-            onOk = {
-                dlg = ""
-                vpn.stop()
-                account.resetKeys()
-            }
+            onOk = { dlg = ""; vpn.stop(); account.resetKeys() }
         )
         "all" -> ConfirmDialog(
             stringResource(R.string.conn_reset_all), stringResource(R.string.conn_reset_all_q),

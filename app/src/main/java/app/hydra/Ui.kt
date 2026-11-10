@@ -1,9 +1,10 @@
 package app.hydra
-import androidx.compose.foundation.layout.fillMaxSize
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -282,6 +284,37 @@ fun ConfirmDialog(title: String, text: String, onDismiss: () -> Unit, onOk: () -
         title = { Text(title) },
         text = { Text(text) },
         confirmButton = { TextButton(onClick = onOk) { Text(stringResource(R.string.btn_ok)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) } }
+    )
+}
+
+/** Диалог выбора одного из вариантов (код, подпись). */
+@Composable
+fun ChoiceDialog(
+    title: String,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { (code, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(code) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == code, onClick = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(label, modifier = Modifier.padding(vertical = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) } }
     )
 }

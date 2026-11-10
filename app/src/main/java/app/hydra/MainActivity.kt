@@ -26,6 +26,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +74,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Dest { Home, Advanced, Conn, Dns, Routes, Apps, More, Diag, Errors, Journal }
+enum class Dest { Home, Advanced, Dns, Routes, Apps, Diag, Errors, Journal }
 
 @Composable
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
@@ -97,22 +98,25 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
         }
         account.ensureAll()
     }
+    // самовосстановление регистрации: если аккаунта нет, пробуем снова (то по Wi-Fi, то через мобильную сеть)
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(5000)
+            account.heal()
+        }
+    }
 
     Box(Modifier.fillMaxSize().statusBarsPadding()) {
         when (stack.last()) {
             Dest.Home -> HomeScreen(prefs, account, vpn, onAdvanced = { go(Dest.Advanced) }, onDiag = { go(Dest.Diag) })
-            Dest.Advanced -> AdvancedScreen(onBack = { back() }, onConn = { go(Dest.Conn) }, onMore = { go(Dest.More) })
-            Dest.Conn -> ConnScreen(
+            Dest.Advanced -> AdvancedScreen(
                 prefs, account, vpn, onBack = { back() },
                 onApps = { go(Dest.Apps) }, onRoutes = { go(Dest.Routes) }, onDns = { go(Dest.Dns) },
-                onResetAll = onLanguageChanged
+                onResetAll = onLanguageChanged, onLanguageChanged = onLanguageChanged
             )
             Dest.Dns -> DnsScreen(prefs, vpn, onBack = { back() })
             Dest.Routes -> RoutesScreen(prefs, vpn, onBack = { back() })
             Dest.Apps -> SubPage(stringResource(R.string.conn_apps), onBack = { back() }, scroll = false) { AppsScreen(prefs) }
-            Dest.More -> SubPage(stringResource(R.string.adv_more), onBack = { back() }, scroll = false) {
-                SettingsScreen(prefs, account, onLanguageChanged)
-            }
             Dest.Diag -> DiagnosticsScreen(
                 prefs, account, vpn, onBack = { back() },
                 onErrors = { go(Dest.Errors) }, onJournal = { go(Dest.Journal) }
