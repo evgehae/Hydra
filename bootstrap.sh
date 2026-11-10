@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=12
+NEW=13
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -28,5294 +28,13 @@ rm -f app/src/main/java/AndroidManifest.xml
 
 GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
 
-put .gitignore <<'HYDRA_EOF'
+putv .gitignore <<'HYDRA_EOF'
 .gradle/
 build/
 app/build/
 app/libs/
 local.properties
 *.aar
-HYDRA_EOF
-
-put "$GODIR/mobile/mobile.go" <<'HYDRA_EOF'
-// Package mobile — тонкая обвязка для gomobile: то, что видно из Kotlin.
-package mobile
-
-import (
-	"fmt"
-
-	hydra "hydra/core"
-)
-
-const version = "0.1.0"
-
-// Version проверяет, что Go-ядро собрано и вызывается из Android.
-func Version() string {
-	cfg := hydra.DefaultConfig()
-	return fmt.Sprintf("hydra-core %s (probe %s)", version, cfg.ProbeEvery)
-}
-HYDRA_EOF
-
-put settings.gradle.kts <<'HYDRA_EOF'
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-rootProject.name = "Hydra"
-include(":app")
-HYDRA_EOF
-
-put build.gradle.kts <<'HYDRA_EOF'
-plugins {
-    id("com.android.application") version "8.7.3" apply false
-    id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
-}
-HYDRA_EOF
-
-put gradle.properties <<'HYDRA_EOF'
-org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
-android.useAndroidX=true
-android.nonTransitiveRClass=true
-HYDRA_EOF
-
-put app/build.gradle.kts <<'HYDRA_EOF'
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
-}
-
-android {
-    namespace = "app.hydra"
-    compileSdk = 35
-
-    defaultConfig {
-        applicationId = "app.hydra"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-        ndk { abiFilters += listOf("arm64-v8a") }
-    }
-
-    buildTypes {
-        release { isMinifyEnabled = false }
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
-}
-
-dependencies {
-    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation(files("libs/hydra.aar"))
-}
-HYDRA_EOF
-
-put app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-    </queries>
-
-    <application
-        android:allowBackup="false"
-        android:label="@string/app_name"
-        android:theme="@style/Theme.Hydra">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
-HYDRA_EOF
-
-put app/src/main/res/values/themes.xml <<'HYDRA_EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.Hydra" parent="android:Theme.Material.NoActionBar" />
-</resources>
-HYDRA_EOF
-
-put app/src/main/res/values/strings.xml <<'HYDRA_EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Hydra</string>
-
-    <string name="tab_home">Home</string>
-    <string name="tab_split">Apps</string>
-    <string name="tab_diag">Diagnostics</string>
-    <string name="tab_settings">Settings</string>
-
-    <string name="home_status_idle">Not connected</string>
-    <string name="home_connect">Connect</string>
-    <string name="home_soon">Connection arrives in the next build</string>
-    <string name="home_engine">Engine: %1$s</string>
-
-    <string name="split_title">Split tunneling</string>
-    <string name="split_mode_only">Only selected apps use the VPN</string>
-    <string name="split_mode_except">All apps except the selected ones</string>
-    <string name="split_count">Selected: %1$d</string>
-
-    <string name="diag_title">Diagnostics</string>
-    <string name="diag_run">Check network</string>
-    <string name="diag_running">Checking…</string>
-
-    <string name="settings_title">Settings</string>
-    <string name="settings_language">Language</string>
-    <string name="lang_system">System</string>
-    <string name="lang_en">English</string>
-    <string name="lang_ru">Русский</string>
-    <string name="settings_autostart">Connect on startup</string>
-    <string name="settings_killswitch">Block traffic if the VPN drops</string>
-    <string name="settings_soon">These options take effect once connection is ready.</string>
-</resources>
-HYDRA_EOF
-
-put app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Hydra</string>
-
-    <string name="tab_home">Главная</string>
-    <string name="tab_split">Приложения</string>
-    <string name="tab_diag">Диагностика</string>
-    <string name="tab_settings">Настройки</string>
-
-    <string name="home_status_idle">Не подключено</string>
-    <string name="home_connect">Подключить</string>
-    <string name="home_soon">Подключение появится в следующей сборке</string>
-    <string name="home_engine">Движок: %1$s</string>
-
-    <string name="split_title">Раздельное туннелирование</string>
-    <string name="split_mode_only">Через VPN только выбранные приложения</string>
-    <string name="split_mode_except">Все приложения, кроме выбранных</string>
-    <string name="split_count">Выбрано: %1$d</string>
-
-    <string name="diag_title">Диагностика</string>
-    <string name="diag_run">Проверить сеть</string>
-    <string name="diag_running">Проверяю…</string>
-
-    <string name="settings_title">Настройки</string>
-    <string name="settings_language">Язык</string>
-    <string name="lang_system">Системный</string>
-    <string name="lang_en">English</string>
-    <string name="lang_ru">Русский</string>
-    <string name="settings_autostart">Подключаться при запуске</string>
-    <string name="settings_killswitch">Блокировать трафик при обрыве VPN</string>
-    <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
-</resources>
-HYDRA_EOF
-
-put app/src/main/java/app/hydra/Prefs.kt <<'HYDRA_EOF'
-package app.hydra
-
-import android.content.Context
-
-class Prefs(ctx: Context) {
-    private val sp = ctx.getSharedPreferences("hydra", Context.MODE_PRIVATE)
-
-    var lang: String
-        get() = sp.getString("lang", "system") ?: "system"
-        set(v) { sp.edit().putString("lang", v).apply() }
-
-    var splitOnlySelected: Boolean
-        get() = sp.getBoolean("split_only", true)
-        set(v) { sp.edit().putBoolean("split_only", v).apply() }
-
-    var splitApps: Set<String>
-        get() = sp.getStringSet("split_apps", emptySet())?.toSet() ?: emptySet()
-        set(v) { sp.edit().putStringSet("split_apps", v.toSet()).apply() }
-
-    var autoStart: Boolean
-        get() = sp.getBoolean("auto_start", false)
-        set(v) { sp.edit().putBoolean("auto_start", v).apply() }
-
-    var killSwitch: Boolean
-        get() = sp.getBoolean("kill_switch", false)
-        set(v) { sp.edit().putBoolean("kill_switch", v).apply() }
-}
-HYDRA_EOF
-
-put app/src/main/java/app/hydra/Diagnostics.kt <<'HYDRA_EOF'
-package app.hydra
-
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.InetAddress
-import java.net.URL
-
-/** Простая проверка сети: DNS и HTTPS до Cloudflare (+ покажет, идёт ли трафик через WARP). */
-suspend fun runDiagnostics(): String = withContext(Dispatchers.IO) {
-    val sb = StringBuilder()
-
-    var t = System.currentTimeMillis()
-    try {
-        val ip = InetAddress.getByName("cloudflare.com").hostAddress
-        sb.append("DNS: OK ($ip, ${System.currentTimeMillis() - t} ms)\n")
-    } catch (e: Exception) {
-        sb.append("DNS: FAIL (${e.javaClass.simpleName})\n")
-    }
-
-    t = System.currentTimeMillis()
-    try {
-        val c = URL("https://cloudflare.com/cdn-cgi/trace").openConnection() as HttpURLConnection
-        c.connectTimeout = 5000
-        c.readTimeout = 5000
-        val body = c.inputStream.bufferedReader().use { it.readText() }
-        c.disconnect()
-        val kv = body.lines()
-            .mapNotNull { l -> l.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }
-            .toMap()
-        sb.append("HTTPS: OK (${System.currentTimeMillis() - t} ms)\n")
-        sb.append("IP: ${kv["ip"]}\n")
-        sb.append("Loc: ${kv["loc"]}\n")
-        sb.append("Colo: ${kv["colo"]}\n")
-        sb.append("WARP: ${kv["warp"]}\n")
-    } catch (e: Exception) {
-        sb.append("HTTPS: FAIL (${e.javaClass.simpleName})\n")
-    }
-
-    sb.toString()
-}
-HYDRA_EOF
-
-put app/src/main/java/app/hydra/MainActivity.kt <<'HYDRA_EOF'
-package app.hydra
-
-import android.content.Context
-import android.content.Intent
-import android.content.res.Configuration
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.Locale
-
-class MainActivity : ComponentActivity() {
-
-    // Язык приложения: выбранный в настройках либо системный.
-    override fun attachBaseContext(base: Context) {
-        val lang = Prefs(base).lang
-        if (lang == "system") {
-            super.attachBaseContext(base)
-            return
-        }
-        val cfg = Configuration(base.resources.configuration)
-        cfg.setLocale(Locale(lang))
-        super.attachBaseContext(base.createConfigurationContext(cfg))
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val prefs = Prefs(this)
-        setContent {
-            val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = colors) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    HydraApp(prefs) { recreate() }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
-    var tab by rememberSaveable { mutableStateOf(0) }
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = tab == 0, onClick = { tab = 0 },
-                    icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_home)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 1, onClick = { tab = 1 },
-                    icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_split)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 2, onClick = { tab = 2 },
-                    icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_diag)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 3, onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_settings)) }
-                )
-            }
-        }
-    ) { pad ->
-        Box(Modifier.padding(pad).statusBarsPadding().fillMaxSize()) {
-            when (tab) {
-                0 -> HomeScreen()
-                1 -> SplitScreen(prefs)
-                2 -> DiagScreen()
-                else -> SettingsScreen(prefs, onLanguageChanged)
-            }
-        }
-    }
-}
-
-@Composable
-fun HomeScreen() {
-    val engine = remember {
-        try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" }
-    }
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("Hydra", style = MaterialTheme.typography.displayMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(stringResource(R.string.home_status_idle), style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = {}, enabled = false) { Text(stringResource(R.string.home_connect)) }
-        Spacer(Modifier.height(12.dp))
-        Text(stringResource(R.string.home_soon), style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(24.dp))
-        Text(stringResource(R.string.home_engine, engine), style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-data class AppItem(val pkg: String, val label: String)
-
-@Composable
-fun SplitScreen(prefs: Prefs) {
-    val ctx = LocalContext.current
-    var apps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-    var selected by remember { mutableStateOf(prefs.splitApps) }
-    var onlySelected by remember { mutableStateOf(prefs.splitOnlySelected) }
-
-    LaunchedEffect(Unit) {
-        apps = withContext(Dispatchers.IO) {
-            val pm = ctx.packageManager
-            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            pm.queryIntentActivities(intent, 0)
-                .map { AppItem(it.activityInfo.packageName, it.loadLabel(pm).toString()) }
-                .distinctBy { it.pkg }
-                .sortedBy { it.label.lowercase() }
-        }
-    }
-
-    Column(Modifier.fillMaxSize()) {
-        Text(
-            stringResource(R.string.split_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(16.dp)
-        )
-        ModeRow(R.string.split_mode_only, onlySelected) {
-            onlySelected = true
-            prefs.splitOnlySelected = true
-        }
-        ModeRow(R.string.split_mode_except, !onlySelected) {
-            onlySelected = false
-            prefs.splitOnlySelected = false
-        }
-        Text(
-            stringResource(R.string.split_count, selected.size),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(16.dp)
-        )
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(apps, key = { it.pkg }) { a ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val n = if (a.pkg in selected) selected - a.pkg else selected + a.pkg
-                            selected = n
-                            prefs.splitApps = n
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(checked = a.pkg in selected, onCheckedChange = null)
-                    Spacer(Modifier.width(12.dp))
-                    Text(a.label)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ModeRow(label: Int, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Spacer(Modifier.width(8.dp))
-        Text(stringResource(label))
-    }
-}
-
-@Composable
-fun DiagScreen() {
-    val scope = rememberCoroutineScope()
-    var running by remember { mutableStateOf(false) }
-    var report by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text(stringResource(R.string.diag_title), style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = {
-                if (!running) {
-                    running = true
-                    scope.launch {
-                        report = runDiagnostics()
-                        running = false
-                    }
-                }
-            },
-            enabled = !running
-        ) {
-            Text(stringResource(if (running) R.string.diag_running else R.string.diag_run))
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(text = report, fontFamily = FontFamily.Monospace)
-    }
-}
-
-@Composable
-fun SettingsScreen(prefs: Prefs, onLanguageChanged: () -> Unit) {
-    var lang by remember { mutableStateOf(prefs.lang) }
-    var auto by remember { mutableStateOf(prefs.autoStart) }
-    var kill by remember { mutableStateOf(prefs.killSwitch) }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(16.dp))
-        Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.titleMedium)
-        listOf(
-            "system" to R.string.lang_system,
-            "en" to R.string.lang_en,
-            "ru" to R.string.lang_ru
-        ).forEach { (code, res) ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        if (lang != code) {
-                            lang = code
-                            prefs.lang = code
-                            onLanguageChanged()
-                        }
-                    }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(selected = lang == code, onClick = null)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(res))
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        SwitchRow(R.string.settings_autostart, auto) {
-            auto = it
-            prefs.autoStart = it
-        }
-        SwitchRow(R.string.settings_killswitch, kill) {
-            kill = it
-            prefs.killSwitch = it
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(stringResource(R.string.settings_soon), style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(24.dp))
-        Text("Hydra 0.1.0", style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-fun SwitchRow(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(stringResource(label))
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-HYDRA_EOF
-
-# ===================== v12 =====================
-putv "$GODIR/colo.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"bufio"
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
-)
-
-// ColoPolicy — политика выбора дата-центра Cloudflare (по коду аэропорта).
-// Block — запрещённые коды; Allow — если не пусто, разрешены только они.
-type ColoPolicy struct {
-	Block []string
-	Allow []string
-}
-
-// DefaultColoPolicy: никакой Москвы (DME) и остальных российских точек Cloudflare.
-func DefaultColoPolicy() *ColoPolicy {
-	return &ColoPolicy{Block: []string{"DME", "LED", "SVX", "KJA", "OVB", "KHV", "VVO", "KZN"}}
-}
-
-func normColo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
-
-// Allows: nil-политика и неизвестный дата-центр (пустой код) не блокируются.
-func (p *ColoPolicy) Allows(colo string) bool {
-	if p == nil {
-		return true
-	}
-	c := normColo(colo)
-	if c == "" {
-		return true
-	}
-	for _, b := range p.Block {
-		if normColo(b) == c {
-			return false
-		}
-	}
-	if len(p.Allow) > 0 {
-		for _, a := range p.Allow {
-			if normColo(a) == c {
-				return true
-			}
-		}
-		return false
-	}
-	return true
-}
-
-// ParseColoList разбирает "dme, LED;fra" в ["DME","LED","FRA"] без повторов.
-func ParseColoList(s string) []string {
-	seen := map[string]bool{}
-	var out []string
-	split := func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' }
-	for _, f := range strings.FieldsFunc(s, split) {
-		c := normColo(f)
-		if c != "" && !seen[c] {
-			seen[c] = true
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// ColoError — туннель поднялся, но попал в запрещённый дата-центр.
-type ColoError struct{ Colo string }
-
-func (e *ColoError) Error() string {
-	return fmt.Sprintf("дата-центр %s запрещён политикой", e.Colo)
-}
-
-// ColoReporter — необязательный интерфейс туннеля: сказать, через какой
-// дата-центр он идёт. Туннели без него пропускаются без проверки.
-type ColoReporter interface {
-	Colo(ctx context.Context) (string, error)
-}
-
-// ParseTrace разбирает ответ https://cloudflare.com/cdn-cgi/trace.
-func ParseTrace(body string) map[string]string {
-	m := map[string]string{}
-	sc := bufio.NewScanner(strings.NewReader(body))
-	for sc.Scan() {
-		if k, v, ok := strings.Cut(sc.Text(), "="); ok {
-			m[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	return m
-}
-
-// TraceColo — стандартный способ узнать дата-центр: запрос trace через туннель.
-func TraceColo(ctx context.Context, t Tunnel) (string, error) {
-	tr := &http.Transport{
-		DialContext:         t.DialContext,
-		DisableKeepAlives:   true,
-		TLSHandshakeTimeout: 8 * time.Second,
-	}
-	cl := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://cloudflare.com/cdn-cgi/trace", nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := cl.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	colo := normColo(ParseTrace(string(body))["colo"])
-	if colo == "" {
-		return "", errors.New("в ответе trace нет colo")
-	}
-	return colo, nil
-}
-HYDRA_EOF
-
-putv "$GODIR/colo_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"strings"
-	"testing"
-)
-
-type coloTunnel struct {
-	*fakeTunnel
-	colo string
-}
-
-func (c *coloTunnel) Colo(context.Context) (string, error) { return c.colo, nil }
-
-func coloTransport(colos map[string]string, order ...string) *fakeTransport {
-	var ss []Strategy
-	for _, id := range order {
-		ss = append(ss, Strategy{ID: id, Transport: "fake"})
-	}
-	return &fakeTransport{
-		strategies: ss,
-		dial: func(ctx context.Context, s Strategy) (Tunnel, error) {
-			return &coloTunnel{newFakeTunnel(0), colos[s.ID]}, nil
-		},
-	}
-}
-
-func TestColoPolicy(t *testing.T) {
-	p := DefaultColoPolicy()
-	for _, c := range []string{"DME", "dme", " LED "} {
-		if p.Allows(c) {
-			t.Fatalf("%q должен быть запрещён", c)
-		}
-	}
-	for _, c := range []string{"HEL", "FRA", "AMS", "ARN", ""} {
-		if !p.Allows(c) {
-			t.Fatalf("%q должен быть разрешён", c)
-		}
-	}
-	onlyEU := &ColoPolicy{Allow: []string{"hel", "fra"}}
-	if !onlyEU.Allows("HEL") || onlyEU.Allows("AMS") {
-		t.Fatal("Allow-список работает неверно")
-	}
-	var nilp *ColoPolicy
-	if !nilp.Allows("DME") {
-		t.Fatal("nil-политика ничего не блокирует")
-	}
-}
-
-func TestParseColoList(t *testing.T) {
-	got := strings.Join(ParseColoList("dme, LED;fra  dme"), ",")
-	if got != "DME,LED,FRA" {
-		t.Fatalf("получили %q", got)
-	}
-}
-
-func TestParseTrace(t *testing.T) {
-	m := ParseTrace("fl=1\nip=1.2.3.4\ncolo=HEL\nwarp=on\n")
-	if m["colo"] != "HEL" || m["warp"] != "on" || m["ip"] != "1.2.3.4" {
-		t.Fatalf("разбор trace: %v", m)
-	}
-}
-
-func TestRaceSkipsBlockedColo(t *testing.T) {
-	ft := coloTransport(map[string]string{"dme": "DME", "hel": "HEL"}, "dme", "hel")
-	mem, _ := LoadMemory("")
-	o := New(fastCfg(), mem, []Transport{ft}, nil)
-	tun, s, err := o.race(context.Background(), "wifi:home", "")
-	if err != nil || s.ID != "hel" {
-		t.Fatalf("ждали hel, получили %q %v", s.ID, err)
-	}
-	tun.Close()
-}
-
-func TestRaceAllBlocked(t *testing.T) {
-	ft := coloTransport(map[string]string{"a": "DME", "b": "LED"}, "a", "b")
-	mem, _ := LoadMemory("")
-	o := New(fastCfg(), mem, []Transport{ft}, nil)
-	_, _, err := o.race(context.Background(), "wifi:home", "")
-	if err == nil || !strings.Contains(err.Error(), "DME") {
-		t.Fatalf("ждали ошибку про запрещённые дата-центры, получили %v", err)
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/dns.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"net"
-	"strings"
-	"sync/atomic"
-	"time"
-)
-
-// На Android у Go нет /etc/resolv.conf, поэтому встроенный резолвер идёт на
-// localhost:53 — а там никого нет, и любое имя «не находится». Лечим: сами
-// задаём DNS-серверы. Системные присылает Android-часть, запасные — ниже.
-var fallbackDNS = []string{"8.8.8.8", "1.1.1.1", "77.88.8.8"}
-
-// SetSystemDNS подменяет резолвер процесса: сначала переданные серверы
-// (только IP-адреса), потом запасные. Каждая новая попытка идёт на следующий сервер.
-func SetSystemDNS(servers []string) {
-	var list []string
-	seen := map[string]bool{}
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || net.ParseIP(s) == nil || seen[s] {
-			return
-		}
-		seen[s] = true
-		list = append(list, s)
-	}
-	for _, s := range servers {
-		add(s)
-	}
-	for _, s := range fallbackDNS {
-		add(s)
-	}
-	var n uint32
-	net.DefaultResolver = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			i := int(atomic.AddUint32(&n, 1)-1) % len(list)
-			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, network, net.JoinHostPort(list[i], "53"))
-		},
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/dns_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"net"
-	"testing"
-)
-
-func TestSetSystemDNSRotatesServers(t *testing.T) {
-	old := net.DefaultResolver
-	defer func() { net.DefaultResolver = old }()
-
-	SetSystemDNS([]string{"127.0.0.1", "мусор", "127.0.0.2", "127.0.0.1"})
-	r := net.DefaultResolver
-	if !r.PreferGo || r.Dial == nil {
-		t.Fatal("резолвер не подменён")
-	}
-	var got []string
-	for i := 0; i < 2; i++ {
-		c, err := r.Dial(context.Background(), "udp", "ignored:53")
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, c.RemoteAddr().String())
-		c.Close()
-	}
-	if got[0] != "127.0.0.1:53" || got[1] != "127.0.0.2:53" {
-		t.Fatalf("серверы по кругу: %v", got)
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/engine.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"math/rand"
-	"net"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-)
-
-// Engine — «сердце» Гидры на телефоне. Android отдаёт TUN (поток IP-пакетов),
-// Engine гоняет их через туннель WARP и сам следит за ним:
-//   - после подключения узнаёт дата-центр Cloudflare; запрещённый — отбрасывает;
-//   - проверяет, что через туннель реально проходит TCP, а не только «рукопожатие»;
-//   - при смене сети (Wi-Fi ↔ мобильная) сразу переподключается;
-//   - при сбое переходит на другую стратегию; запоминает, что работало в каждой сети;
-//   - всё, что происходит и почему, пишет в журнал.
-
-// PacketDevice — «сетевая карта» для туннеля (те же методы, что у TunnelDevice в usque).
-type PacketDevice interface {
-	ReadPacket(buf []byte) (int, error)
-	WritePacket(pkt []byte) error
-}
-
-// Runner держит туннель по стратегии s, пока ctx не отменён или не случилась
-// непоправимая ошибка. Пакеты читает/пишет через dev.
-type Runner func(ctx context.Context, dev PacketDevice, s Strategy) error
-
-type EngineConfig struct {
-	LocalIP      net.IP // IPv4-адрес внутри туннеля (из аккаунта)
-	Strategies   []Strategy
-	Runner       Runner
-	Policy       *ColoPolicy
-	SoftFallback bool // если все адреса ведут в запрещённый дата-центр — всё равно подключиться
-	Mem          *Memory
-	NetKey       func() string
-	NetChanged   <-chan struct{} // сигнал «сеть сменилась» от Android
-	ProbeEvery   time.Duration
-	UpTimeout    time.Duration // сколько ждать первого ответа после старта стратегии
-	BadProbes    int           // сколько проб подряд без ответа = туннель умер
-	TCPCheck     bool          // проверять реальную передачу TCP
-	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
-}
-
-func DefaultEngineConfig() EngineConfig {
-	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 6 * time.Second, BadProbes: 3, TCPCheck: true}
-}
-
-type Status struct {
-	State    string // connecting | up | reconnecting | failed
-	Strategy string
-	Colo     string
-	RTT      time.Duration
-	Message  string
-}
-
-type Engine struct {
-	cfg     EngineConfig
-	tun     io.ReadWriteCloser
-	out     chan []byte // пакеты из TUN (от приложений)
-	probeQ  chan []byte
-	port    uint16
-	tcpPort uint16
-	tcpSeq  uint32
-	tcpAck  chan struct{}
-	nextID  uint32
-	events  chan Event
-	tunDead chan struct{}
-	once    sync.Once
-	soft    bool
-
-	mu      sync.Mutex
-	status  Status
-	waiters map[uint16]chan string
-}
-
-func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
-	d := DefaultEngineConfig()
-	if cfg.ProbeEvery <= 0 {
-		cfg.ProbeEvery = d.ProbeEvery
-	}
-	if cfg.UpTimeout <= 0 {
-		cfg.UpTimeout = d.UpTimeout
-	}
-	if cfg.BadProbes <= 0 {
-		cfg.BadProbes = d.BadProbes
-	}
-	if cfg.TCPTimeout <= 0 {
-		cfg.TCPTimeout = 2 * time.Second
-	}
-	if cfg.Mem == nil {
-		cfg.Mem, _ = LoadMemory("")
-	}
-	if cfg.NetKey == nil {
-		cfg.NetKey = func() string { return "default" }
-	}
-	return &Engine{
-		cfg:     cfg,
-		tun:     tun,
-		out:     make(chan []byte, 512),
-		probeQ:  make(chan []byte, 16),
-		port:    uint16(20000 + rand.Intn(20000)),
-		tcpPort: uint16(41000 + rand.Intn(20000)),
-		tcpAck:  make(chan struct{}, 1),
-		events:  make(chan Event, 64),
-		tunDead: make(chan struct{}),
-		waiters: map[uint16]chan string{},
-		status:  Status{State: "connecting"},
-	}
-}
-
-func (e *Engine) Events() <-chan Event { return e.events }
-
-func (e *Engine) Status() Status {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.status
-}
-
-func (e *Engine) setStatus(s Status) {
-	e.mu.Lock()
-	e.status = s
-	e.mu.Unlock()
-}
-
-func (e *Engine) emit(kind, strategy, msg string) {
-	select {
-	case e.events <- Event{Kind: kind, Strategy: strategy, Msg: msg, At: time.Now()}:
-	default:
-	}
-}
-
-func (e *Engine) Close() { e.once.Do(func() { e.tun.Close() }) }
-
-func (e *Engine) policy() *ColoPolicy {
-	if e.soft {
-		return nil
-	}
-	return e.cfg.Policy
-}
-
-// readTun читает пакеты приложений. Пока туннеля нет, лишние пакеты отбрасываются.
-func (e *Engine) readTun() {
-	defer close(e.tunDead)
-	for {
-		buf := make([]byte, 2048)
-		n, err := e.tun.Read(buf)
-		if err != nil {
-			return
-		}
-		select {
-		case e.out <- buf[:n]:
-		default:
-		}
-	}
-}
-
-// attemptDev — «карта» одной попытки: после отмены попытки её горутины
-// просыпаются с ошибкой и не крадут пакеты у следующей попытки.
-type attemptDev struct {
-	e    *Engine
-	done <-chan struct{}
-}
-
-func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
-	select {
-	case <-d.done:
-		return 0, io.EOF
-	case <-d.e.tunDead:
-		return 0, io.EOF
-	case p := <-d.e.probeQ:
-		return copy(buf, p), nil
-	case p := <-d.e.out:
-		return copy(buf, p), nil
-	}
-}
-
-func (d *attemptDev) WritePacket(pkt []byte) error {
-	select {
-	case <-d.done:
-		return io.ErrClosedPipe
-	default:
-	}
-	if id, colo, ok := ParseColoReply(pkt, d.e.port); ok {
-		d.e.deliver(id, colo)
-		return nil
-	}
-	if ParseTCPSynAck(pkt, d.e.tcpPort, atomic.LoadUint32(&d.e.tcpSeq)+1) {
-		select {
-		case d.e.tcpAck <- struct{}{}:
-		default:
-		}
-		return nil
-	}
-	_, err := d.e.tun.Write(pkt)
-	return err
-}
-
-func (e *Engine) deliver(id uint16, colo string) {
-	e.mu.Lock()
-	ch := e.waiters[id]
-	e.mu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- colo:
-		default:
-		}
-	}
-}
-
-// probe шлёт UDP-пробу (DNS id.server) и ждёт ответ: задержка и код дата-центра.
-func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duration, string, error) {
-	id := uint16(atomic.AddUint32(&e.nextID, 1))
-	ch := make(chan string, 1)
-	e.mu.Lock()
-	e.waiters[id] = ch
-	e.mu.Unlock()
-	defer func() {
-		e.mu.Lock()
-		delete(e.waiters, id)
-		e.mu.Unlock()
-	}()
-	pkt := BuildColoProbe(e.cfg.LocalIP, e.port, id)
-	if pkt == nil {
-		return 0, "", errors.New("нет IPv4-адреса туннеля")
-	}
-	t0 := time.Now()
-	select {
-	case e.probeQ <- pkt:
-	default:
-		return 0, "", errors.New("очередь проб переполнена")
-	}
-	select {
-	case colo := <-ch:
-		return time.Since(t0), colo, nil
-	case <-time.After(timeout):
-		return 0, "", errors.New("нет ответа на пробу")
-	case <-ctx.Done():
-		return 0, "", ctx.Err()
-	}
-}
-
-// tcpProbe: SYN на 1.1.1.1:443 через туннель, ждём SYN-ACK.
-func (e *Engine) tcpProbe(ctx context.Context, timeout time.Duration) (time.Duration, error) {
-	seq := rand.Uint32()
-	atomic.StoreUint32(&e.tcpSeq, seq)
-	select {
-	case <-e.tcpAck:
-	default:
-	}
-	id := uint16(atomic.AddUint32(&e.nextID, 1))
-	syn := BuildTCPSyn(e.cfg.LocalIP, e.tcpPort, seq, id)
-	if syn == nil {
-		return 0, errors.New("нет IPv4-адреса туннеля")
-	}
-	t0 := time.Now()
-	select {
-	case e.probeQ <- syn:
-	default:
-		return 0, errors.New("очередь проб переполнена")
-	}
-	select {
-	case <-e.tcpAck:
-		rtt := time.Since(t0)
-		if rst := BuildTCPRst(e.cfg.LocalIP, e.tcpPort, seq+1, id+1); rst != nil {
-			select {
-			case e.probeQ <- rst:
-			default:
-			}
-		}
-		return rtt, nil
-	case <-time.After(timeout):
-		return 0, errors.New("нет SYN-ACK")
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	}
-}
-
-type outcome struct {
-	wasUp       bool
-	netChanged  bool
-	coloBlocked string
-	reason      string
-}
-
-func policyText(p *ColoPolicy) string {
-	if p == nil || (len(p.Block) == 0 && len(p.Allow) == 0) {
-		return "нет"
-	}
-	s := strings.Join(p.Block, ",")
-	if len(p.Allow) > 0 {
-		s += "; только: " + strings.Join(p.Allow, ",")
-	}
-	return s
-}
-
-func (e *Engine) fail(nk string, s Strategy, msg string) outcome {
-	e.cfg.Mem.Record(nk, s.ID, false, 0)
-	e.emit("failed", s.ID, msg)
-	return outcome{reason: msg}
-}
-
-func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome {
-	e.setStatus(Status{State: "connecting", Strategy: s.ID})
-	e.emit("connecting", s.ID, "")
-	Logf("▶ стратегия %s", s.ID)
-	Logf("   %s", describeStrategy(s))
-	select {
-	case <-e.cfg.NetChanged:
-	default:
-	}
-	// старые пробы от прошлых попыток в очереди только мешают
-	for drained := false; !drained; {
-		select {
-		case <-e.probeQ:
-		default:
-			drained = true
-		}
-	}
-
-	actx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	dev := &attemptDev{e: e, done: actx.Done()}
-	errc := make(chan error, 1)
-	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
-
-	timeout := e.cfg.UpTimeout
-	if e.cfg.Mem.Worked(nk, s.ID) {
-		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
-	}
-	start := time.Now()
-	var colo string
-	var rtt time.Duration
-	up := false
-	for !up && time.Since(start) < timeout {
-		select {
-		case err := <-errc:
-			msg := "туннель не поднялся"
-			if err != nil {
-				msg = err.Error()
-			}
-			Logf("   ✘ клиент остановился: %s", msg)
-			return e.fail(nk, s, msg)
-		case <-ctx.Done():
-			return outcome{reason: "остановка"}
-		case <-e.cfg.NetChanged:
-			Logf("   ↻ сеть сменилась во время подключения — начинаю заново")
-			return outcome{netChanged: true, reason: "сменилась сеть"}
-		default:
-		}
-		r, c, err := e.probe(actx, 1500*time.Millisecond)
-		if err == nil {
-			up, colo, rtt = true, c, r
-		} else {
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
-	if !up {
-		hint := ""
-		if s.Transport == "wg" {
-			hint = " — похоже, провайдер режет WireGuard (UDP) к этому адресу"
-		} else if s.Params["h2"] != "1" {
-			hint = " — похоже, провайдер режет QUIC к этому адресу"
-		}
-		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(timeout.Seconds()), hint)
-		Logf("   ✘ %s", msg)
-		return e.fail(nk, s, msg)
-	}
-	Logf("   туннель ответил за %d мс, дата-центр Cloudflare: %s", rtt.Milliseconds(), colo)
-
-	if !e.policy().Allows(colo) {
-		Logf("   ✘ дата-центр %s запрещён настройками — отбрасываю этот туннель", colo)
-		e.cfg.Mem.Record(nk, s.ID, false, 0)
-		e.emit("colo_blocked", s.ID, colo)
-		return outcome{coloBlocked: colo, reason: "дата-центр " + colo + " запрещён"}
-	}
-
-	if e.cfg.TCPCheck {
-		var tcpRTT time.Duration
-		var terr error
-		for i := 0; i < 3; i++ {
-			if tcpRTT, terr = e.tcpProbe(actx, e.cfg.TCPTimeout); terr == nil {
-				break
-			}
-			if ctx.Err() != nil {
-				return outcome{reason: "остановка"}
-			}
-		}
-		if terr != nil {
-			msg := "UDP через туннель идёт, а TCP — нет (туннель не пропускает интернет)"
-			Logf("   ✘ %s", msg)
-			return e.fail(nk, s, msg)
-		}
-		Logf("   ✔ TCP до 1.1.1.1:443 проходит (%d мс)", tcpRTT.Milliseconds())
-	}
-
-	e.cfg.Mem.Record(nk, s.ID, true, time.Since(start))
-	msg := ""
-	if e.soft {
-		msg = "режим «всё равно»: другого дата-центра нет"
-		Logf("   ⚠ %s", msg)
-	}
-	e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: rtt, Message: msg})
-	e.emit("connected", s.ID, colo)
-	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(start).Seconds(), s.ID, colo, rtt.Milliseconds())
-
-	bad, ticks := 0, 0
-	tk := time.NewTicker(e.cfg.ProbeEvery)
-	defer tk.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return outcome{wasUp: true, reason: "остановка"}
-		case <-e.cfg.NetChanged:
-			Logf("↻ сеть сменилась — переподключаюсь")
-			return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
-		case err := <-errc:
-			msg := "туннель закрылся"
-			if err != nil {
-				msg = err.Error()
-			}
-			Logf("✘ %s", msg)
-			e.cfg.Mem.Record(nk, s.ID, false, 0)
-			return outcome{wasUp: true, reason: msg}
-		case <-tk.C:
-			if e.cfg.NetKey() != nk {
-				Logf("↻ сеть сменилась (%s → %s) — переподключаюсь", nk, e.cfg.NetKey())
-				return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
-			}
-			ticks++
-			r, c, err := e.probe(actx, e.cfg.ProbeEvery)
-			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
-				_, err = e.tcpProbe(actx, e.cfg.TCPTimeout)
-			}
-			if err != nil {
-				bad++
-				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
-				if bad >= e.cfg.BadProbes {
-					e.cfg.Mem.Record(nk, s.ID, false, 0)
-					e.emit("degraded", s.ID, "туннель перестал отвечать")
-					Logf("✘ туннель перестал отвечать — меняю стратегию")
-					return outcome{wasUp: true, reason: "туннель перестал отвечать"}
-				}
-				continue
-			}
-			bad = 0
-			if c != colo {
-				Logf("   дата-центр сменился: %s → %s", colo, c)
-				colo = c
-				if !e.policy().Allows(c) {
-					e.cfg.Mem.Record(nk, s.ID, false, 0)
-					e.emit("colo_blocked", s.ID, c)
-					Logf("✘ дата-центр %s запрещён — меняю стратегию", c)
-					return outcome{wasUp: true, coloBlocked: c, reason: "дата-центр " + c + " запрещён"}
-				}
-			}
-			e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: r, Message: e.Status().Message})
-		}
-	}
-}
-
-// Run — главный цикл: подключиться, следить, при сбое перейти на другую стратегию.
-func (e *Engine) Run(ctx context.Context) error {
-	defer e.Close()
-	go e.readTun()
-	Logf("Гидра запущена: стратегий %d, запрещённые дата-центры: %s", len(e.cfg.Strategies), policyText(e.cfg.Policy))
-
-	backoff := time.Second
-	skip := ""
-	lastNK := ""
-	blocked := map[string]time.Time{}
-	for ctx.Err() == nil {
-		select {
-		case <-e.tunDead:
-			return errors.New("TUN закрыт")
-		default:
-		}
-		nk := e.cfg.NetKey()
-		if nk != lastNK {
-			if lastNK != "" {
-				Logf("↻ сеть: %s → %s", lastNK, nk)
-			} else {
-				Logf("сеть: %s", nk)
-			}
-			lastNK = nk
-			blocked = map[string]time.Time{}
-			e.soft = false
-			skip = ""
-		}
-		cands := e.cfg.Mem.Rank(nk, e.cfg.Strategies)
-		ran, skipped := 0, 0
-		lastReason := ""
-		sawBlocked := false
-		restart := false
-		for _, s := range cands {
-			if ctx.Err() != nil {
-				break
-			}
-			if s.ID == skip {
-				continue
-			}
-			ep := s.Params["endpoint"]
-			epKey := hostOnly(ep)
-			if until, ok := blocked[epKey]; ep != "" && ok && time.Now().Before(until) {
-				skipped++
-				continue
-			}
-			ran++
-			r := e.runStrategy(ctx, nk, s)
-			if ctx.Err() != nil {
-				break
-			}
-			lastReason = r.reason
-			if r.coloBlocked != "" {
-				sawBlocked = true
-				if ep != "" {
-					blocked[epKey] = time.Now().Add(10 * time.Minute)
-					Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
-				}
-			}
-			if r.netChanged {
-				skip = ""
-				restart = true
-				break
-			}
-			if r.wasUp {
-				skip = s.ID
-				e.setStatus(Status{State: "reconnecting", Message: r.reason})
-				backoff = time.Second
-				restart = true
-				break
-			}
-		}
-		if ctx.Err() != nil {
-			break
-		}
-		if restart {
-			continue
-		}
-		if sawBlocked && e.cfg.SoftFallback && !e.soft {
-			e.soft = true
-			blocked = map[string]time.Time{}
-			Logf("⚠ все рабочие адреса ведут в запрещённые дата-центры; включён режим «всё равно» — принимаю любой")
-			continue
-		}
-		skip = ""
-		msg := lastReason
-		switch {
-		case ran == 0 && skipped > 0:
-			msg = "⛔ все адреса сейчас ведут в запрещённые дата-центры — жду"
-		case ran == 0:
-			msg = "нет стратегий"
-		case sawBlocked:
-			msg = "⛔ рабочие маршруты ведут только в запрещённые дата-центры"
-		}
-		Logf("✘ подключиться не удалось: %s; повтор через %s", msg, backoff)
-		e.setStatus(Status{State: "failed", Message: msg})
-		e.emit("failed", "", msg)
-		if !sleep(ctx, backoff) {
-			break
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
-	}
-	return ctx.Err()
-}
-HYDRA_EOF
-
-putv "$GODIR/engine_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"io"
-	"net"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
-)
-
-type fakeTun struct {
-	rd   chan []byte
-	wr   chan []byte
-	done chan struct{}
-	once sync.Once
-}
-
-func newFakeTun() *fakeTun {
-	return &fakeTun{rd: make(chan []byte, 16), wr: make(chan []byte, 64), done: make(chan struct{})}
-}
-func (f *fakeTun) Read(p []byte) (int, error) {
-	select {
-	case b := <-f.rd:
-		return copy(p, b), nil
-	case <-f.done:
-		return 0, io.EOF
-	}
-}
-func (f *fakeTun) Write(p []byte) (int, error) {
-	select {
-	case f.wr <- append([]byte(nil), p...):
-	default:
-	}
-	return len(p), nil
-}
-func (f *fakeTun) Close() error { f.once.Do(func() { close(f.done) }); return nil }
-
-// fakeRunner изображает туннель: отвечает на пробы кодом дата-центра из
-// параметров стратегии; "dieAfter" — через сколько мс перестать отвечать;
-// "dead" — не отвечать вовсе.
-func fakeRunner(started *int32) Runner {
-	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
-		atomic.AddInt32(started, 1)
-		t0 := time.Now()
-		buf := make([]byte, 2048)
-		for {
-			n, err := dev.ReadPacket(buf)
-			if err != nil {
-				return nil
-			}
-			if s.Params["dead"] == "1" {
-				continue
-			}
-			if d := s.Params["dieAfter"]; d != "" {
-				ms := 0
-				for _, c := range d {
-					ms = ms*10 + int(c-'0')
-				}
-				if time.Since(t0) > time.Duration(ms)*time.Millisecond {
-					continue
-				}
-			}
-			switch buf[9] {
-			case 17: // UDP — проба дата-центра
-				dev.WritePacket(buildColoReply(append([]byte(nil), buf[:n]...), s.Params["colo"]))
-			case 6: // TCP — проба SYN (RST и прочее игнорируем)
-				if s.Params["notcp"] != "1" && buf[ihlOf(buf)+13] == 0x02 {
-					dev.WritePacket(buildSynAck(append([]byte(nil), buf[:n]...)))
-				}
-			}
-		}
-	}
-}
-
-func ihlOf(b []byte) int { return int(b[0]&0x0f) * 4 }
-
-func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy, tcpCheck bool) (*Engine, context.CancelFunc, *int32) {
-	var started int32
-	cfg := DefaultEngineConfig()
-	cfg.LocalIP = net.ParseIP("172.16.0.2")
-	cfg.Strategies = ss
-	cfg.Runner = fakeRunner(&started)
-	cfg.Policy = policy
-	cfg.ProbeEvery = 40 * time.Millisecond
-	cfg.UpTimeout = 600 * time.Millisecond
-	cfg.BadProbes = 2
-	cfg.TCPCheck = tcpCheck
-	cfg.TCPTimeout = 150 * time.Millisecond
-	e := NewEngine(newFakeTun(), cfg)
-	ctx, cancel := context.WithCancel(context.Background())
-	go e.Run(ctx)
-	return e, cancel, &started
-}
-
-func waitStatus(t *testing.T, e *Engine, what string, ok func(Status) bool) Status {
-	t.Helper()
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
-		if st := e.Status(); ok(st) {
-			return st
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("не дождались: %s; статус %+v", what, e.Status())
-	return Status{}
-}
-
-func TestEngineSkipsBlockedColo(t *testing.T) {
-	ss := []Strategy{
-		{ID: "moscow", Transport: "masque", Params: map[string]string{"colo": "DME"}},
-		{ID: "helsinki", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
-	}
-	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
-	defer cancel()
-	st := waitStatus(t, e, "up через HEL", func(s Status) bool { return s.State == "up" && s.Colo == "HEL" })
-	if st.Strategy != "helsinki" {
-		t.Fatalf("ждали стратегию helsinki, получили %q", st.Strategy)
-	}
-}
-
-func TestEngineFailsOverWhenTunnelDies(t *testing.T) {
-	ss := []Strategy{
-		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL", "dieAfter": "250"}},
-		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
-	}
-	e, cancel, started := testEngine(t, ss, DefaultColoPolicy(), false)
-	defer cancel()
-	waitStatus(t, e, "up через a", func(s Status) bool { return s.State == "up" && s.Strategy == "a" })
-	st := waitStatus(t, e, "переход на b", func(s Status) bool { return s.State == "up" && s.Strategy == "b" })
-	if st.Colo != "FRA" || atomic.LoadInt32(started) < 2 {
-		t.Fatalf("неверное состояние после сбоя: %+v", st)
-	}
-}
-
-func TestEngineReportsFailureWhenEverythingBlocked(t *testing.T) {
-	ss := []Strategy{
-		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "DME"}},
-		{ID: "b", Transport: "masque", Params: map[string]string{"dead": "1"}},
-	}
-	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
-	defer cancel()
-	waitStatus(t, e, "state=failed", func(s Status) bool { return s.State == "failed" })
-}
-
-func TestEngineRequiresRealTCP(t *testing.T) {
-	ss := []Strategy{
-		{ID: "udp-only", Transport: "masque", Params: map[string]string{"colo": "HEL", "notcp": "1"}},
-		{ID: "full", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
-	}
-	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), true)
-	defer cancel()
-	st := waitStatus(t, e, "up через full", func(s Status) bool { return s.State == "up" && s.Strategy == "full" })
-	if st.Colo != "FRA" {
-		t.Fatalf("неверный дата-центр: %+v", st)
-	}
-}
-
-func TestEngineReactsToNetworkChange(t *testing.T) {
-	ss := []Strategy{
-		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
-		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
-	}
-	var started int32
-	cfg := DefaultEngineConfig()
-	cfg.LocalIP = net.ParseIP("172.16.0.2")
-	cfg.Strategies = ss
-	cfg.Runner = fakeRunner(&started)
-	cfg.Policy = DefaultColoPolicy()
-	cfg.ProbeEvery = time.Hour // сам не заметит — только по сигналу
-	cfg.UpTimeout = 600 * time.Millisecond
-	cfg.TCPCheck = false
-	changed := make(chan struct{}, 1)
-	cfg.NetChanged = changed
-	e := NewEngine(newFakeTun(), cfg)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go e.Run(ctx)
-
-	waitStatus(t, e, "up", func(s Status) bool { return s.State == "up" })
-	before := atomic.LoadInt32(&started)
-	changed <- struct{}{}
-	deadline := time.Now().Add(3 * time.Second)
-	for atomic.LoadInt32(&started) <= before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if atomic.LoadInt32(&started) <= before {
-		t.Fatal("после смены сети переподключения не произошло")
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/journal.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"fmt"
-	"strings"
-	"sync"
-	"time"
-)
-
-// Журнал Гидры: подробно и по-русски, что происходит и почему.
-// Показывается в приложении (вкладка «Проверка»).
-
-type journalBuf struct {
-	mu    sync.Mutex
-	lines []string
-	max   int
-}
-
-var jr = &journalBuf{max: 1200}
-
-// Logf добавляет строку в журнал.
-func Logf(format string, a ...any) {
-	line := time.Now().Format("15:04:05.000") + "  " + fmt.Sprintf(format, a...)
-	jr.mu.Lock()
-	jr.lines = append(jr.lines, line)
-	if len(jr.lines) > jr.max {
-		jr.lines = append([]string(nil), jr.lines[len(jr.lines)-jr.max:]...)
-	}
-	jr.mu.Unlock()
-}
-
-// JournalText возвращает последние n строк (0 — все), новые в конце.
-func JournalText(n int) string {
-	jr.mu.Lock()
-	defer jr.mu.Unlock()
-	ls := jr.lines
-	if n > 0 && len(ls) > n {
-		ls = ls[len(ls)-n:]
-	}
-	return strings.Join(ls, "\n")
-}
-
-func JournalClear() {
-	jr.mu.Lock()
-	jr.lines = nil
-	jr.mu.Unlock()
-}
-
-// JournalWriter — io.Writer для стандартного log: строки клиента MASQUE
-// (usque) тоже попадут в журнал.
-type JournalWriter struct{}
-
-func (JournalWriter) Write(p []byte) (int, error) {
-	for _, l := range strings.Split(strings.TrimRight(string(p), "\r\n"), "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" || strings.Contains(l, "Hop Limit too small") {
-			continue // служебные пакеты с hop limit 1 — не интересны
-		}
-		Logf("· %s", l)
-	}
-	return len(p), nil
-}
-HYDRA_EOF
-
-putv "$GODIR/masque_runner.go" <<'HYDRA_EOF'
-//go:build usque
-
-package hydra
-
-import (
-	"context"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/pem"
-	"errors"
-	"fmt"
-	"math/big"
-	"net"
-	"strings"
-	"time"
-
-	"github.com/inipew/usque/api"
-	"github.com/inipew/usque/masque"
-)
-
-// Этот файл собирается только с тегом usque: он подтягивает клиент MASQUE из
-// проекта usque (MIT, автор Diniboy1123). Без тега ядро и тесты не требуют
-// сетевых зависимостей.
-
-func parsePeerKey(s string) (*ecdsa.PublicKey, error) {
-	s = strings.TrimSpace(s)
-	var der []byte
-	if blk, _ := pem.Decode([]byte(s)); blk != nil {
-		der = blk.Bytes
-	} else {
-		var err error
-		if der, err = base64.StdEncoding.DecodeString(s); err != nil {
-			return nil, fmt.Errorf("ключ сервера: %w", err)
-		}
-	}
-	pub, err := x509.ParsePKIXPublicKey(der)
-	if err != nil {
-		return nil, fmt.Errorf("ключ сервера: %w", err)
-	}
-	ec, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, errors.New("ключ сервера не ECDSA")
-	}
-	return ec, nil
-}
-
-func selfSignedCert(priv *ecdsa.PrivateKey) ([]byte, error) {
-	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	tpl := &x509.Certificate{
-		SerialNumber: serial.Add(serial, big.NewInt(1)),
-		Subject:      pkix.Name{CommonName: "hydra"},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	return x509.CreateCertificate(rand.Reader, tpl, tpl, &priv.PublicKey, priv)
-}
-
-// NewMasqueRunner создаёт Runner, который держит туннель WARP средствами usque.
-func NewMasqueRunner(acc *Account) (Runner, error) {
-	keyDER, err := base64.StdEncoding.DecodeString(acc.PrivateKey)
-	if err != nil {
-		return nil, fmt.Errorf("ключ аккаунта: %w", err)
-	}
-	priv, err := x509.ParseECPrivateKey(keyDER)
-	if err != nil {
-		return nil, fmt.Errorf("ключ аккаунта: %w", err)
-	}
-	peer, err := parsePeerKey(acc.PeerPublicKey)
-	if err != nil {
-		return nil, err
-	}
-	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
-		cert, err := selfSignedCert(priv)
-		if err != nil {
-			return err
-		}
-		sni := s.Params["sni"]
-		if sni == "" {
-			sni = defaultMasqueSNI
-		}
-		tlsCfg, err := masque.PrepareTlsConfig(priv, peer, [][]byte{cert}, sni, true)
-		if err != nil {
-			return err
-		}
-		host, portStr, err := net.SplitHostPort(s.Params["endpoint"])
-		if err != nil {
-			return err
-		}
-		port := 443
-		fmt.Sscanf(portStr, "%d", &port)
-		ip := net.ParseIP(host)
-		if ip == nil {
-			return errors.New("адрес сервера не IP: " + host)
-		}
-		h2 := s.Params["h2"] == "1"
-		if !h2 {
-			// быстрая проверка маршрута: «network is unreachable» (например, нет IPv6) — сразу отказ
-			c, derr := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
-			if derr != nil {
-				Logf("   ✘ нет маршрута до %s: %v", host, derr)
-				return fmt.Errorf("нет маршрута до %s", host)
-			}
-			c.Close()
-		}
-		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
-		if h2 {
-			ep = &net.TCPAddr{IP: ip, Port: port}
-		} else if fsni := s.Params["fake"]; fsni != "" {
-			// фейковые QUIC-пакеты с малым TTL перед рукопожатием (как у Zarp)
-			var fk FakeSpec
-			fk.TTL = atoiDefault(s.Params["fttl"], 5)
-			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
-				if p, err := BuildFakeQUICInitial(fsni, atoiDefault(s.Params["fsize"], 1357)); err == nil {
-					fk.Payloads = append(fk.Payloads, p)
-				}
-			}
-			if len(fk.Payloads) > 0 {
-				relay, err := StartUDPRelay(&net.UDPAddr{IP: ip, Port: port}, fk)
-				if err != nil {
-					return err
-				}
-				defer relay.Close()
-				ep = relay.Addr()
-			}
-		}
-		Logf("   запускаю клиент MASQUE (usque)…")
-		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
-			TLSConfig:         tlsCfg,
-			KeepalivePeriod:   30 * time.Second,
-			InitialPacketSize: 1242,
-			Endpoint:          ep,
-			Device:            dev,
-			MTU:               1280,
-			ReconnectDelay:    time.Second,
-			AlwaysReconnect:   true,
-			UseHTTP2:          h2,
-		})
-		return ctx.Err()
-	}, nil
-}
-HYDRA_EOF
-
-putv "$GODIR/memory.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"encoding/json"
-	"math"
-	"os"
-	"sort"
-	"sync"
-	"time"
-)
-
-type stat struct {
-	OK     int       `json:"ok"`
-	Fail   int       `json:"fail"`
-	EWMAms float64   `json:"ewma_ms"`
-	LastOK time.Time `json:"last_ok"`
-}
-
-// Memory — «память Гидры»: что работало в какой сети.
-// Ключ сети (net) выдаёт Android-часть: например "wifi:<hash>" или "cell:25001".
-type Memory struct {
-	mu   sync.Mutex
-	path string
-	Nets map[string]map[string]*stat `json:"nets"`
-}
-
-func LoadMemory(path string) (*Memory, error) {
-	m := &Memory{path: path, Nets: map[string]map[string]*stat{}}
-	if path == "" {
-		return m, nil
-	}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return m, nil
-	}
-	if err != nil {
-		return m, err
-	}
-	if err := json.Unmarshal(b, m); err != nil {
-		m.Nets = map[string]map[string]*stat{}
-		return m, err
-	}
-	if m.Nets == nil {
-		m.Nets = map[string]map[string]*stat{}
-	}
-	return m, nil
-}
-
-func (m *Memory) Save() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.path == "" {
-		return nil
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	tmp := m.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, m.path)
-}
-
-func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := m.Nets[net]
-	if n == nil {
-		n = map[string]*stat{}
-		m.Nets[net] = n
-	}
-	s := n[id]
-	if s == nil {
-		s = &stat{}
-		n[id] = s
-	}
-	if ok {
-		s.OK++
-		s.LastOK = time.Now()
-		ms := float64(d.Milliseconds())
-		if s.EWMAms == 0 {
-			s.EWMAms = ms
-		} else {
-			s.EWMAms = 0.7*s.EWMAms + 0.3*ms
-		}
-	} else {
-		s.Fail++
-	}
-	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
-		s.OK /= 2
-		s.Fail /= 2
-	}
-}
-
-// Worked: стратегия уже хотя бы раз подключалась в этой сети.
-func (m *Memory) Worked(net, id string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	st := m.Nets[net][id]
-	return st != nil && st.OK > 0
-}
-
-// Rank сортирует стратегии: лучшие для этой сети — первыми.
-// Неизвестные получают нейтральный балл и пробуются после проверенных.
-func (m *Memory) Rank(net string, all []Strategy) []Strategy {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := append([]Strategy(nil), all...)
-	score := func(s Strategy) float64 {
-		st := m.Nets[net][s.ID]
-		if st == nil {
-			return 0.5
-		}
-		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
-		pen := math.Min(st.EWMAms/5000, 0.3)
-		bonus := 0.0
-		if time.Since(st.LastOK) < 24*time.Hour {
-			bonus = 0.1
-		}
-		return rate - pen + bonus
-	}
-	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
-	return out
-}
-HYDRA_EOF
-
-putv "$GODIR/mobile/mobile.go" <<'HYDRA_EOF'
-// Package mobile — тонкая обвязка для gomobile: то, что видно из Kotlin.
-// Только простые типы (строки), чтобы привязка собиралась без сюрпризов.
-package mobile
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
-	hydra "hydra/core"
-)
-
-const version = "0.6.0"
-
-// Version проверяет, что Go-ядро собрано и вызывается из Android.
-func Version() string {
-	cfg := hydra.DefaultConfig()
-	return fmt.Sprintf("hydra-core %s (probe %s)", version, cfg.ProbeEvery)
-}
-
-// DefaultBlockedColos — запрещённые по умолчанию дата-центры ("DME,LED,...").
-func DefaultBlockedColos() string {
-	return strings.Join(hydra.DefaultColoPolicy().Block, ",")
-}
-
-// NormalizeColos приводит ввод пользователя к виду "DME,LED,FRA".
-func NormalizeColos(s string) string {
-	return strings.Join(hydra.ParseColoList(s), ",")
-}
-
-func init() {
-	// Без этого Go на Android не умеет разрешать имена (нет resolv.conf).
-	hydra.SetSystemDNS(nil)
-	// Строки клиента MASQUE (usque) тоже попадают в журнал приложения.
-	log.SetFlags(0)
-	log.SetOutput(hydra.JournalWriter{})
-}
-
-// GetJournal возвращает последние n строк журнала (0 — все), новые в конце.
-func GetJournal(n int) string { return hydra.JournalText(n) }
-
-// ClearJournal очищает журнал.
-func ClearJournal() { hydra.JournalClear() }
-
-// SetDNS принимает DNS-серверы текущей сети от Android ("ip1,ip2,...").
-func SetDNS(csv string) {
-	hydra.SetSystemDNS(strings.Split(csv, ","))
-}
-
-func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
-func wgPath(dir string) string      { return filepath.Join(dir, "wg.json") }
-
-// AccountID возвращает ID сохранённого аккаунта или "".
-func AccountID(dir string) string {
-	a, err := hydra.LoadAccount(accountPath(dir))
-	if err != nil || a == nil {
-		return ""
-	}
-	return a.ID
-}
-
-// RegisterReport регистрирует аккаунт WARP для MASQUE (если его ещё нет). Первая строка
-// отчёта: "OK" или "FAIL <вид>", вид: rate_limited | blocked | dns | api | storage.
-func RegisterReport(dir string) string { return registerReport(accountPath(dir), false) }
-
-// RegisterWireguardReport создаёт обычную конфигурацию WARP (WireGuard), как wgcf.
-func RegisterWireguardReport(dir string) string { return registerReport(wgPath(dir), true) }
-
-func registerReport(path string, wg bool) string {
-	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
-		return "OK\nуже есть: " + a.ID
-	}
-	var sb strings.Builder
-	r := hydra.NewRegistrar()
-	r.WG = wg
-	r.Log = func(s string) {
-		sb.WriteString(s + "\n")
-		hydra.Logf("регистрация: %s", s)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	acc, err := r.Register(ctx)
-	if err != nil {
-		kind := "blocked"
-		var re *hydra.RegError
-		if errors.As(err, &re) {
-			kind = re.Kind
-		}
-		return fmt.Sprintf("FAIL %s\n%s%v", kind, sb.String(), err)
-	}
-	if err := acc.Save(path); err != nil {
-		return "FAIL storage\n" + err.Error()
-	}
-	return "OK\n" + sb.String() + "id: " + acc.ID
-}
-
-// ExportAccount возвращает строку для переноса аккаунта или "".
-func ExportAccount(dir string) string {
-	a, err := hydra.LoadAccount(accountPath(dir))
-	if err != nil || a == nil {
-		return ""
-	}
-	return a.Export()
-}
-
-// ImportAccount сохраняет аккаунт из строки; пустой ответ — успех.
-func ImportAccount(dir, text string) string {
-	a, err := hydra.ImportAccount(text)
-	if err != nil {
-		return err.Error()
-	}
-	if err := a.Save(accountPath(dir)); err != nil {
-		return err.Error()
-	}
-	return ""
-}
-
-func stripMask(a string) string { return strings.TrimSpace(strings.Split(a, "/")[0]) }
-
-// AccountAddr4 — IPv4-адрес устройства внутри туннеля ("" если аккаунта нет).
-func AccountAddr4(dir string) string {
-	a := primaryAccount(dir)
-	if a == nil {
-		return ""
-	}
-	return stripMask(a.AddrV4)
-}
-
-// primaryAccount: аккаунт MASQUE, а если его нет — конфигурация WireGuard.
-func primaryAccount(dir string) *hydra.Account {
-	if a, err := hydra.LoadAccount(accountPath(dir)); err == nil && a != nil {
-		return a
-	}
-	if a, err := hydra.LoadAccount(wgPath(dir)); err == nil && a != nil {
-		return a
-	}
-	return nil
-}
-
-// AccountAddr6 — IPv6-адрес устройства внутри туннеля.
-func AccountAddr6(dir string) string {
-	a := primaryAccount(dir)
-	if a == nil {
-		return ""
-	}
-	return stripMask(a.AddrV6)
-}
-
-// WireguardAccountID — ID конфигурации WireGuard ("custom" для импортированной) или "".
-func WireguardAccountID(dir string) string {
-	a, err := hydra.LoadAccount(wgPath(dir))
-	if err != nil || a == nil {
-		return ""
-	}
-	return a.ID
-}
-
-// ExportWireguardConfig — текст .conf для других приложений (WireGuard/AmneziaWG) или "".
-func ExportWireguardConfig(dir string) string {
-	a, err := hydra.LoadAccount(wgPath(dir))
-	if err != nil || a == nil {
-		return ""
-	}
-	return a.WGConfig()
-}
-
-// ImportWireguardConfig сохраняет свою конфигурацию (.conf); пустой ответ — успех.
-func ImportWireguardConfig(dir, text string) string {
-	a, err := hydra.ParseWGConfig(text)
-	if err != nil {
-		return err.Error()
-	}
-	if err := a.Save(wgPath(dir)); err != nil {
-		return err.Error()
-	}
-	return ""
-}
-
-// DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
-func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }
-HYDRA_EOF
-
-putv "$GODIR/mobile/policy.go" <<'HYDRA_EOF'
-package mobile
-
-import (
-	"strings"
-	"sync"
-
-	hydra "hydra/core"
-)
-
-var (
-	polMu    sync.Mutex
-	polBlock = ""
-	polAllow = ""
-	polSoft  = false
-	polProto = "auto"
-	netKey   = "default"
-	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
-	netEvents = make(chan struct{}, 1)
-)
-
-// SetColoPolicy задаёт запрещённые и (необязательно) единственно разрешённые
-// дата-центры Cloudflare: "DME,LED" и "HEL,FRA".
-func SetColoPolicy(block, allow string) {
-	polMu.Lock()
-	polBlock, polAllow = block, allow
-	polMu.Unlock()
-}
-
-// SetFallback: если все адреса ведут в запрещённый дата-центр — всё равно подключиться.
-func SetFallback(on bool) {
-	polMu.Lock()
-	polSoft = on
-	polMu.Unlock()
-}
-
-// SetProtocol выбирает протокол: "auto" (оба, запасной подхватывает), "masque" или "wg".
-func SetProtocol(p string) {
-	polMu.Lock()
-	polProto = strings.TrimSpace(p)
-	polMu.Unlock()
-}
-
-func currentProtocol() string {
-	polMu.Lock()
-	defer polMu.Unlock()
-	return polProto
-}
-
-// SetNetKey сообщает ядру, в какой сети телефон ("wifi", "cell"). Смена ключа
-// сразу будит движок.
-func SetNetKey(k string) {
-	k = strings.TrimSpace(k)
-	polMu.Lock()
-	changed := k != netKey
-	netKey = k
-	polMu.Unlock()
-	if changed {
-		select {
-		case netEvents <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func currentNetKey() string {
-	polMu.Lock()
-	defer polMu.Unlock()
-	return netKey
-}
-
-func currentFallback() bool {
-	polMu.Lock()
-	defer polMu.Unlock()
-	return polSoft
-}
-
-func currentPolicy() *hydra.ColoPolicy {
-	polMu.Lock()
-	defer polMu.Unlock()
-	return &hydra.ColoPolicy{Block: hydra.ParseColoList(polBlock), Allow: hydra.ParseColoList(polAllow)}
-}
-HYDRA_EOF
-
-putv "$GODIR/mobile/vpn_stub.go" <<'HYDRA_EOF'
-//go:build !usque
-
-package mobile
-
-// Сборка без клиента MASQUE (без тега usque): подключение недоступно.
-
-func StartTunnel(dir string, tunFd int) string {
-	return "сборка без движка MASQUE (нет тега usque)"
-}
-
-func StopTunnel() {}
-
-func EngineStatus() string { return "off||||" }
-HYDRA_EOF
-
-putv "$GODIR/mobile/vpn_usque.go" <<'HYDRA_EOF'
-//go:build usque
-
-package mobile
-
-import (
-	"context"
-	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-
-	hydra "hydra/core"
-)
-
-var (
-	vpnMu     sync.Mutex
-	vpnEngine *hydra.Engine
-	vpnCancel context.CancelFunc
-)
-
-// StartTunnel запускает Гидру на TUN-интерфейсе, который создал Android (tunFd).
-// Пустая строка — успех, иначе текст ошибки.
-func StartTunnel(dir string, tunFd int) string {
-	vpnMu.Lock()
-	defer vpnMu.Unlock()
-	if vpnEngine != nil {
-		return "уже запущено"
-	}
-	macc, _ := hydra.LoadAccount(accountPath(dir))
-	wacc, _ := hydra.LoadAccount(wgPath(dir))
-	if macc == nil && wacc == nil {
-		return "нет аккаунта WARP"
-	}
-	runners := map[string]hydra.Runner{}
-	var strategies []hydra.Strategy
-	if macc != nil {
-		r, err := hydra.NewMasqueRunner(macc)
-		if err != nil {
-			return err.Error()
-		}
-		runners["masque"] = r
-	}
-	if wacc != nil {
-		r, err := hydra.NewWGRunner(wacc)
-		if err != nil {
-			return err.Error()
-		}
-		runners["wg"] = r
-	}
-	var mS, wS []hydra.Strategy
-	if macc != nil {
-		mS = hydra.MasqueStrategies(macc)
-	}
-	if wacc != nil {
-		wS = hydra.WGStrategies(wacc)
-	}
-	switch currentProtocol() {
-	case "masque":
-		if len(mS) > 0 {
-			wS = nil
-		}
-	case "wg":
-		if len(wS) > 0 {
-			mS = nil
-		}
-	}
-	strategies = hydra.Interleave(mS, wS, 3)
-	runner := func(ctx context.Context, d hydra.PacketDevice, s hydra.Strategy) error {
-		r := runners[s.Transport]
-		if r == nil {
-			return fmt.Errorf("нет транспорта %q", s.Transport)
-		}
-		return r(ctx, d, s)
-	}
-	acc := primaryAccount(dir)
-	ip := net.ParseIP(strings.Split(acc.AddrV4, "/")[0])
-	if ip == nil {
-		return "в аккаунте нет IPv4-адреса"
-	}
-	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
-
-	cfg := hydra.DefaultEngineConfig()
-	cfg.LocalIP = ip
-	cfg.Strategies = strategies
-	cfg.Runner = runner
-	cfg.Policy = currentPolicy()
-	cfg.Mem = mem
-	cfg.NetKey = currentNetKey
-	cfg.NetChanged = netEvents
-	cfg.SoftFallback = currentFallback()
-
-	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
-	ctx, cancel := context.WithCancel(context.Background())
-	vpnEngine, vpnCancel = e, cancel
-	go func() {
-		e.Run(ctx)
-		mem.Save()
-		vpnMu.Lock()
-		if vpnEngine == e {
-			vpnEngine, vpnCancel = nil, nil
-		}
-		vpnMu.Unlock()
-	}()
-	return ""
-}
-
-// StopTunnel останавливает Гидру и закрывает TUN.
-func StopTunnel() {
-	vpnMu.Lock()
-	c, e := vpnCancel, vpnEngine
-	vpnMu.Unlock()
-	if c != nil {
-		c()
-	}
-	if e != nil {
-		e.Close()
-	}
-}
-
-// EngineStatus: "состояние|стратегия|дата-центр|задержка_мс|сообщение".
-// Состояния: off, connecting, up, reconnecting, failed.
-func EngineStatus() string {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e == nil {
-		return "off||||"
-	}
-	st := e.Status()
-	return fmt.Sprintf("%s|%s|%s|%d|%s", st.State, st.Strategy, st.Colo,
-		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"))
-}
-HYDRA_EOF
-
-putv "$GODIR/orchestrator.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"strings"
-	"time"
-)
-
-type Config struct {
-	Stagger       time.Duration // пауза между стартами кандидатов в гонке
-	DialTimeout   time.Duration
-	ProbeEvery    time.Duration
-	BadProbes     int     // сколько плохих проб подряд = деградация
-	MaxRTTFactor  float64 // во сколько раз RTT может вырасти от базового
-	MaxLoss       float64
-	StandbyWait   time.Duration // сколько ждать резерв при сбое
-	Colo          *ColoPolicy   // политика дата-центров (nil — без ограничений)
-}
-
-func DefaultConfig() Config {
-	return Config{
-		Stagger:      300 * time.Millisecond,
-		DialTimeout:  10 * time.Second,
-		ProbeEvery:   5 * time.Second,
-		BadProbes:    3,
-		MaxRTTFactor: 3,
-		MaxLoss:      0.2,
-		StandbyWait:  2 * time.Second,
-		Colo:         DefaultColoPolicy(),
-	}
-}
-
-var errNoStrategies = errors.New("нет доступных стратегий")
-
-type Orchestrator struct {
-	cfg    Config
-	mem    *Memory
-	ts     map[string]Transport
-	order  []Transport
-	diag   Diagnoser
-	events chan Event
-	front  *Front
-}
-
-func New(cfg Config, mem *Memory, ts []Transport, d Diagnoser) *Orchestrator {
-	if d == nil {
-		d = nopDiagnoser{}
-	}
-	o := &Orchestrator{cfg: cfg, mem: mem, ts: map[string]Transport{}, order: ts, diag: d,
-		events: make(chan Event, 64), front: NewFront()}
-	for _, t := range ts {
-		o.ts[t.Name()] = t
-	}
-	return o
-}
-
-func (o *Orchestrator) Events() <-chan Event { return o.events }
-
-// Front — постоянный локальный SOCKS5-вход; туннель под ним меняется на лету.
-func (o *Orchestrator) Front() *Front { return o.front }
-
-func (o *Orchestrator) emit(kind, strategy string, c Cause, msg string) {
-	select {
-	case o.events <- Event{Kind: kind, Strategy: strategy, Cause: c, Msg: msg, At: time.Now()}:
-	default: // UI не успевает — не блокируем ядро
-	}
-}
-
-func (o *Orchestrator) candidates(net, skip string) []Strategy {
-	var all []Strategy
-	for _, t := range o.order {
-		for _, s := range t.Strategies() {
-			if s.ID != skip {
-				all = append(all, s)
-			}
-		}
-	}
-	return o.mem.Rank(net, all)
-}
-
-type dialRes struct {
-	t    Tunnel
-	s    Strategy
-	d    time.Duration
-	err  error
-	colo string
-}
-
-func drain(res <-chan dialRes, n int) {
-	for i := 0; i < n; i++ {
-		if r := <-res; r.err == nil && r.t != nil {
-			r.t.Close()
-		}
-	}
-}
-
-// checkColo спрашивает у туннеля, через какой дата-центр он идёт, и отбрасывает
-// запрещённые политикой. Туннели без ColoReporter пропускаются без проверки.
-func (o *Orchestrator) checkColo(ctx context.Context, t Tunnel) (Tunnel, string, error) {
-	rep, ok := t.(ColoReporter)
-	if !ok || o.cfg.Colo == nil {
-		return t, "", nil
-	}
-	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	colo, err := rep.Colo(cctx)
-	cancel()
-	if err != nil {
-		return t, "", nil // не смогли узнать — не блокируем
-	}
-	if !o.cfg.Colo.Allows(colo) {
-		t.Close()
-		return nil, colo, &ColoError{Colo: colo}
-	}
-	return t, colo, nil
-}
-
-// race — «гонка стратегий»: кандидаты стартуют по очереди с небольшим
-// сдвигом, побеждает первый рабочий, остальные отменяются.
-func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Strategy, error) {
-	cands := o.candidates(net, skip)
-	if len(cands) == 0 {
-		return nil, Strategy{}, errNoStrategies
-	}
-	rctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	res := make(chan dialRes, len(cands))
-	started, finished := 0, 0
-	var blockedColos []string
-	start := func() {
-		s := cands[started]
-		started++
-		go func() {
-			t0 := time.Now()
-			dctx, c := context.WithTimeout(rctx, o.cfg.DialTimeout)
-			defer c()
-			t, err := o.ts[s.Transport].Dial(dctx, s)
-			colo := ""
-			if err == nil {
-				t, colo, err = o.checkColo(rctx, t)
-			}
-			res <- dialRes{t, s, time.Since(t0), err, colo}
-		}()
-	}
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			go drain(res, started-finished)
-			return nil, Strategy{}, ctx.Err()
-		case <-timer.C:
-			if started < len(cands) {
-				start()
-				timer.Reset(o.cfg.Stagger)
-			}
-		case r := <-res:
-			finished++
-			if r.err == nil {
-				o.mem.Record(net, r.s.ID, true, r.d)
-				if r.colo != "" {
-					o.emit("colo", r.s.ID, CauseUnknown, r.colo)
-				}
-				cancel()
-				go drain(res, started-finished)
-				return r.t, r.s, nil
-			}
-			if ctx.Err() == nil {
-				o.mem.Record(net, r.s.ID, false, r.d)
-			}
-			var ce *ColoError
-			if errors.As(r.err, &ce) {
-				blockedColos = append(blockedColos, ce.Colo)
-				o.emit("colo_blocked", r.s.ID, CauseUnknown, ce.Colo)
-			}
-			if finished == len(cands) {
-				if len(blockedColos) > 0 {
-					return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали (запрещённые дата-центры: %s)",
-						len(cands), strings.Join(blockedColos, ", "))
-				}
-				return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали", len(cands))
-			}
-			if finished == started && started < len(cands) {
-				start() // ничего не бежит — не ждём паузу
-				timer.Reset(o.cfg.Stagger)
-			}
-		}
-	}
-}
-
-// watch следит за качеством. Возвращает причину и флаг «сменилась сеть».
-func (o *Orchestrator) watch(ctx context.Context, netKey func() string, net string, t Tunnel) (string, bool) {
-	tk := time.NewTicker(o.cfg.ProbeEvery)
-	defer tk.Stop()
-	var base time.Duration
-	bad := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return "остановка", false
-		case <-t.Done():
-			return "туннель закрылся", false
-		case <-tk.C:
-			if netKey() != net {
-				return "сменилась сеть", true
-			}
-			pctx, c := context.WithTimeout(ctx, o.cfg.ProbeEvery)
-			q, err := t.Probe(pctx)
-			c()
-			degraded := err != nil || q.Loss > o.cfg.MaxLoss ||
-				(base > 0 && float64(q.RTT) > float64(base)*o.cfg.MaxRTTFactor)
-			if !degraded {
-				if base == 0 {
-					base = q.RTT
-				} else {
-					base = (base*9 + q.RTT) / 10
-				}
-				bad = 0
-				continue
-			}
-			bad++
-			if bad >= o.cfg.BadProbes {
-				return "качество упало", false
-			}
-		}
-	}
-}
-
-type standbyRes struct {
-	t   Tunnel
-	s   Strategy
-	err error
-}
-
-type standby struct {
-	cancel context.CancelFunc
-	ch     chan standbyRes
-}
-
-// warm прогревает резервный туннель на другой стратегии.
-func (o *Orchestrator) warm(ctx context.Context, net, skip string) *standby {
-	cctx, cancel := context.WithCancel(ctx)
-	sb := &standby{cancel: cancel, ch: make(chan standbyRes, 1)}
-	go func() {
-		t, s, err := o.race(cctx, net, skip)
-		sb.ch <- standbyRes{t, s, err}
-	}()
-	return sb
-}
-
-func (sb *standby) stop() {
-	sb.cancel()
-	go func() {
-		if r := <-sb.ch; r.err == nil {
-			r.t.Close()
-		}
-	}()
-}
-
-// session ведёт активный туннель + резерв; возвращается, когда нужна новая гонка.
-func (o *Orchestrator) session(ctx context.Context, netKey func() string, net string, t Tunnel, s Strategy) {
-	defer o.front.Set(nil)
-	sb := o.warm(ctx, net, s.ID)
-	for {
-		reason, netChanged := o.watch(ctx, netKey, net, t)
-		if ctx.Err() != nil || netChanged {
-			t.Close()
-			sb.stop()
-			return
-		}
-		o.mem.Record(net, s.ID, false, 0)
-		cause := o.diag.Diagnose(ctx)
-		o.emit("degraded", s.ID, cause, reason)
-		select {
-		case r := <-sb.ch:
-			if r.err == nil {
-				old := t
-				t, s = r.t, r.s
-				o.front.Set(t)
-				old.Close()
-				o.emit("failover", s.ID, cause, "переключился на резерв")
-				sb = o.warm(ctx, net, s.ID)
-				continue
-			}
-			t.Close()
-			return
-		case <-time.After(o.cfg.StandbyWait):
-			t.Close()
-			sb.stop()
-			return
-		}
-	}
-}
-
-func sleep(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
-}
-
-// Run — главный цикл Гидры: подключиться, следить, лечить.
-func (o *Orchestrator) Run(ctx context.Context, netKey func() string) error {
-	backoff := time.Second
-	for ctx.Err() == nil {
-		net := netKey()
-		o.emit("connecting", "", CauseUnknown, net)
-		t, s, err := o.race(ctx, net, "")
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			c := o.diag.Diagnose(ctx)
-			o.emit("failed", "", c, err.Error())
-			if !sleep(ctx, backoff) {
-				break
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
-		}
-		backoff = time.Second
-		o.front.Set(t)
-		o.emit("connected", s.ID, CauseUnknown, "net="+net)
-		o.session(ctx, netKey, net, t, s)
-		_ = o.mem.Save()
-	}
-	return ctx.Err()
-}
-HYDRA_EOF
-
-putv "$GODIR/probe.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"encoding/binary"
-	"net"
-	"strings"
-)
-
-// Проба дата-центра без всякого TCP/IP-стека: сами строим UDP-пакет с DNS-запросом
-// «CHAOS TXT id.server» к 1.1.1.1. Резолвер Cloudflare отвечает кодом дата-центра
-// (HEL, FRA, DME...). Пакет уходит в туннель, ответ приходит из туннеля — так мы
-// заодно измеряем задержку и проверяем, что туннель вообще живой.
-
-var probeDst = net.IPv4(1, 1, 1, 1).To4()
-
-func ipChecksum(h []byte) uint16 {
-	var sum uint32
-	for i := 0; i+1 < len(h); i += 2 {
-		sum += uint32(h[i])<<8 | uint32(h[i+1])
-	}
-	for sum>>16 != 0 {
-		sum = sum&0xffff + sum>>16
-	}
-	return ^uint16(sum)
-}
-
-// BuildColoProbe строит IPv4-пакет с запросом id.server. nil, если src не IPv4.
-func BuildColoProbe(src net.IP, srcPort, id uint16) []byte {
-	s4 := src.To4()
-	if s4 == nil {
-		return nil
-	}
-	dns := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
-	dns = append(dns, 2, 'i', 'd', 6, 's', 'e', 'r', 'v', 'e', 'r', 0, 0, 16, 0, 3) // TXT, класс CH
-	total := 20 + 8 + len(dns)
-	p := make([]byte, total)
-	p[0] = 0x45
-	binary.BigEndian.PutUint16(p[2:], uint16(total))
-	binary.BigEndian.PutUint16(p[4:], id)
-	binary.BigEndian.PutUint16(p[6:], 0x4000) // DF
-	p[8] = 64
-	p[9] = 17
-	copy(p[12:16], s4)
-	copy(p[16:20], probeDst)
-	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
-	binary.BigEndian.PutUint16(p[20:], srcPort)
-	binary.BigEndian.PutUint16(p[22:], 53)
-	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
-	// контрольная сумма UDP = 0: для IPv4 это допустимо
-	copy(p[28:], dns)
-	return p
-}
-
-func skipName(b []byte, off int) int {
-	for off < len(b) {
-		c := int(b[off])
-		switch {
-		case c == 0:
-			return off + 1
-		case c&0xC0 == 0xC0:
-			return off + 2
-		default:
-			off += c + 1
-		}
-	}
-	return -1
-}
-
-// normProbeColo: из ответа берём код аэропорта (первые три буквы, заглавными).
-func normProbeColo(s string) string {
-	s = strings.ToUpper(strings.Trim(strings.TrimSpace(s), `"`))
-	if len(s) > 3 {
-		ok := true
-		for _, r := range s[:3] {
-			if r < 'A' || r > 'Z' {
-				ok = false
-			}
-		}
-		if ok {
-			return s[:3]
-		}
-	}
-	return s
-}
-
-// ParseColoReply разбирает ответ на пробу, пришедший на порт dstPort.
-func ParseColoReply(pkt []byte, dstPort uint16) (id uint16, colo string, ok bool) {
-	if len(pkt) < 28 || pkt[0]>>4 != 4 {
-		return
-	}
-	ihl := int(pkt[0]&0x0f) * 4
-	if ihl < 20 || len(pkt) < ihl+8+12 || pkt[9] != 17 {
-		return
-	}
-	if !net.IP(pkt[12:16]).Equal(probeDst) {
-		return
-	}
-	udp := pkt[ihl:]
-	if binary.BigEndian.Uint16(udp[0:]) != 53 || binary.BigEndian.Uint16(udp[2:]) != dstPort {
-		return
-	}
-	dns := udp[8:]
-	if ulen := int(binary.BigEndian.Uint16(udp[4:])); ulen >= 8 && ulen-8 <= len(dns) {
-		dns = dns[:ulen-8]
-	}
-	if len(dns) < 12 || dns[2]&0x80 == 0 || dns[3]&0x0f != 0 {
-		return
-	}
-	id = binary.BigEndian.Uint16(dns[0:])
-	qd := int(binary.BigEndian.Uint16(dns[4:]))
-	an := int(binary.BigEndian.Uint16(dns[6:]))
-	if an < 1 {
-		return
-	}
-	off := 12
-	for i := 0; i < qd; i++ {
-		off = skipName(dns, off)
-		if off < 0 || off+4 > len(dns) {
-			return
-		}
-		off += 4
-	}
-	off = skipName(dns, off)
-	if off < 0 || off+10 > len(dns) {
-		return
-	}
-	typ := binary.BigEndian.Uint16(dns[off:])
-	rdlen := int(binary.BigEndian.Uint16(dns[off+8:]))
-	off += 10
-	if typ != 16 || rdlen < 1 || off+rdlen > len(dns) {
-		return
-	}
-	n := int(dns[off])
-	if n+1 > rdlen {
-		return
-	}
-	colo = normProbeColo(string(dns[off+1 : off+1+n]))
-	return id, colo, colo != ""
-}
-
-// ---------- TCP-проба: проходит ли через туннель настоящий TCP ----------
-// Шлём SYN на 1.1.1.1:443 и ждём SYN-ACK: так мы убеждаемся, что туннель не
-// просто «подключён», а реально пропускает TCP (а на нём — весь интернет).
-
-func tcpChecksum(src, dst net.IP, seg []byte) uint16 {
-	pseudo := make([]byte, 0, 12+len(seg))
-	pseudo = append(pseudo, src.To4()...)
-	pseudo = append(pseudo, dst.To4()...)
-	pseudo = append(pseudo, 0, 6, byte(len(seg)>>8), byte(len(seg)))
-	pseudo = append(pseudo, seg...)
-	if len(pseudo)%2 == 1 {
-		pseudo = append(pseudo, 0)
-	}
-	var sum uint32
-	for i := 0; i+1 < len(pseudo); i += 2 {
-		sum += uint32(pseudo[i])<<8 | uint32(pseudo[i+1])
-	}
-	for sum>>16 != 0 {
-		sum = sum&0xffff + sum>>16
-	}
-	return ^uint16(sum)
-}
-
-func buildTCP(src net.IP, sport uint16, seq, ack uint32, flags byte, id uint16, withMSS bool) []byte {
-	s4 := src.To4()
-	if s4 == nil {
-		return nil
-	}
-	tcpLen := 20
-	if withMSS {
-		tcpLen = 24
-	}
-	total := 20 + tcpLen
-	p := make([]byte, total)
-	p[0] = 0x45
-	binary.BigEndian.PutUint16(p[2:], uint16(total))
-	binary.BigEndian.PutUint16(p[4:], id)
-	binary.BigEndian.PutUint16(p[6:], 0x4000)
-	p[8] = 64
-	p[9] = 6
-	copy(p[12:16], s4)
-	copy(p[16:20], probeDst)
-	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
-
-	t := p[20:]
-	binary.BigEndian.PutUint16(t[0:], sport)
-	binary.BigEndian.PutUint16(t[2:], 443)
-	binary.BigEndian.PutUint32(t[4:], seq)
-	binary.BigEndian.PutUint32(t[8:], ack)
-	t[12] = byte(tcpLen/4) << 4
-	t[13] = flags
-	binary.BigEndian.PutUint16(t[14:], 65535)
-	if withMSS {
-		t[20], t[21], t[22], t[23] = 2, 4, 0x04, 0xD8 // MSS 1240
-	}
-	binary.BigEndian.PutUint16(t[16:], tcpChecksum(s4, probeDst, t))
-	return p
-}
-
-// BuildTCPSyn строит SYN к 1.1.1.1:443.
-func BuildTCPSyn(src net.IP, sport uint16, seq uint32, id uint16) []byte {
-	return buildTCP(src, sport, seq, 0, 0x02, id, true)
-}
-
-// BuildTCPRst строит RST — закрыть «полуоткрытое» соединение после пробы.
-func BuildTCPRst(src net.IP, sport uint16, seq uint32, id uint16) []byte {
-	return buildTCP(src, sport, seq, 0, 0x04, id, false)
-}
-
-// ParseTCPSynAck: это SYN-ACK от 1.1.1.1:443 на наш порт с ожидаемым ack?
-func ParseTCPSynAck(pkt []byte, dport uint16, wantAck uint32) bool {
-	if len(pkt) < 40 || pkt[0]>>4 != 4 || pkt[9] != 6 {
-		return false
-	}
-	ihl := int(pkt[0]&0x0f) * 4
-	if ihl < 20 || len(pkt) < ihl+20 || !net.IP(pkt[12:16]).Equal(probeDst) {
-		return false
-	}
-	t := pkt[ihl:]
-	if binary.BigEndian.Uint16(t[0:]) != 443 || binary.BigEndian.Uint16(t[2:]) != dport {
-		return false
-	}
-	if t[13]&0x12 != 0x12 { // SYN+ACK
-		return false
-	}
-	return binary.BigEndian.Uint32(t[8:]) == wantAck
-}
-HYDRA_EOF
-
-putv "$GODIR/probe_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"encoding/binary"
-	"net"
-	"testing"
-)
-
-// buildColoReply — «сервер» для тестов: отвечает на пробу кодом дата-центра.
-func buildColoReply(probe []byte, colo string) []byte {
-	ihl := int(probe[0]&0x0f) * 4
-	srcIP := probe[12:16]
-	udp := probe[ihl:]
-	sport := binary.BigEndian.Uint16(udp[0:])
-	q := udp[8:]
-	id := binary.BigEndian.Uint16(q[0:])
-
-	dns := []byte{byte(id >> 8), byte(id), 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0}
-	dns = append(dns, q[12:]...) // вопрос как есть
-	dns = append(dns, 0xC0, 0x0C, 0, 16, 0, 3, 0, 0, 0, 0, 0, byte(len(colo)+1), byte(len(colo)))
-	dns = append(dns, colo...)
-
-	total := 20 + 8 + len(dns)
-	p := make([]byte, total)
-	p[0] = 0x45
-	binary.BigEndian.PutUint16(p[2:], uint16(total))
-	p[8] = 64
-	p[9] = 17
-	copy(p[12:16], probeDst)
-	copy(p[16:20], srcIP)
-	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
-	binary.BigEndian.PutUint16(p[20:], 53)
-	binary.BigEndian.PutUint16(p[22:], sport)
-	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
-	copy(p[28:], dns)
-	return p
-}
-
-func TestProbeRoundTrip(t *testing.T) {
-	probe := BuildColoProbe(net.ParseIP("172.16.0.2"), 40000, 7)
-	if probe == nil || len(probe) < 40 {
-		t.Fatal("проба не построена")
-	}
-	if ipChecksum(probe[:20]) != 0 {
-		t.Fatal("контрольная сумма IP неверна")
-	}
-	reply := buildColoReply(probe, "HEL")
-	id, colo, ok := ParseColoReply(reply, 40000)
-	if !ok || id != 7 || colo != "HEL" {
-		t.Fatalf("разбор ответа: %v %q %v", id, colo, ok)
-	}
-	if _, _, ok := ParseColoReply(reply, 40001); ok {
-		t.Fatal("ответ на чужой порт должен игнорироваться")
-	}
-	if _, _, ok := ParseColoReply(probe, 40000); ok {
-		t.Fatal("сам запрос не должен приниматься за ответ")
-	}
-	if BuildColoProbe(net.ParseIP("2001:db8::1"), 1, 1) != nil {
-		t.Fatal("для IPv6-адреса пробы нет")
-	}
-}
-
-func TestNormProbeColo(t *testing.T) {
-	for in, want := range map[string]string{"HEL": "HEL", `"ams"`: "AMS", "fra1": "FRA", "DME": "DME"} {
-		if got := normProbeColo(in); got != want {
-			t.Fatalf("%q -> %q, ждали %q", in, got, want)
-		}
-	}
-}
-
-// buildSynAck — «сервер» для тестов: отвечает SYN-ACK на SYN.
-func buildSynAck(syn []byte) []byte {
-	ihl := int(syn[0]&0x0f) * 4
-	t := syn[ihl:]
-	sport := binary.BigEndian.Uint16(t[0:])
-	seq := binary.BigEndian.Uint32(t[4:])
-	p := make([]byte, 40)
-	p[0] = 0x45
-	binary.BigEndian.PutUint16(p[2:], 40)
-	p[8] = 64
-	p[9] = 6
-	copy(p[12:16], probeDst)
-	copy(p[16:20], syn[12:16])
-	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
-	r := p[20:]
-	binary.BigEndian.PutUint16(r[0:], 443)
-	binary.BigEndian.PutUint16(r[2:], sport)
-	binary.BigEndian.PutUint32(r[4:], 12345)
-	binary.BigEndian.PutUint32(r[8:], seq+1)
-	r[12] = 5 << 4
-	r[13] = 0x12
-	binary.BigEndian.PutUint16(r[14:], 65535)
-	return p
-}
-
-func TestTCPSynRoundTrip(t *testing.T) {
-	src := net.ParseIP("172.16.0.2")
-	syn := BuildTCPSyn(src, 41000, 1000, 9)
-	if syn == nil || ipChecksum(syn[:20]) != 0 {
-		t.Fatal("SYN не построен или неверная сумма IP")
-	}
-	if tcpChecksum(src, probeDst, syn[20:]) != 0 {
-		t.Fatal("контрольная сумма TCP неверна")
-	}
-	rep := buildSynAck(syn)
-	if !ParseTCPSynAck(rep, 41000, 1001) {
-		t.Fatal("SYN-ACK не распознан")
-	}
-	if ParseTCPSynAck(rep, 41001, 1001) || ParseTCPSynAck(rep, 41000, 999) {
-		t.Fatal("чужой порт или чужой ack не должен приниматься")
-	}
-	if BuildTCPRst(src, 41000, 1001, 10) == nil {
-		t.Fatal("RST не построен")
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/quicfake.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/tls"
-	"errors"
-	"io"
-	"net"
-	"time"
-)
-
-// Фейковый QUIC Initial с чужим именем (SNI), например vk.com. Его отправляют
-// перед настоящим рукопожатием с малым TTL: оборудование провайдера (DPI)
-// видит «разрешённый» сайт и пропускает поток, а до сервера пакет не доходит.
-// Реализация следует RFC 9001 (защита Initial-пакетов по версии QUIC v1).
-
-var quicV1Salt = []byte{0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
-	0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a}
-
-func hkdfExtract(salt, ikm []byte) []byte {
-	m := hmac.New(sha256.New, salt)
-	m.Write(ikm)
-	return m.Sum(nil)
-}
-
-// hkdfExpandLabel — HKDF-Expand-Label из TLS 1.3 для длины до 32 байт.
-func hkdfExpandLabel(secret []byte, label string, length int) []byte {
-	full := "tls13 " + label
-	info := []byte{byte(length >> 8), byte(length), byte(len(full))}
-	info = append(info, full...)
-	info = append(info, 0)
-	m := hmac.New(sha256.New, secret)
-	m.Write(info)
-	m.Write([]byte{1})
-	return m.Sum(nil)[:length]
-}
-
-func initialKeys(dcid []byte) (key, iv, hp []byte) {
-	cs := hkdfExpandLabel(hkdfExtract(quicV1Salt, dcid), "client in", 32)
-	return hkdfExpandLabel(cs, "quic key", 16), hkdfExpandLabel(cs, "quic iv", 12), hkdfExpandLabel(cs, "quic hp", 16)
-}
-
-func quicVarint(n int) []byte {
-	switch {
-	case n < 64:
-		return []byte{byte(n)}
-	case n < 16384:
-		return []byte{0x40 | byte(n>>8), byte(n)}
-	}
-	return []byte{0x80 | byte(n>>24), byte(n >> 16), byte(n >> 8), byte(n)}
-}
-
-// clientHelloFor получает настоящий ClientHello TLS 1.3 с нужным SNI, дав
-// стандартному TLS-клиенту «поговорить» с заглушкой.
-func clientHelloFor(sni string) ([]byte, error) {
-	a, b := net.Pipe()
-	defer a.Close()
-	defer b.Close()
-	go func() {
-		c := tls.Client(a, &tls.Config{
-			ServerName:         sni,
-			MinVersion:         tls.VersionTLS13,
-			NextProtos:         []string{"h3"},
-			CurvePreferences:   []tls.CurveID{tls.X25519}, // без гибридного ключа: ClientHello остаётся коротким
-			InsecureSkipVerify: true,
-		})
-		c.Handshake()
-	}()
-	b.SetReadDeadline(time.Now().Add(2 * time.Second))
-	hdr := make([]byte, 5)
-	if _, err := io.ReadFull(b, hdr); err != nil {
-		return nil, err
-	}
-	body := make([]byte, int(hdr[3])<<8|int(hdr[4]))
-	if _, err := io.ReadFull(b, body); err != nil {
-		return nil, err
-	}
-	return body, nil
-}
-
-// BuildFakeQUICInitial строит один UDP-датаграмму-«Initial» длиной size байт.
-func BuildFakeQUICInitial(sni string, size int) ([]byte, error) {
-	ch, err := clientHelloFor(sni)
-	if err != nil {
-		return nil, err
-	}
-	dcid := make([]byte, 8)
-	scid := make([]byte, 8)
-	rand.Read(dcid)
-	rand.Read(scid)
-	key, iv, hp := initialKeys(dcid)
-
-	frame := append([]byte{0x06, 0x00}, quicVarint(len(ch))...) // CRYPTO, offset 0
-	frame = append(frame, ch...)
-
-	const pnLen, tagLen = 2, 16
-	hdrLen := 1 + 4 + 1 + len(dcid) + 1 + len(scid) + 1 + 2 + pnLen
-	payloadLen := size - hdrLen - tagLen
-	if payloadLen < len(frame) {
-		payloadLen = len(frame)
-	}
-	payload := make([]byte, payloadLen) // нули = PADDING
-	copy(payload, frame)
-
-	lengthVal := pnLen + payloadLen + tagLen
-	if lengthVal >= 16384 {
-		return nil, errors.New("слишком длинный Initial")
-	}
-	header := []byte{0xC0 | byte(pnLen-1), 0, 0, 0, 1, byte(len(dcid))}
-	header = append(header, dcid...)
-	header = append(header, byte(len(scid)))
-	header = append(header, scid...)
-	header = append(header, 0) // длина токена
-	header = append(header, 0x40|byte(lengthVal>>8), byte(lengthVal))
-	pnOff := len(header)
-	header = append(header, 0, 0) // номер пакета 0
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := append([]byte(nil), iv...) // номер пакета 0: nonce = iv
-	sealed := gcm.Seal(nil, nonce, payload, header)
-	pkt := append(append([]byte(nil), header...), sealed...)
-
-	hb, err := aes.NewCipher(hp)
-	if err != nil {
-		return nil, err
-	}
-	mask := make([]byte, 16)
-	hb.Encrypt(mask, pkt[pnOff+4:pnOff+4+16])
-	pkt[0] ^= mask[0] & 0x0f
-	pkt[pnOff] ^= mask[1]
-	pkt[pnOff+1] ^= mask[2]
-	return pkt, nil
-}
-HYDRA_EOF
-
-putv "$GODIR/quicfake_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"testing"
-)
-
-func TestFakeQUICInitialDecrypts(t *testing.T) {
-	pkt, err := BuildFakeQUICInitial("vk.com", 1357)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pkt) != 1357 {
-		t.Fatalf("длина %d, ждали 1357 (ClientHello раздулся и фейк не влезает в один пакет)", len(pkt))
-	}
-	if pkt[0]&0x80 == 0 {
-		t.Fatal("ждали длинный заголовок")
-	}
-
-	// разбор «как это делает сервер»
-	dl := int(pkt[5])
-	dcid := pkt[6 : 6+dl]
-	off := 6 + dl
-	off += 1 + int(pkt[off]) // SCID
-	off++                    // длина токена (0)
-	length := int(pkt[off]&0x3f)<<8 | int(pkt[off+1])
-	off += 2
-	pnOff := off
-
-	key, iv, hp := initialKeys(dcid)
-	hb, _ := aes.NewCipher(hp)
-	mask := make([]byte, 16)
-	hb.Encrypt(mask, pkt[pnOff+4:pnOff+4+16])
-	first := pkt[0] ^ (mask[0] & 0x0f)
-	pnLen := int(first&3) + 1
-	hdr := append([]byte(nil), pkt[:pnOff+pnLen]...)
-	hdr[0] = first
-	for i := 0; i < pnLen; i++ {
-		hdr[pnOff+i] ^= mask[1+i]
-	}
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
-	plain, err := gcm.Open(nil, iv, pkt[pnOff+pnLen:pnOff+length], hdr)
-	if err != nil {
-		t.Fatalf("не расшифровывается: %v", err)
-	}
-	if plain[0] != 0x06 || !bytes.Contains(plain, []byte("vk.com")) {
-		t.Fatalf("в CRYPTO-кадре нет ClientHello с vk.com")
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/register.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"bytes"
-	"context"
-	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os"
-	"strconv"
-	"strings"
-	"time"
-)
-
-// Регистрация устройства в Cloudflare WARP + привязка ключа MASQUE.
-// Протокол повторяет Android-клиент (описание: usque, MIT).
-//
-// Главная идея Гидры: регистрация — это не один запрос, а «гонка маршрутов».
-// Если api.cloudflareclient.com режут (DPI, DNS, блок по SNI), пробуем:
-//   direct   — как обычное приложение
-//   frag     — ClientHello режется на два TCP-сегмента
-//   doh      — имя резолвится через DoH по IP-адресам, мимо системного DNS
-//   doh+frag — оба приёма сразу
-// и по каждой доступной сети (Wi-Fi, мобильная) отдельно — их передаёт Android.
-
-const (
-	apiHost    = "api.cloudflareclient.com"
-	apiBaseURL = "https://" + apiHost + "/v0a4471"
-)
-
-var apiHeaders = map[string]string{
-	"User-Agent":        "WARP for Android",
-	"CF-Client-Version": "a-6.35-4471",
-	"Content-Type":      "application/json; charset=UTF-8",
-}
-
-// ---------- аккаунт ----------
-
-// Account — всё, что нужно для подключения. Хранится на устройстве; можно
-// перенести на другое устройство через Export/ImportAccount.
-type Account struct {
-	ID            string    `json:"id"`
-	Token         string    `json:"token"`
-	PrivateKey    string    `json:"private_key"` // base64(SEC1 DER), ключ MASQUE (P-256)
-	PeerPublicKey string    `json:"peer_public_key"`
-	EndpointV4    string    `json:"endpoint_v4"`
-	EndpointV6    string    `json:"endpoint_v6"`
-	AddrV4        string    `json:"addr_v4"`
-	AddrV6        string    `json:"addr_v6"`
-	Created       time.Time `json:"created"`
-
-	// Для конфигураций WireGuard (Kind == "wg"): ключ — X25519 в base64.
-	Kind     string `json:"kind,omitempty"`
-	Custom   bool   `json:"custom,omitempty"` // импортирована пользователем
-	Jc       int    `json:"jc,omitempty"`     // «мусорные» пакеты перед рукопожатием (как в AmneziaWG)
-	Jmin     int    `json:"jmin,omitempty"`
-	Jmax     int    `json:"jmax,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
-}
-
-const exportPrefix = "hydra1:"
-
-// Export превращает аккаунт в строку, которую удобно скопировать.
-func (a *Account) Export() string {
-	b, _ := json.Marshal(a)
-	return exportPrefix + base64.RawURLEncoding.EncodeToString(b)
-}
-
-// ImportAccount разбирает строку из Export.
-func ImportAccount(s string) (*Account, error) {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, exportPrefix) {
-		return nil, errors.New("это не аккаунт Гидры (нет префикса hydra1:)")
-	}
-	b, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, exportPrefix))
-	if err != nil {
-		return nil, fmt.Errorf("повреждённая строка: %w", err)
-	}
-	var a Account
-	if err := json.Unmarshal(b, &a); err != nil {
-		return nil, fmt.Errorf("повреждённые данные: %w", err)
-	}
-	if a.ID == "" || a.Token == "" || a.PrivateKey == "" {
-		return nil, errors.New("в аккаунте не хватает данных")
-	}
-	return &a, nil
-}
-
-// LoadAccount читает аккаунт с диска; если файла нет — (nil, nil).
-func LoadAccount(path string) (*Account, error) {
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var a Account
-	if err := json.Unmarshal(b, &a); err != nil {
-		return nil, err
-	}
-	return &a, nil
-}
-
-func (a *Account) Save(path string) error {
-	b, err := json.Marshal(a)
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-// EnsureAccount: берёт сохранённый аккаунт или регистрирует новый.
-// Повторно не регистрируемся без нужды — у Cloudflare есть лимиты на регистрации.
-func EnsureAccount(ctx context.Context, path string, r *Registrar) (*Account, error) {
-	if a, err := LoadAccount(path); err == nil && a != nil {
-		return a, nil
-	}
-	a, err := r.Register(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.Save(path); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-// ---------- ошибки ----------
-
-const (
-	KindRateLimited = "rate_limited" // 429: слишком много регистраций с этого IP
-	KindBlocked     = "blocked"      // до API не достучаться (DPI/сеть)
-	KindDNS         = "dns"          // имя API не определяется, DoH тоже не помог
-	KindAPI         = "api"          // API ответил, но отказал
-)
-
-type RegError struct {
-	Kind       string
-	Detail     []string
-	RetryAfter time.Duration
-}
-
-func (e *RegError) Error() string {
-	return fmt.Sprintf("регистрация WARP не удалась (%s): %s", e.Kind, strings.Join(e.Detail, "; "))
-}
-
-type httpError struct {
-	Status     int
-	RetryAfter time.Duration
-	Body       string
-}
-
-func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d %s", e.Status, e.Body) }
-
-// protoError — API ответил, но не так, как ждали (формат изменился?).
-type protoError struct{ msg string }
-
-func (e *protoError) Error() string { return e.msg }
-
-func classify(errs []error) *RegError {
-	re := &RegError{Kind: KindBlocked}
-	rate, api, dns := false, false, false
-	for _, e := range errs {
-		re.Detail = append(re.Detail, e.Error())
-		var he *httpError
-		var pe *protoError
-		switch {
-		case errors.As(e, &he):
-			if he.Status == http.StatusTooManyRequests {
-				rate = true
-				if he.RetryAfter > re.RetryAfter {
-					re.RetryAfter = he.RetryAfter
-				}
-			} else {
-				api = true
-			}
-		case errors.As(e, &pe):
-			api = true
-		case strings.Contains(e.Error(), "lookup "):
-			dns = true
-		}
-	}
-	switch {
-	case rate:
-		re.Kind = KindRateLimited
-	case api:
-		re.Kind = KindAPI
-	case dns:
-		re.Kind = KindDNS
-	}
-	return re
-}
-
-// ---------- регистратор ----------
-
-// NamedDialer — способ открыть TCP-соединение. Android передаёт по одному на
-// каждую доступную сеть (Wi-Fi, мобильная), привязанному к ней.
-type NamedDialer struct {
-	Name string
-	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
-}
-
-type regMethod struct {
-	name      string
-	doh, frag bool
-	sni       string // другое имя в TLS; Host в запросе остаётся настоящим
-}
-
-var allMethods = []regMethod{
-	{"direct", false, false, ""},
-	{"frag", false, true, ""},
-	{"doh", true, false, ""},
-	{"doh+frag", true, true, ""},
-	{"front-speed", true, false, "speed.cloudflare.com"},
-	{"front-www", true, true, "www.cloudflare.com"},
-}
-
-type route struct {
-	name string
-	d    NamedDialer
-	m    regMethod
-	base string // адрес API (у Cloudflare их два: api.cloudflareclient.com и api.devices.cloudflare.com)
-}
-
-type Registrar struct {
-	Dialers  []NamedDialer // пусто = системная сеть
-	Methods  []string      // пусто = все способы
-	BaseURL  string        // для тестов; по умолчанию боевой API
-	Stagger  time.Duration // пауза между стартами маршрутов
-	Timeout  time.Duration // на один маршрут
-	Attempts int           // сколько раундов гонки
-	Backoff  time.Duration // базовая пауза между раундами (удваивается)
-	WG       bool          // регистрировать конфигурацию WireGuard (а не MASQUE)
-	Log      func(string)
-}
-
-func NewRegistrar() *Registrar {
-	return &Registrar{
-		Stagger:  400 * time.Millisecond,
-		Timeout:  15 * time.Second,
-		Attempts: 3,
-		Backoff:  2 * time.Second,
-	}
-}
-
-func (r *Registrar) logf(format string, a ...any) {
-	if r.Log != nil {
-		r.Log(fmt.Sprintf(format, a...))
-	}
-}
-
-func (r *Registrar) base() string {
-	if r.BaseURL != "" {
-		return r.BaseURL
-	}
-	return apiBaseURL
-}
-
-func (r *Registrar) routes() []route {
-	ds := r.Dialers
-	if len(ds) == 0 {
-		d := &net.Dialer{Timeout: 8 * time.Second}
-		ds = []NamedDialer{{Name: "system", Dial: d.DialContext}}
-	}
-	var ms []regMethod
-	for _, m := range allMethods {
-		if len(r.Methods) == 0 {
-			ms = append(ms, m)
-			continue
-		}
-		for _, want := range r.Methods {
-			if want == m.name {
-				ms = append(ms, m)
-			}
-		}
-	}
-	type baseSpec struct{ tag, url string }
-	bases := []baseSpec{
-		{"cf", apiBaseURL},
-		{"dev4471", "https://api.devices.cloudflare.com/v0a4471"},
-		{"dev5641", "https://api.devices.cloudflare.com/v0a5641"},
-	}
-	if r.BaseURL != "" { // тесты
-		bases = []baseSpec{{"", r.BaseURL}}
-	}
-	var out []route
-	for _, m := range ms { // сначала дешёвые способы на всех сетях
-		for _, b := range bases {
-			for _, d := range ds {
-				name := m.name + "@" + d.Name
-				if b.tag != "" {
-					name += "/" + b.tag
-				}
-				out = append(out, route{name: name, d: d, m: m, base: b.url})
-			}
-		}
-	}
-	return out
-}
-
-// Register регистрирует новое устройство, перебирая маршруты и повторяя раунды.
-func (r *Registrar) Register(ctx context.Context) (*Account, error) {
-	var last error
-	for i := 0; i < r.Attempts; i++ {
-		acc, err := r.raceOnce(ctx)
-		if err == nil {
-			return acc, nil
-		}
-		last = err
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if i == r.Attempts-1 {
-			break
-		}
-		wait := r.Backoff << uint(i)
-		var re *RegError
-		if errors.As(err, &re) && re.RetryAfter > wait {
-			wait = re.RetryAfter
-		}
-		r.logf("раунд %d не удался, пауза %s", i+1, wait)
-		if !sleep(ctx, wait) {
-			return nil, ctx.Err()
-		}
-	}
-	return nil, last
-}
-
-type regRes struct {
-	acc   *Account
-	err   error
-	route string
-}
-
-func (r *Registrar) raceOnce(ctx context.Context) (*Account, error) {
-	routes := r.routes()
-	if len(routes) == 0 {
-		return nil, errors.New("нет маршрутов для регистрации")
-	}
-	rctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ch := make(chan regRes, len(routes))
-	started, finished := 0, 0
-	start := func() {
-		rt := routes[started]
-		started++
-		go func() {
-			actx, c := context.WithTimeout(rctx, r.Timeout)
-			defer c()
-			acc, err := r.attempt(actx, rt)
-			ch <- regRes{acc, err, rt.name}
-		}()
-	}
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	var errs []error
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-			if started < len(routes) {
-				start()
-				timer.Reset(r.Stagger)
-			}
-		case x := <-ch:
-			finished++
-			if x.err == nil {
-				r.logf("✔ %s: регистрация прошла", x.route)
-				return x.acc, nil
-			}
-			r.logf("✘ %s: %v", x.route, x.err)
-			errs = append(errs, x.err)
-			if finished == len(routes) {
-				return nil, classify(errs)
-			}
-			if finished == started && started < len(routes) {
-				start()
-				timer.Reset(r.Stagger)
-			}
-		}
-	}
-}
-
-// ---------- один маршрут ----------
-
-type regConfig struct {
-	ClientID string `json:"client_id"`
-	Peers []struct {
-		PublicKey string `json:"public_key"`
-		Endpoint  struct {
-			V4   string `json:"v4"`
-			V6   string `json:"v6"`
-			Host string `json:"host"`
-		} `json:"endpoint"`
-	} `json:"peers"`
-	Interface struct {
-		Addresses struct {
-			V4 string `json:"v4"`
-			V6 string `json:"v6"`
-		} `json:"addresses"`
-	} `json:"interface"`
-}
-
-type regResp struct {
-	ID     string     `json:"id"`
-	Token  string     `json:"token"`
-	Config regConfig  `json:"config"`
-	Result *regResp   `json:"result"`
-}
-
-// norm: в разных версиях API ответ лежит либо в корне, либо в "result".
-func (x *regResp) norm() *regResp {
-	if x.Result != nil {
-		return x.Result
-	}
-	return x
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
-	cl := r.client(rt)
-	if r.WG {
-		return r.attemptWG(ctx, cl, rt.base)
-	}
-
-	wgPub := make([]byte, 32) // как у приложения: «ключ WireGuard», который мы не используем
-	rand.Read(wgPub)
-	regBody := map[string]any{
-		"key":           base64.StdEncoding.EncodeToString(wgPub),
-		"install_id":    "",
-		"fcm_token":     "",
-		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		"model":         "Android",
-		"serial_number": randHex(8),
-		"locale":        "en_US",
-		"key_type":      "curve25519",
-		"tunnel_type":   "wireguard",
-	}
-	var reg regResp
-	if err := r.do(ctx, cl, rt.base, "POST", "/reg", "", regBody, &reg); err != nil {
-		return nil, err
-	}
-	rr := reg.norm()
-	if rr.ID == "" || rr.Token == "" {
-		return nil, &protoError{"пустой ответ API при регистрации"}
-	}
-
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-	if err != nil {
-		return nil, err
-	}
-	privDER, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return nil, err
-	}
-	enroll := map[string]any{
-		"key":         base64.StdEncoding.EncodeToString(pubDER),
-		"key_type":    "secp256r1",
-		"tunnel_type": "masque",
-		"name":        "Hydra",
-	}
-	var en regResp
-	if err := r.do(ctx, cl, rt.base, "PATCH", "/reg/"+rr.ID, rr.Token, enroll, &en); err != nil {
-		return nil, err
-	}
-
-	cfg := en.norm().Config
-	if len(cfg.Peers) == 0 {
-		cfg = rr.Config
-	}
-	acc := &Account{
-		ID:         rr.ID,
-		Token:      rr.Token,
-		PrivateKey: base64.StdEncoding.EncodeToString(privDER),
-		AddrV4:     cfg.Interface.Addresses.V4,
-		AddrV6:     cfg.Interface.Addresses.V6,
-		Created:    time.Now().UTC(),
-	}
-	if len(cfg.Peers) > 0 {
-		acc.PeerPublicKey = cfg.Peers[0].PublicKey
-		acc.EndpointV4 = cfg.Peers[0].Endpoint.V4
-		acc.EndpointV6 = cfg.Peers[0].Endpoint.V6
-	}
-	return acc, nil
-}
-
-func (r *Registrar) do(ctx context.Context, cl *http.Client, base, verb, path, token string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, verb, base+path, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	for k, v := range apiHeaders {
-		req.Header.Set(k, v)
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := cl.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		he := &httpError{Status: resp.StatusCode, Body: strings.TrimSpace(truncate(string(data), 160))}
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if n, err := strconv.Atoi(ra); err == nil {
-				he.RetryAfter = time.Duration(n) * time.Second
-			}
-		}
-		return he
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return &protoError{"неожиданный ответ API: " + err.Error()}
-	}
-	return nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
-}
-
-// ---------- сеть: клиент, фрагментация, DoH ----------
-
-func (r *Registrar) client(rt route) *http.Client {
-	tr := &http.Transport{
-		DisableKeepAlives:     true,
-		ForceAttemptHTTP2:     false,
-		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
-		DialContext:           rt.d.Dial,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-	}
-	tr.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return r.dialTLS(ctx, rt, addr)
-	}
-	return &http.Client{Transport: tr}
-}
-
-func (r *Registrar) dialTLS(ctx context.Context, rt route, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	target := addr
-	if rt.m.doh {
-		ips, err := dohResolve(ctx, rt.d, host)
-		if err != nil {
-			return nil, err
-		}
-		target = net.JoinHostPort(ips[0], port)
-	}
-	raw, err := rt.d.Dial(ctx, "tcp", target)
-	if err != nil {
-		return nil, err
-	}
-	var c net.Conn = raw
-	if rt.m.frag {
-		c = &fragConn{Conn: raw, at: 3, delay: 15 * time.Millisecond}
-	}
-	name := host
-	if rt.m.sni != "" {
-		name = rt.m.sni
-	}
-	tc := tls.Client(c, &tls.Config{
-		ServerName: name,
-		NextProtos: []string{"http/1.1"},
-		MinVersion: tls.VersionTLS12,
-	})
-	if err := tc.HandshakeContext(ctx); err != nil {
-		raw.Close()
-		return nil, err
-	}
-	return tc, nil
-}
-
-// fragConn режет первую запись (ClientHello) на два TCP-сегмента: простой DPI,
-// который смотрит только на первый пакет, SNI не увидит.
-type fragConn struct {
-	net.Conn
-	at    int
-	delay time.Duration
-	done  bool
-}
-
-func (c *fragConn) Write(b []byte) (int, error) {
-	if c.done || len(b) <= c.at {
-		return c.Conn.Write(b)
-	}
-	c.done = true
-	n1, err := c.Conn.Write(b[:c.at])
-	if err != nil {
-		return n1, err
-	}
-	time.Sleep(c.delay)
-	n2, err := c.Conn.Write(b[c.at:])
-	return n1 + n2, err
-}
-
-// dohResolve узнаёт IP через DoH по IP-адресам серверов (системный DNS не нужен).
-func dohResolve(ctx context.Context, d NamedDialer, host string) ([]string, error) {
-	urls := []string{
-		"https://1.1.1.1/dns-query?name=" + host + "&type=A",
-		"https://8.8.8.8/resolve?name=" + host + "&type=A",
-	}
-	var lastErr error
-	for _, u := range urls {
-		ips, err := dohQuery(ctx, d, u)
-		if err == nil && len(ips) > 0 {
-			return ips, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = errors.New("пустой ответ")
-	}
-	return nil, fmt.Errorf("DoH не помог: %w", lastErr)
-}
-
-func dohQuery(ctx context.Context, d NamedDialer, u string) ([]string, error) {
-	tr := &http.Transport{
-		DialContext:         d.Dial,
-		DisableKeepAlives:   true,
-		TLSHandshakeTimeout: 5 * time.Second,
-	}
-	cl := &http.Client{Transport: tr, Timeout: 6 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/dns-json")
-	resp, err := cl.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		Answer []struct {
-			Type int    `json:"type"`
-			Data string `json:"data"`
-		} `json:"Answer"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return nil, err
-	}
-	var ips []string
-	for _, a := range out.Answer {
-		if a.Type == 1 && net.ParseIP(a.Data) != nil {
-			ips = append(ips, a.Data)
-		}
-	}
-	return ips, nil
-}
-
-// attemptWG — регистрация обычного (WireGuard) устройства WARP: как делает wgcf.
-func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client, base string) (*Account, error) {
-	k, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	body := map[string]any{
-		"key":           base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()),
-		"install_id":    "",
-		"fcm_token":     "",
-		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		"model":         "Android",
-		"serial_number": randHex(8),
-		"locale":        "en_US",
-		"key_type":      "curve25519",
-		"tunnel_type":   "wireguard",
-	}
-	var reg regResp
-	if err := r.do(ctx, cl, base, "POST", "/reg", "", body, &reg); err != nil {
-		return nil, err
-	}
-	rr := reg.norm()
-	if rr.ID == "" || rr.Token == "" || len(rr.Config.Peers) == 0 {
-		return nil, &protoError{"в ответе API нет данных о сервере WireGuard"}
-	}
-	cfg := rr.Config
-	host := hostOnly(cfg.Peers[0].Endpoint.V4)
-	if host == "" {
-		host = hostOnly(cfg.Peers[0].Endpoint.Host)
-	}
-	if host == "" {
-		host = "162.159.192.1"
-	}
-	return &Account{
-		Kind:          "wg",
-		ID:            rr.ID,
-		Token:         rr.Token,
-		PrivateKey:    base64.StdEncoding.EncodeToString(k.Bytes()),
-		PeerPublicKey: cfg.Peers[0].PublicKey,
-		EndpointV4:    net.JoinHostPort(host, "2408"),
-		AddrV4:        cfg.Interface.Addresses.V4,
-		AddrV6:        cfg.Interface.Addresses.V6,
-		ClientID:      cfg.ClientID,
-		Jc:            4, Jmin: 40, Jmax: 70,
-		Created: time.Now().UTC(),
-	}, nil
-}
-HYDRA_EOF
-
-putv "$GODIR/register_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"context"
-	"errors"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"sync/atomic"
-	"testing"
-	"time"
-)
-
-const fakeReg = `{"id":"abc","token":"tok","config":{"peers":[{"public_key":"PK","endpoint":{"v4":"162.159.198.1:443","v6":"[2606:4700:103::1]:443","host":"engage.cloudflareclient.com:443"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110::2"}}}}`
-
-func TestRegisterRetriesAcrossRoutes(t *testing.T) {
-	var posts int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch {
-		case req.Method == "POST" && req.URL.Path == "/reg":
-			if atomic.AddInt32(&posts, 1) == 1 {
-				w.Header().Set("Retry-After", "0")
-				http.Error(w, "slow down", http.StatusTooManyRequests)
-				return
-			}
-			w.Write([]byte(fakeReg))
-		case req.Method == "PATCH" && req.URL.Path == "/reg/abc":
-			if req.Header.Get("Authorization") != "Bearer tok" {
-				http.Error(w, "no", http.StatusUnauthorized)
-				return
-			}
-			w.Write([]byte(fakeReg))
-		default:
-			http.NotFound(w, req)
-		}
-	}))
-	defer srv.Close()
-
-	good := (&net.Dialer{Timeout: time.Second}).DialContext
-	bad := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return nil, errors.New("сеть недоступна")
-	}
-	r := NewRegistrar()
-	r.BaseURL = srv.URL
-	r.Methods = []string{"direct"}
-	r.Dialers = []NamedDialer{{Name: "wifi", Dial: bad}, {Name: "cell", Dial: good}}
-	r.Stagger = 10 * time.Millisecond
-	r.Backoff = 10 * time.Millisecond
-	r.Timeout = 2 * time.Second
-
-	var logs []string
-	r.Log = func(s string) { logs = append(logs, s) }
-
-	acc, err := r.Register(context.Background())
-	if err != nil {
-		t.Fatalf("регистрация не удалась: %v (лог: %v)", err, logs)
-	}
-	if acc.ID != "abc" || acc.Token != "tok" || acc.EndpointV4 != "162.159.198.1:443" || acc.PrivateKey == "" {
-		t.Fatalf("неверный аккаунт: %+v", acc)
-	}
-	if n := atomic.LoadInt32(&posts); n != 2 {
-		t.Fatalf("ждали 2 POST (429, потом успех), получили %d", n)
-	}
-}
-
-func TestRegisterReportsBlocked(t *testing.T) {
-	bad := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return nil, errors.New("connection reset")
-	}
-	r := NewRegistrar()
-	r.BaseURL = "http://127.0.0.1:1"
-	r.Methods = []string{"direct"}
-	r.Dialers = []NamedDialer{{Name: "wifi", Dial: bad}}
-	r.Attempts = 2
-	r.Stagger = time.Millisecond
-	r.Backoff = time.Millisecond
-	_, err := r.Register(context.Background())
-	var re *RegError
-	if !errors.As(err, &re) || re.Kind != KindBlocked {
-		t.Fatalf("ждали ошибку вида blocked, получили %v", err)
-	}
-}
-
-func TestClassifyKinds(t *testing.T) {
-	dnsErr := errors.New("dial tcp: lookup api.cloudflareclient.com on [::1]:53: connection refused")
-	if k := classify([]error{dnsErr}).Kind; k != KindDNS {
-		t.Fatalf("ждали dns, получили %s", k)
-	}
-	if k := classify([]error{errors.New("connection reset by peer")}).Kind; k != KindBlocked {
-		t.Fatalf("ждали blocked, получили %s", k)
-	}
-	if k := classify([]error{&protoError{"мусор"}}).Kind; k != KindAPI {
-		t.Fatalf("ждали api, получили %s", k)
-	}
-	re := classify([]error{dnsErr, &httpError{Status: 429, RetryAfter: 3 * time.Second}})
-	if re.Kind != KindRateLimited || re.RetryAfter != 3*time.Second {
-		t.Fatalf("429 должен перекрывать остальное: %+v", re)
-	}
-}
-
-func TestAccountExportImportAndStorage(t *testing.T) {
-	a := &Account{ID: "id1", Token: "tok1", PrivateKey: "AAAA", EndpointV4: "1.2.3.4:443", Created: time.Unix(1700000000, 0).UTC()}
-	got, err := ImportAccount(a.Export())
-	if err != nil || got.ID != "id1" || got.Token != "tok1" || got.EndpointV4 != "1.2.3.4:443" {
-		t.Fatalf("круг экспорт-импорт: %+v %v", got, err)
-	}
-	if _, err := ImportAccount("мусор"); err == nil {
-		t.Fatal("мусор должен отвергаться")
-	}
-	if _, err := ImportAccount("hydra1:!!!"); err == nil {
-		t.Fatal("повреждённая строка должна отвергаться")
-	}
-
-	p := filepath.Join(t.TempDir(), "account.json")
-	if acc, err := LoadAccount(p); acc != nil || err != nil {
-		t.Fatalf("без файла ждали (nil, nil), получили %v %v", acc, err)
-	}
-	if err := a.Save(p); err != nil {
-		t.Fatal(err)
-	}
-	back, err := LoadAccount(p)
-	if err != nil || back == nil || back.ID != "id1" {
-		t.Fatalf("загрузка: %+v %v", back, err)
-	}
-}
-
-func TestEnsureAccountUsesStored(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "account.json")
-	if err := (&Account{ID: "x", Token: "y", PrivateKey: "z"}).Save(p); err != nil {
-		t.Fatal(err)
-	}
-	r := NewRegistrar()
-	r.Dialers = []NamedDialer{{Name: "none", Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return nil, errors.New("сеть не должна использоваться")
-	}}}
-	got, err := EnsureAccount(context.Background(), p, r)
-	if err != nil || got.ID != "x" {
-		t.Fatalf("ждали сохранённый аккаунт, получили %+v %v", got, err)
-	}
-}
-
-func TestFragConnSplitsFirstWrite(t *testing.T) {
-	c1, c2 := net.Pipe()
-	defer c1.Close()
-	defer c2.Close()
-	fc := &fragConn{Conn: c1, at: 3}
-	go func() {
-		fc.Write([]byte("abcdef"))
-		fc.Write([]byte("xyz"))
-	}()
-	buf := make([]byte, 16)
-	var parts []string
-	for i := 0; i < 3; i++ {
-		n, err := c2.Read(buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parts = append(parts, string(buf[:n]))
-	}
-	if parts[0] != "abc" || parts[1] != "def" || parts[2] != "xyz" {
-		t.Fatalf("части: %v", parts)
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/strategies.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"fmt"
-	"net"
-	"strconv"
-	"strings"
-)
-
-const defaultMasqueSNI = "consumer-masque.cloudflareclient.com"
-
-func hostOnly(ep string) string {
-	h, _, err := net.SplitHostPort(ep)
-	if err != nil {
-		return strings.Trim(ep, "[]")
-	}
-	return strings.Trim(h, "[]")
-}
-
-func atoiDefault(s string, def int) int {
-	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-		return n
-	}
-	return def
-}
-
-type fakeVariant struct {
-	alias string
-	sni   string
-	ttl   int
-	count int
-	size  int // размер каждого фейкового пакета, байт
-}
-
-// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). По журналам Zarp:
-// «google ×3» (3 пакета по 1200 байт) — основная стратегия, «VK ×6» (по 1357 байт) — запасная.
-var fakeVariants = []fakeVariant{
-	{"g3", "www.google.com", 5, 3, 1200},
-	{"vk5x6", "vk.com", 5, 6, 1357},
-	{"g6", "www.google.com", 5, 6, 1200},
-	{"vk4x6", "vk.com", 4, 6, 1357},
-	{"vk6x6", "vk.com", 6, 6, 1357},
-	{"ya5x6", "ya.ru", 5, 6, 1357},
-	{"plain", "", 0, 0, 0},
-}
-
-// MasqueStrategies — способы подключиться к WARP по MASQUE: адрес сервера ×
-// фейковые пакеты × имя в TLS (SNI) × HTTP/3 (UDP) или HTTP/2 (TCP, если режут QUIC).
-// Порядок — «самое вероятное первым»; дальше его уточняет память по сетям.
-// Разные группы адресов нужны ещё и чтобы уйти от нежелательного дата-центра:
-// у разных префиксов Cloudflare маршруты бывают разные.
-func MasqueStrategies(acc *Account) []Strategy {
-	var eps []string
-	seen := map[string]bool{}
-	add := func(h string) {
-		h = strings.TrimSpace(h)
-		if h == "" || net.ParseIP(h) == nil || seen[h] {
-			return
-		}
-		seen[h] = true
-		eps = append(eps, h)
-	}
-	add("162.159.198.2")
-	if acc != nil {
-		add(hostOnly(acc.EndpointV4))
-	}
-	// Только настоящие серверы MASQUE. Адреса WireGuard (162.159.192/193/195.x,
-	// 188.114.96/97.x) отвечают на QUIC, но на рукопожатии получают TLS handshake failure.
-	for _, h := range []string{
-		"162.159.198.1",
-		"2606:4700:103::2", "2606:4700:103::1",
-	} {
-		add(h)
-	}
-
-	mk := func(proto, ep, alias, sni string, fv *fakeVariant) Strategy {
-		hostPort := ep
-		if _, _, err := net.SplitHostPort(ep); err != nil {
-			hostPort = net.JoinHostPort(ep, "443")
-		}
-		p := map[string]string{
-			"endpoint": hostPort,
-			"sni":      sni,
-			"h2":       "0",
-		}
-		if proto == "h2" {
-			p["h2"] = "1"
-		}
-		if fv != nil && fv.count > 0 {
-			p["fake"] = fv.sni
-			p["fttl"] = strconv.Itoa(fv.ttl)
-			p["fcount"] = strconv.Itoa(fv.count)
-			p["fsize"] = strconv.Itoa(fv.size)
-		}
-		return Strategy{ID: fmt.Sprintf("%s/%s/%s", proto, ep, alias), Transport: "masque", Params: p}
-	}
-
-	var out []Strategy
-	for i := range fakeVariants {
-		fv := &fakeVariants[i]
-		for _, ep := range eps {
-			out = append(out, mk("h3", ep, fv.alias, defaultMasqueSNI, fv))
-		}
-	}
-	// другое имя в TLS — только с самыми удачными фейками
-	for _, alt := range []struct{ alias, name string }{
-		{"speed", "speed.cloudflare.com"},
-		{"www", "www.cloudflare.com"},
-	} {
-		for _, ep := range eps {
-			out = append(out, mk("h3", ep, fakeVariants[0].alias+"+"+alt.alias, alt.name, &fakeVariants[0]))
-		}
-	}
-	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
-	for _, port := range []string{"500", "1701", "4500"} {
-		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
-			for i := 0; i < 2; i++ {
-				fv := &fakeVariants[i]
-				out = append(out, mk("h3", net.JoinHostPort(ep, port), fv.alias, defaultMasqueSNI, fv))
-			}
-		}
-	}
-	for _, ep := range eps {
-		out = append(out, mk("h2", ep, "std", defaultMasqueSNI, nil))
-	}
-	return out
-}
-
-func describeStrategy(s Strategy) string {
-	if s.Transport == "wg" {
-		out := "WireGuard → " + s.Params["endpoint"]
-		if sg := s.Params["sig"]; sg != "" {
-			out += ", сигнатура " + sg
-		}
-		if jc := s.Params["jc"]; jc != "" {
-			out += fmt.Sprintf(", мусор %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
-		}
-		return out
-	}
-	proto := "HTTP/3 (QUIC)"
-	if s.Params["h2"] == "1" {
-		proto = "HTTP/2 (TCP)"
-	}
-	out := fmt.Sprintf("%s → %s, SNI %s", proto, s.Params["endpoint"], s.Params["sni"])
-	if f := s.Params["fake"]; f != "" {
-		out += fmt.Sprintf(", фейки %s ×%s TTL %s", f, s.Params["fcount"], s.Params["fttl"])
-	}
-	return out
-}
-HYDRA_EOF
-
-putv "$GODIR/strategies_test.go" <<'HYDRA_EOF'
-package hydra
-
-import "testing"
-
-func TestMasqueStrategies(t *testing.T) {
-	acc := &Account{EndpointV4: "162.159.198.3:0"}
-	ss := MasqueStrategies(acc)
-	if len(ss) < 30 {
-		t.Fatalf("мало стратегий: %d", len(ss))
-	}
-	first := ss[0]
-	if first.ID != "h3/162.159.198.2/g3" || first.Params["fake"] != "www.google.com" ||
-		first.Params["fcount"] != "3" || first.Params["fsize"] != "1200" {
-		t.Fatalf("первой должна идти основная стратегия Zarp «google ×3»: %+v", first)
-	}
-	sawPort500 := false
-	for _, s := range ss {
-		if s.Params["endpoint"] == "162.159.198.2:500" {
-			sawPort500 = true
-		}
-	}
-	if !sawPort500 {
-		t.Fatal("нет стратегий с портом 500")
-	}
-	if ss[1].Params["endpoint"] != "162.159.198.3:443" {
-		t.Fatalf("вторым должен идти адрес из аккаунта: %+v", ss[1])
-	}
-	ids := map[string]bool{}
-	sawH2, sawPlain, sawV6 := false, false, false
-	for _, s := range ss {
-		if ids[s.ID] {
-			t.Fatalf("повтор ID %s", s.ID)
-		}
-		ids[s.ID] = true
-		if s.Params["h2"] == "1" {
-			sawH2 = true
-		}
-		if s.Params["fake"] == "" && s.Params["h2"] == "0" {
-			sawPlain = true
-		}
-		if hostOnly(s.Params["endpoint"]) == "2606:4700:103::2" {
-			sawV6 = true
-		}
-	}
-	if !sawH2 || !sawPlain || !sawV6 {
-		t.Fatalf("не хватает видов стратегий: h2=%v plain=%v v6=%v", sawH2, sawPlain, sawV6)
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/udprelay.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"net"
-	"sync"
-	"syscall"
-)
-
-// UDPRelay — локальный «переходник» для QUIC. Клиент MASQUE шлёт датаграммы на
-// 127.0.0.1, а переходник сам общается с сервером Cloudflare: перед первым
-// настоящим пакетом он отправляет фейки с малым TTL (как у Zarp), и только
-// потом пропускает рукопожатие. Так обходим DPI, не трогая код клиента MASQUE.
-
-// FakeSpec описывает фейковые пакеты: Payloads шлются по очереди с TTL.
-type FakeSpec struct {
-	Payloads [][]byte
-	TTL      int // 0 — отправлять с обычным TTL
-	// PerInit — «мусор» перед каждым рукопожатием WireGuard (сообщение типа 1).
-	PerInit func() [][]byte
-}
-
-type UDPRelay struct {
-	local  *net.UDPConn
-	remote *net.UDPAddr
-	fake   FakeSpec
-
-	mu    sync.Mutex
-	peers map[string]*net.UDPConn
-	once  sync.Once
-}
-
-func StartUDPRelay(remote *net.UDPAddr, fake FakeSpec) (*UDPRelay, error) {
-	local, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		return nil, err
-	}
-	r := &UDPRelay{local: local, remote: remote, fake: fake, peers: map[string]*net.UDPConn{}}
-	go r.loop()
-	return r, nil
-}
-
-func (r *UDPRelay) Addr() *net.UDPAddr { return r.local.LocalAddr().(*net.UDPAddr) }
-
-func (r *UDPRelay) Close() {
-	r.once.Do(func() {
-		r.local.Close()
-		r.mu.Lock()
-		for _, c := range r.peers {
-			c.Close()
-		}
-		r.mu.Unlock()
-	})
-}
-
-func (r *UDPRelay) loop() {
-	buf := make([]byte, 65535)
-	for {
-		n, from, err := r.local.ReadFromUDP(buf)
-		if err != nil {
-			return
-		}
-		if up := r.peer(from); up != nil {
-			if r.fake.PerInit != nil && IsWGInit(buf[:n]) {
-				for _, j := range r.fake.PerInit() {
-					up.Write(j)
-				}
-			}
-			up.Write(buf[:n])
-		}
-	}
-}
-
-// peer возвращает «свой» сокет к серверу для данного клиента (создаёт и
-// отправляет фейки при первом обращении).
-func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
-	key := from.String()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if c, ok := r.peers[key]; ok {
-		return c
-	}
-	c, err := net.DialUDP("udp", nil, r.remote)
-	if err != nil {
-		Logf("   ✘ не удалось открыть сокет к %s: %v", r.remote, err)
-		return nil
-	}
-	r.sendFakes(c)
-	r.peers[key] = c
-	go func() {
-		buf := make([]byte, 65535)
-		for {
-			n, err := c.Read(buf)
-			if err != nil {
-				return
-			}
-			r.local.WriteToUDP(buf[:n], from)
-		}
-	}()
-	return c
-}
-
-func (r *UDPRelay) sendFakes(c *net.UDPConn) {
-	if len(r.fake.Payloads) == 0 {
-		return
-	}
-	if r.fake.TTL > 0 {
-		if err := setTTL(c, r.fake.TTL); err != nil {
-			Logf("   ⚠ не удалось выставить TTL=%d (%v) — фейки не отправляю", r.fake.TTL, err)
-			return
-		}
-	}
-	total := 0
-	for _, p := range r.fake.Payloads {
-		if _, err := c.Write(p); err == nil {
-			total += len(p)
-		}
-	}
-	if r.fake.TTL > 0 {
-		setTTL(c, 64)
-	}
-	Logf("   фейковых пакетов: %d, %d байт, TTL=%d → %s", len(r.fake.Payloads), total, r.fake.TTL, r.remote)
-}
-
-func setTTL(c *net.UDPConn, ttl int) error {
-	rc, err := c.SyscallConn()
-	if err != nil {
-		return err
-	}
-	v6 := c.RemoteAddr().(*net.UDPAddr).IP.To4() == nil
-	var serr error
-	err = rc.Control(func(fd uintptr) {
-		if v6 {
-			serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_UNICAST_HOPS, ttl)
-		} else {
-			serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TTL, ttl)
-		}
-	})
-	if err != nil {
-		return err
-	}
-	return serr
-}
-HYDRA_EOF
-
-putv "$GODIR/udprelay_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"net"
-	"strings"
-	"testing"
-	"time"
-)
-
-func TestUDPRelayForwardsAndSendsFakesFirst(t *testing.T) {
-	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.Close()
-	got := make(chan string, 16)
-	go func() {
-		buf := make([]byte, 2048)
-		for {
-			n, a, err := srv.ReadFromUDP(buf)
-			if err != nil {
-				return
-			}
-			got <- string(buf[:n])
-			srv.WriteToUDP([]byte("pong"), a)
-		}
-	}()
-
-	r, err := StartUDPRelay(srv.LocalAddr().(*net.UDPAddr), FakeSpec{
-		Payloads: [][]byte{[]byte("FAKE-A"), []byte("FAKE-B")},
-		TTL:      5,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-
-	c, err := net.DialUDP("udp", nil, r.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	c.Write([]byte("REAL-1"))
-
-	for _, want := range []string{"FAKE-A", "FAKE-B", "REAL-1"} {
-		select {
-		case p := <-got:
-			if p != want {
-				t.Fatalf("порядок пакетов: ждали %q, пришло %q", want, p)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatalf("не дождались %q", want)
-		}
-	}
-
-	// ответ сервера доходит до клиента
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, 64)
-	n, err := c.Read(buf)
-	if err != nil || string(buf[:n]) != "pong" {
-		t.Fatalf("ответ сервера не дошёл: %q %v", buf[:n], err)
-	}
-
-	// второй пакет идёт уже без новых фейков
-	c.Write([]byte("REAL-2"))
-	select {
-	case p := <-got:
-		if p != "REAL-2" {
-			t.Fatalf("после первого пакета фейков быть не должно, пришло %q", p)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("REAL-2 не дошёл")
-	}
-}
-
-func TestJournal(t *testing.T) {
-	JournalClear()
-	Logf("привет %d", 1)
-	Logf("второй")
-	txt := JournalText(0)
-	if !(len(txt) > 0) || JournalText(1) == txt {
-		t.Fatalf("журнал: %q", txt)
-	}
-	JournalClear()
-	if JournalText(0) != "" {
-		t.Fatal("журнал не очистился")
-	}
-}
-
-func TestJournalWriterFiltersNoise(t *testing.T) {
-	JournalClear()
-	w := JournalWriter{}
-	w.Write([]byte("dropping proxied packet (96 bytes) that can't be proxied: connect-ip: datagram Hop Limit too small: 1\n"))
-	w.Write([]byte("Connected to MASQUE server\n"))
-	txt := JournalText(0)
-	if !strings.Contains(txt, "Connected to MASQUE server") || strings.Contains(txt, "Hop Limit") {
-		t.Fatalf("журнал: %q", txt)
-	}
-}
-
-func TestUDPRelayJunkBeforeEveryWGInit(t *testing.T) {
-	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.Close()
-	got := make(chan int, 32)
-	go func() {
-		buf := make([]byte, 2048)
-		for {
-			n, _, err := srv.ReadFromUDP(buf)
-			if err != nil {
-				return
-			}
-			got <- n
-		}
-	}()
-	r, err := StartUDPRelay(srv.LocalAddr().(*net.UDPAddr), FakeSpec{
-		PerInit: func() [][]byte { return [][]byte{make([]byte, 41), make([]byte, 42)} },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	c, _ := net.DialUDP("udp", nil, r.Addr())
-	defer c.Close()
-
-	init := append([]byte{1, 0, 0, 0}, make([]byte, 144)...)
-	for round := 0; round < 2; round++ {
-		c.Write(init)
-		for _, want := range []int{41, 42, 148} {
-			select {
-			case n := <-got:
-				if n != want {
-					t.Fatalf("раунд %d: ждали пакет %d байт, пришло %d", round, want, n)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatalf("раунд %d: не дождались пакета %d байт", round, want)
-			}
-		}
-	}
-	c.Write(make([]byte, 20)) // не рукопожатие — без «мусора»
-	select {
-	case n := <-got:
-		if n != 20 {
-			t.Fatalf("после обычного пакета «мусора» быть не должно, пришло %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("обычный пакет не дошёл")
-	}
-}
-HYDRA_EOF
-
-putv "$GODIR/wg.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"net"
-	"strconv"
-	"strings"
-)
-
-// WireGuard-транспорт: для обычных конфигураций WARP (как у wgcf) и для своих.
-// Адреса WireGuard-серверов Cloudflare (162.159.192/193/195.x, 188.114.96-99.x)
-// относятся к другим префиксам, чем MASQUE (162.159.198.x), и многие провайдеры
-// маршрутизируют их в другие дата-центры (например, FRA вместо DME).
-
-// IsWGInit: это начало рукопожатия WireGuard (сообщение типа 1, 148 байт)?
-func IsWGInit(p []byte) bool {
-	return len(p) == 148 && p[0] == 1 && p[1] == 0 && p[2] == 0 && p[3] == 0
-}
-
-// GenJunk — «мусорные» пакеты случайной длины, которые отправляются перед
-// рукопожатием (как Jc/Jmin/Jmax в AmneziaWG). Настоящий сервер WireGuard их
-// просто отбрасывает, а оборудование провайдера теряет сигнатуру WireGuard.
-func GenJunk(count, minLen, maxLen int) [][]byte {
-	if count <= 0 {
-		return nil
-	}
-	if minLen < 1 {
-		minLen = 40
-	}
-	if maxLen < minLen {
-		maxLen = minLen + 30
-	}
-	out := make([][]byte, count)
-	for i := range out {
-		r := make([]byte, 1)
-		rand.Read(r)
-		n := minLen + int(r[0])%(maxLen-minLen+1)
-		b := make([]byte, n)
-		rand.Read(b)
-		if b[0] >= 1 && b[0] <= 4 { // не похоже на сообщения WireGuard
-			b[0] = 0xA5
-		}
-		out[i] = b
-	}
-	return out
-}
-
-func b64ToHex(s string) (string, error) {
-	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
-	if err != nil || len(b) != 32 {
-		return "", errors.New("ключ WireGuard должен быть 32 байта в base64")
-	}
-	return hex.EncodeToString(b), nil
-}
-
-// WGUAPI строит конфигурацию в формате UAPI wireguard-go; endpoint — адрес
-// локального переходника.
-func WGUAPI(acc *Account, endpoint string) (string, error) {
-	priv, err := b64ToHex(acc.PrivateKey)
-	if err != nil {
-		return "", fmt.Errorf("PrivateKey: %w", err)
-	}
-	pub, err := b64ToHex(acc.PeerPublicKey)
-	if err != nil {
-		return "", fmt.Errorf("PublicKey: %w", err)
-	}
-	return "private_key=" + priv + "\npublic_key=" + pub + "\nendpoint=" + endpoint +
-		"\npersistent_keepalive_interval=25\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n", nil
-}
-
-func withMask(a string, bits int) string {
-	if strings.Contains(a, "/") {
-		return a
-	}
-	return fmt.Sprintf("%s/%d", a, bits)
-}
-
-// WGConfig — обычный файл .conf: его можно вставить в любое приложение WireGuard/AmneziaWG.
-func (a *Account) WGConfig() string {
-	var addrs []string
-	if a.AddrV4 != "" {
-		addrs = append(addrs, withMask(a.AddrV4, 32))
-	}
-	if a.AddrV6 != "" {
-		addrs = append(addrs, withMask(a.AddrV6, 128))
-	}
-	var sb strings.Builder
-	sb.WriteString("[Interface]\n")
-	fmt.Fprintf(&sb, "PrivateKey = %s\n", a.PrivateKey)
-	fmt.Fprintf(&sb, "Address = %s\nDNS = 1.1.1.1, 1.0.0.1\nMTU = 1280\n", strings.Join(addrs, ", "))
-	if a.Jc > 0 {
-		fmt.Fprintf(&sb, "Jc = %d\nJmin = %d\nJmax = %d\nS1 = 0\nS2 = 0\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n", a.Jc, a.Jmin, a.Jmax)
-	}
-	sb.WriteString("\n[Peer]\n")
-	fmt.Fprintf(&sb, "PublicKey = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = %s\nPersistentKeepalive = 25\n", a.PeerPublicKey, a.EndpointV4)
-	return sb.String()
-}
-
-// ParseWGConfig разбирает .conf (WireGuard или AmneziaWG). Из обфускации
-// AmneziaWG поддерживаются «мусорные» пакеты Jc/Jmin/Jmax; изменение формата
-// пакетов (S1/S2/H1–H4) требует отдельной библиотеки и отвергается.
-func ParseWGConfig(text string) (*Account, error) {
-	acc := &Account{Kind: "wg", Custom: true, ID: "custom"}
-	section := ""
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if i := strings.IndexAny(line, "#;"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[") {
-			section = strings.ToLower(strings.Trim(line, "[]"))
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k = strings.ToLower(strings.TrimSpace(k))
-		v = strings.TrimSpace(v)
-		switch section {
-		case "interface":
-			switch k {
-			case "privatekey":
-				acc.PrivateKey = v
-			case "address":
-				for _, a := range strings.Split(v, ",") {
-					a = strings.TrimSpace(a)
-					ip := strings.Split(a, "/")[0]
-					if p := net.ParseIP(ip); p != nil {
-						if p.To4() != nil && acc.AddrV4 == "" {
-							acc.AddrV4 = ip
-						} else if p.To4() == nil && acc.AddrV6 == "" {
-							acc.AddrV6 = ip
-						}
-					}
-				}
-			case "jc":
-				acc.Jc, _ = strconv.Atoi(v)
-			case "jmin":
-				acc.Jmin, _ = strconv.Atoi(v)
-			case "jmax":
-				acc.Jmax, _ = strconv.Atoi(v)
-			case "s1", "s2":
-				if n, _ := strconv.Atoi(v); n != 0 {
-					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (S1/S2) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
-				}
-			case "h1", "h2", "h3", "h4":
-				if n, _ := strconv.Atoi(v); n != 0 && strconv.Itoa(n) != string(k[1]) {
-					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (H1–H4) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
-				}
-			}
-		case "peer":
-			switch k {
-			case "publickey":
-				acc.PeerPublicKey = v
-			case "endpoint":
-				acc.EndpointV4 = v
-			}
-		}
-	}
-	if _, err := b64ToHex(acc.PrivateKey); err != nil {
-		return nil, errors.New("в [Interface] нет корректного PrivateKey")
-	}
-	if _, err := b64ToHex(acc.PeerPublicKey); err != nil {
-		return nil, errors.New("в [Peer] нет корректного PublicKey")
-	}
-	if _, _, err := net.SplitHostPort(acc.EndpointV4); err != nil {
-		return nil, errors.New("в [Peer] нет корректного Endpoint (хост:порт)")
-	}
-	if acc.AddrV4 == "" {
-		acc.AddrV4 = "172.16.0.2"
-	}
-	return acc, nil
-}
-
-// BuildQUICLike — пакет, похожий на заголовок QUIC Initial (108 байт), как первый
-// пакет Варвары в её захвате: длинный заголовок, версия 1, DCID 8 байт, длина 90.
-func BuildQUICLike() []byte {
-	b := make([]byte, 108)
-	rand.Read(b)
-	b[0] = 0xC0
-	b[1], b[2], b[3], b[4] = 0, 0, 0, 1
-	b[5] = 8
-	b[14], b[15] = 0, 0
-	b[16], b[17] = 0x40, 90
-	return b
-}
-
-// BuildSTUNLike — пакет, похожий на запрос STUN Binding (20 байт, magic cookie 2112A442).
-func BuildSTUNLike() []byte {
-	b := make([]byte, 20)
-	rand.Read(b)
-	b[0], b[1], b[2], b[3] = 0, 1, 0, 0
-	b[4], b[5], b[6], b[7] = 0x21, 0x12, 0xA4, 0x42
-	return b
-}
-
-// WGPrefix — «пролог» перед каждым рукопожатием WireGuard. По захвату Варвары:
-// сначала пакет, похожий на QUIC (или STUN), затем несколько пакетов случайной
-// длины, затем настоящее рукопожатие. Сервер Cloudflare всё лишнее отбрасывает.
-func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
-	var out [][]byte
-	switch sig {
-	case "quic":
-		out = append(out, BuildQUICLike())
-	case "stun":
-		out = append(out, BuildSTUNLike())
-	}
-	if sig != "" {
-		out = append(out, GenJunk(4, 80, 120)...)
-	}
-	return append(out, GenJunk(jc, jmin, jmax)...)
-}
-
-// Подсети WireGuard-серверов Cloudflare (по данным Варвары). Разные подсети
-// по-разному маршрутизируются провайдерами: на одном Wi-Fi 162.159.192.x ведёт в HEL,
-// а 188.114.x — во FRA, тогда как MASQUE (162.159.198.x) — в DME.
-var wgSubnets = []string{
-	"162.159.192", "188.114.97", "188.114.96", "162.159.193", "162.159.195",
-	"188.114.98", "188.114.99", "8.34.70", "8.34.146", "8.35.211",
-	"8.39.125", "8.39.204", "8.39.214", "8.47.69", "8.6.112",
-}
-
-// WGStrategies — способы подключиться по WireGuard: адрес × порт × пролог.
-func WGStrategies(acc *Account) []Strategy {
-	if acc == nil || acc.Kind != "wg" {
-		return nil
-	}
-	mk := func(ep, sig string, jc, jmin, jmax int, alias string) Strategy {
-		p := map[string]string{"endpoint": ep}
-		if sig != "" {
-			p["sig"] = sig
-		}
-		if jc > 0 {
-			p["jc"] = strconv.Itoa(jc)
-			p["jmin"] = strconv.Itoa(jmin)
-			p["jmax"] = strconv.Itoa(jmax)
-		}
-		return Strategy{ID: fmt.Sprintf("wg/%s/%s", ep, alias), Transport: "wg", Params: p}
-	}
-	var out []Strategy
-	if acc.Custom {
-		// своя конфигурация: сначала ровно как написано, потом тот же адрес с прологом или без него
-		out = append(out, mk(acc.EndpointV4, "", acc.Jc, acc.Jmin, acc.Jmax, "cfg"))
-		if acc.Jc == 0 {
-			out = append(out, mk(acc.EndpointV4, "quic", 3, 41, 78, "q3"))
-		} else {
-			out = append(out, mk(acc.EndpointV4, "", 0, 0, 0, "plain"))
-		}
-		return out
-	}
-	hosts := []string{}
-	seen := map[string]bool{}
-	add := func(h string) {
-		if h != "" && net.ParseIP(h) != nil && !seen[h] {
-			seen[h] = true
-			hosts = append(hosts, h)
-		}
-	}
-	// 1) адрес из аккаунта и проверенный у Варвары 162.159.192.3 — с разными прологами
-	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3"}
-	for _, h := range first {
-		add(h)
-	}
-	for _, h := range hosts {
-		ep := net.JoinHostPort(h, "2408")
-		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
-		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
-		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
-		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
-	}
-	// 2) по одному адресу из каждой подсети (разные подсети — разные дата-центры)
-	for _, host := range []int{3, 1} {
-		for _, sub := range wgSubnets {
-			h := fmt.Sprintf("%s.%d", sub, host)
-			if seen[h] {
-				continue
-			}
-			seen[h] = true
-			out = append(out, mk(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
-		}
-	}
-	// 3) другие порты: некоторые провайдеры режут именно 2408
-	for _, port := range []string{"500", "4500", "1701"} {
-		out = append(out, mk(net.JoinHostPort("162.159.192.3", port), "quic", 3, 41, 78, "q3"))
-	}
-	return out
-}
-
-// Interleave перемешивает два списка стратегий пачками по chunk: так запасной
-// протокол начинает пробоваться сразу, а не после десятков попыток основного.
-func Interleave(a, b []Strategy, chunk int) []Strategy {
-	if chunk < 1 {
-		chunk = 3
-	}
-	var out []Strategy
-	for len(a) > 0 || len(b) > 0 {
-		n := chunk
-		if n > len(a) {
-			n = len(a)
-		}
-		out = append(out, a[:n]...)
-		a = a[n:]
-		n = chunk
-		if n > len(b) {
-			n = len(b)
-		}
-		out = append(out, b[:n]...)
-		b = b[n:]
-	}
-	return out
-}
-HYDRA_EOF
-
-putv "$GODIR/wg_runner.go" <<'HYDRA_EOF'
-//go:build usque
-
-package hydra
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"net"
-	"os"
-	"strings"
-	"sync"
-
-	"golang.zx2c4.com/wireguard/conn"
-	"golang.zx2c4.com/wireguard/device"
-	"golang.zx2c4.com/wireguard/tun"
-)
-
-// Транспорт WireGuard на wireguard-go. «Сетевая карта» (tun.Device) — в памяти:
-// пакеты берутся из PacketDevice движка и туда же возвращаются, поэтому
-// проверки дата-центра и TCP работают точно так же, как для MASQUE.
-
-type memTun struct {
-	dev    PacketDevice
-	mtu    int
-	events chan tun.Event
-	once   sync.Once
-}
-
-func (m *memTun) File() *os.File { return nil }
-
-func (m *memTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
-	n, err := m.dev.ReadPacket(bufs[0][offset:])
-	if err != nil {
-		return 0, err
-	}
-	sizes[0] = n
-	return 1, nil
-}
-
-func (m *memTun) Write(bufs [][]byte, offset int) (int, error) {
-	for i, b := range bufs {
-		if err := m.dev.WritePacket(b[offset:]); err != nil {
-			return i, err
-		}
-	}
-	return len(bufs), nil
-}
-
-func (m *memTun) MTU() (int, error)        { return m.mtu, nil }
-func (m *memTun) Name() (string, error)    { return "hydra0", nil }
-func (m *memTun) Events() <-chan tun.Event { return m.events }
-func (m *memTun) BatchSize() int           { return 1 }
-func (m *memTun) Close() error {
-	m.once.Do(func() { close(m.events) })
-	return nil
-}
-
-// NewWGRunner создаёт Runner, который держит туннель WireGuard по конфигурации acc.
-func NewWGRunner(acc *Account) (Runner, error) {
-	if acc == nil || acc.Kind != "wg" {
-		return nil, errors.New("нет конфигурации WireGuard")
-	}
-	if _, err := WGUAPI(acc, "127.0.0.1:1"); err != nil {
-		return nil, err
-	}
-	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
-		remote, err := net.ResolveUDPAddr("udp", s.Params["endpoint"])
-		if err != nil {
-			return fmt.Errorf("адрес %s: %w", s.Params["endpoint"], err)
-		}
-		// быстрая проверка маршрута
-		if c, derr := net.DialUDP("udp", nil, remote); derr != nil {
-			Logf("   ✘ нет маршрута до %s: %v", remote, derr)
-			return fmt.Errorf("нет маршрута до %s", remote)
-		} else {
-			c.Close()
-		}
-
-		var fk FakeSpec
-		sig := s.Params["sig"]
-		jc := atoiDefault(s.Params["jc"], 0)
-		jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
-		if sig != "" || jc > 0 {
-			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
-			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)
-		}
-		relay, err := StartUDPRelay(remote, fk)
-		if err != nil {
-			return err
-		}
-		defer relay.Close()
-
-		uapi, err := WGUAPI(acc, relay.Addr().String())
-		if err != nil {
-			return err
-		}
-		mt := &memTun{dev: dev, mtu: 1280, events: make(chan tun.Event, 4)}
-		logger := &device.Logger{
-			Verbosef: func(format string, args ...any) {
-				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") {
-					Logf("   wg: %s", l)
-				}
-			},
-			Errorf: func(format string, args ...any) {
-				Logf("   wg ✘ %s", fmt.Sprintf(format, args...))
-			},
-		}
-		d := device.NewDevice(mt, conn.NewDefaultBind(), logger)
-		defer d.Close()
-		if err := d.IpcSet(uapi); err != nil {
-			return err
-		}
-		if err := d.Up(); err != nil {
-			return err
-		}
-		Logf("   WireGuard запущен, жду рукопожатие…")
-		<-ctx.Done()
-		return ctx.Err()
-	}, nil
-}
-HYDRA_EOF
-
-putv "$GODIR/wg_test.go" <<'HYDRA_EOF'
-package hydra
-
-import (
-	"encoding/base64"
-	"strings"
-	"testing"
-)
-
-func testKey(b byte) string {
-	k := make([]byte, 32)
-	for i := range k {
-		k[i] = b
-	}
-	return base64.StdEncoding.EncodeToString(k)
-}
-
-func TestWGConfigRoundTrip(t *testing.T) {
-	a := &Account{Kind: "wg", PrivateKey: testKey(1), PeerPublicKey: testKey(2), EndpointV4: "162.159.192.1:2408",
-		AddrV4: "172.16.0.2", AddrV6: "2606:4700:110:8a1c::2", Jc: 4, Jmin: 40, Jmax: 70}
-	txt := a.WGConfig()
-	for _, want := range []string{"[Interface]", "PrivateKey = " + a.PrivateKey, "172.16.0.2/32", "Jc = 4", "Endpoint = 162.159.192.1:2408"} {
-		if !strings.Contains(txt, want) {
-			t.Fatalf("в .conf нет %q:\n%s", want, txt)
-		}
-	}
-	b, err := ParseWGConfig(txt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b.PrivateKey != a.PrivateKey || b.PeerPublicKey != a.PeerPublicKey || b.EndpointV4 != a.EndpointV4 ||
-		b.AddrV4 != "172.16.0.2" || b.AddrV6 != "2606:4700:110:8a1c::2" || b.Jc != 4 || b.Jmax != 70 || !b.Custom {
-		t.Fatalf("после разбора: %+v", b)
-	}
-}
-
-func TestParseWGConfigRejectsBadInput(t *testing.T) {
-	good := "[Interface]\nPrivateKey = " + testKey(1) + "\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = " + testKey(2) + "\nEndpoint = 1.2.3.4:51820\n"
-	if _, err := ParseWGConfig(good); err != nil {
-		t.Fatalf("корректный конфиг отвергнут: %v", err)
-	}
-	if _, err := ParseWGConfig(strings.Replace(good, "Endpoint = 1.2.3.4:51820", "Endpoint = nowhere", 1)); err == nil {
-		t.Fatal("плохой Endpoint должен отвергаться")
-	}
-	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "S1 = 15\n[Peer]", 1)); err == nil {
-		t.Fatal("S1 != 0 (изменённый формат пакетов) должен отвергаться")
-	}
-	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nJc = 3\nJmin = 20\nJmax = 40\n[Peer]", 1)); err != nil {
-		t.Fatalf("стандартные H1–H4 и Jc/Jmin/Jmax должны приниматься: %v", err)
-	}
-	if _, err := ParseWGConfig("мусор"); err == nil {
-		t.Fatal("мусор должен отвергаться")
-	}
-}
-
-func TestWGUAPIAndJunk(t *testing.T) {
-	a := &Account{PrivateKey: testKey(1), PeerPublicKey: testKey(2)}
-	u, err := WGUAPI(a, "127.0.0.1:5555")
-	if err != nil || !strings.Contains(u, "endpoint=127.0.0.1:5555") || !strings.Contains(u, strings.Repeat("01", 32)) {
-		t.Fatalf("UAPI: %q %v", u, err)
-	}
-	j := GenJunk(4, 40, 70)
-	if len(j) != 4 {
-		t.Fatalf("нужно 4 пакета, получили %d", len(j))
-	}
-	for _, p := range j {
-		if len(p) < 40 || len(p) > 70 || (p[0] >= 1 && p[0] <= 4) {
-			t.Fatalf("плохой «мусорный» пакет: %d байт, первый байт %d", len(p), p[0])
-		}
-	}
-	if !IsWGInit(append([]byte{1, 0, 0, 0}, make([]byte, 144)...)) || IsWGInit(make([]byte, 148)) {
-		t.Fatal("IsWGInit определяет рукопожатие неверно")
-	}
-}
-
-func TestWGStrategies(t *testing.T) {
-	a := &Account{Kind: "wg", EndpointV4: "162.159.192.1:2408"}
-	ss := WGStrategies(a)
-	if len(ss) < 30 || ss[0].Params["sig"] != "quic" || ss[0].Params["jc"] != "3" || ss[0].Transport != "wg" {
-		t.Fatalf("стратегии: %d, первая %+v", len(ss), ss[0])
-	}
-	saw188, saw8 := false, false
-	for _, s := range ss {
-		h := hostOnly(s.Params["endpoint"])
-		if strings.HasPrefix(h, "188.114.") {
-			saw188 = true
-		}
-		if strings.HasPrefix(h, "8.34.") || strings.HasPrefix(h, "8.39.") {
-			saw8 = true
-		}
-	}
-	if !saw188 || !saw8 {
-		t.Fatalf("не хватает подсетей: 188.114=%v 8.x=%v", saw188, saw8)
-	}
-	own := &Account{Kind: "wg", Custom: true, EndpointV4: "vpn.example.com:51820"}
-	os := WGStrategies(own)
-	if len(os) != 2 || os[0].Params["endpoint"] != "vpn.example.com:51820" {
-		t.Fatalf("свой конфиг: %+v", os)
-	}
-}
-
-func TestWGPrefixLooksLikeVarvara(t *testing.T) {
-	q := BuildQUICLike()
-	if len(q) != 108 || q[0] != 0xC0 || q[4] != 1 || q[5] != 8 || q[16] != 0x40 || q[17] != 90 {
-		t.Fatalf("QUIC-подобный пакет: %x", q[:20])
-	}
-	pre := WGPrefix("quic", 3, 41, 78)
-	if len(pre) != 1+4+3 || len(pre[0]) != 108 {
-		t.Fatalf("пролог: %d пакетов, первый %d байт", len(pre), len(pre[0]))
-	}
-	if len(WGPrefix("", 0, 0, 0)) != 0 {
-		t.Fatal("без сигнатуры и мусора пролога быть не должно")
-	}
-	st := BuildSTUNLike()
-	if len(st) != 20 || st[4] != 0x21 || st[7] != 0x42 {
-		t.Fatalf("STUN-подобный пакет: %x", st)
-	}
-}
-
-func TestInterleave(t *testing.T) {
-	a := []Strategy{{ID: "a1"}, {ID: "a2"}, {ID: "a3"}, {ID: "a4"}}
-	b := []Strategy{{ID: "b1"}, {ID: "b2"}}
-	var ids []string
-	for _, s := range Interleave(a, b, 2) {
-		ids = append(ids, s.ID)
-	}
-	if strings.Join(ids, ",") != "a1,a2,b1,b2,a3,a4" {
-		t.Fatalf("порядок: %v", ids)
-	}
-}
 HYDRA_EOF
 
 putv NOTICE <<'HYDRA_EOF'
@@ -5330,6 +49,24 @@ Hydra использует открытые компоненты:
 - AndroidX и Jetpack Compose — Apache License 2.0
 
 Полные тексты лицензий смотрите в репозиториях соответствующих проектов.
+HYDRA_EOF
+
+putv README.md <<'HYDRA_EOF'
+# Гидра (Hydra) — «WARP CLAUDE»
+
+VPN-клиент для Android поверх Cloudflare WARP (MASQUE и WireGuard), который сам подбирает рабочий путь и чинит себя.
+
+## Как устроено
+- `engine.go` — движок: TUN ↔ туннель, проверки (UDP, реальный TCP), политика дата-центров, смена сети, перебор стратегий.
+- `strategies.go`, `custom.go`, `wg.go` — стратегии подключения (фейковые QUIC-пакеты, SNI, порты, HTTP/2, WireGuard).
+- `memory.go` — память: что работало в какой сети (сохраняется сразу после результата).
+- `register.go` — регистрация аккаунта WARP «гонкой маршрутов».
+- `mobile/` — обвязка gomobile для Kotlin.
+- `orchestrator.go`, `front.go`, `transport.go` — прототип гонки/горячего резерва (пока не подключён к движку).
+- `app/` — Android-приложение (Compose): главный экран с ползунком; меню → «Дополнительно» и «Диагностика».
+
+## Сборка
+Через GitHub Actions: `bootstrap.sh` раскладывает файлы проекта, workflow собирает AAR и APK.
 HYDRA_EOF
 
 putv app/build.gradle.kts <<'HYDRA_EOF'
@@ -5429,7 +166,7 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
@@ -5588,6 +325,18 @@ class AccountController(
         }
     }
 
+    /** «Сбросить ключи безопасности»: удаляет оба аккаунта и регистрирует заново. */
+    fun resetKeys() {
+        try { mobile.Mobile.deleteAccount(dir) } catch (t: Throwable) { }
+        try { mobile.Mobile.deleteWireguardConfig(dir) } catch (t: Throwable) { }
+        id = readId()
+        wgId = readWgId()
+        report = ""
+        wgReport = ""
+        autoTried = false
+        ensureAll()
+    }
+
     fun register() {
         if (busy) return
         busy = true
@@ -5654,6 +403,241 @@ class AccountController(
         }
         id = readId()
         return err
+    }
+}
+HYDRA_EOF
+
+putv app/src/main/java/app/hydra/AdvancedScreens.kt <<'HYDRA_EOF'
+package app.hydra
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+
+/** «Дополнительно»: список как в 1.1.1.1. */
+@Composable
+fun AdvancedScreen(onBack: () -> Unit, onConn: () -> Unit, onMore: () -> Unit) {
+    SubPage(stringResource(R.string.menu_advanced), onBack) {
+        Spacer(Modifier.height(16.dp))
+        RowDivider()
+        SettingRow(stringResource(R.string.conn_params), onClick = onConn)
+        SettingRow(stringResource(R.string.adv_more), stringResource(R.string.adv_more_sub), onClick = onMore)
+    }
+}
+
+/** «Параметры подключения»: приложения, маршруты, DNS, протокол, SNI, конечная точка, сбросы. */
+@Composable
+fun ConnScreen(
+    prefs: Prefs,
+    account: AccountController,
+    vpn: VpnController,
+    onBack: () -> Unit,
+    onApps: () -> Unit,
+    onRoutes: () -> Unit,
+    onDns: () -> Unit,
+    onResetAll: () -> Unit
+) {
+    var sni by remember { mutableStateOf(prefs.customSni) }
+    var ep by remember { mutableStateOf(prefs.customEndpoint) }
+    var proto by remember { mutableStateOf(prefs.protocol) }
+    var dlg by remember { mutableStateOf("") } // sni | ep | proto | keys | all
+
+    val protoName = stringResource(
+        when (proto) {
+            "masque" -> R.string.proto_masque_chip
+            "wg" -> R.string.proto_wg_chip
+            else -> R.string.proto_auto
+        }
+    )
+    val dflt = stringResource(R.string.value_default)
+
+    SubPage(stringResource(R.string.conn_params), onBack) {
+        Spacer(Modifier.height(16.dp))
+        RowDivider()
+        SettingRow(stringResource(R.string.conn_apps), onClick = onApps)
+        SettingRow(stringResource(R.string.conn_routes), onClick = onRoutes)
+        SettingRow(stringResource(R.string.conn_dns), onClick = onDns)
+        SettingRow(stringResource(R.string.conn_proto), value = protoName, onClick = { dlg = "proto" })
+        NoteText(stringResource(R.string.proto_hint))
+        SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
+        SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+        SettingRow(
+            stringResource(R.string.conn_sni), stringResource(R.string.conn_sni_sub),
+            value = if (sni.isEmpty()) dflt else sni, onClick = { dlg = "sni" }
+        )
+        SettingRow(
+            stringResource(R.string.conn_endpoint), stringResource(R.string.conn_endpoint_sub),
+            value = if (ep.isEmpty()) dflt else ep, onClick = { dlg = "ep" }
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+
+    when (dlg) {
+        "sni" -> TextDialog(
+            stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
+            onDismiss = { dlg = "" },
+            onApply = { sni = it; prefs.customSni = it; dlg = ""; vpn.restartIfActive() },
+            onReset = { sni = ""; prefs.customSni = ""; dlg = ""; vpn.restartIfActive() }
+        )
+        "ep" -> TextDialog(
+            stringResource(R.string.conn_endpoint), ep, stringResource(R.string.conn_endpoint_hint),
+            onDismiss = { dlg = "" },
+            onApply = { ep = it; prefs.customEndpoint = it; dlg = ""; vpn.restartIfActive() },
+            onReset = { ep = ""; prefs.customEndpoint = ""; dlg = ""; vpn.restartIfActive() }
+        )
+        "proto" -> AlertDialog(
+            onDismissRequest = { dlg = "" },
+            title = { Text(stringResource(R.string.conn_proto)) },
+            text = {
+                Column {
+                    listOf(
+                        "auto" to R.string.proto_auto,
+                        "masque" to R.string.proto_masque_chip,
+                        "wg" to R.string.proto_wg_chip
+                    ).forEach { (code, res) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                proto = code
+                                prefs.protocol = code
+                                dlg = ""
+                                vpn.restartIfActive()
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = proto == code, onClick = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(stringResource(res), modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { dlg = "" }) { Text(stringResource(R.string.btn_cancel)) } }
+        )
+        "keys" -> ConfirmDialog(
+            stringResource(R.string.conn_reset_keys), stringResource(R.string.conn_reset_keys_q),
+            onDismiss = { dlg = "" },
+            onOk = {
+                dlg = ""
+                vpn.stop()
+                account.resetKeys()
+            }
+        )
+        "all" -> ConfirmDialog(
+            stringResource(R.string.conn_reset_all), stringResource(R.string.conn_reset_all_q),
+            onDismiss = { dlg = "" },
+            onOk = {
+                dlg = ""
+                if (vpn.active) vpn.stop()
+                prefs.resetAll()
+                onResetAll()
+            }
+        )
+    }
+}
+
+/** «Параметры DNS»: свой DNS внутри туннеля. */
+@Composable
+fun DnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
+    var on by remember { mutableStateOf(prefs.customDnsOn) }
+    var dns by remember { mutableStateOf(prefs.customDns) }
+    var edit by remember { mutableStateOf(false) }
+
+    SubPage(stringResource(R.string.conn_dns), onBack) {
+        NoteText(stringResource(R.string.dns_note))
+        RowDivider()
+        SettingSwitchRow(stringResource(R.string.dns_use), checked = on) {
+            on = it
+            prefs.customDnsOn = it
+            vpn.restartIfActive()
+        }
+        SettingRow(
+            stringResource(R.string.dns_server),
+            value = if (dns.isEmpty()) stringResource(R.string.dns_default) else dns,
+            onClick = { edit = true }
+        )
+        NoteText(stringResource(R.string.dns_soon))
+    }
+    if (edit) {
+        TextDialog(
+            stringResource(R.string.dns_server), dns, stringResource(R.string.dns_hint),
+            onDismiss = { edit = false },
+            onApply = { dns = it; prefs.customDns = it; edit = false; if (on) vpn.restartIfActive() },
+            onReset = { dns = ""; prefs.customDns = ""; edit = false; if (on) vpn.restartIfActive() }
+        )
+    }
+}
+
+/** «Исключённые маршруты»: подсети, которые идут напрямую. */
+@Composable
+fun RoutesScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
+    fun parse(s: String) = s.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+    var routes by remember { mutableStateOf(parse(prefs.excludedRoutes)) }
+    var add by remember { mutableStateOf(false) }
+
+    fun save(list: List<String>) {
+        routes = list
+        prefs.excludedRoutes = list.joinToString(",")
+        vpn.restartIfActive()
+    }
+
+    SubPage(stringResource(R.string.conn_routes), onBack) {
+        SectionLabel(stringResource(R.string.routes_list))
+        RowDivider()
+        routes.forEach { r ->
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(r, Modifier.weight(1f).padding(vertical = 14.dp), style = MaterialTheme.typography.bodyLarge)
+                IconButton(onClick = { save(routes - r) }) { Icon(Icons.Filled.Close, contentDescription = null) }
+            }
+            RowDivider()
+        }
+        NoteText(stringResource(R.string.routes_note))
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { add = true }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.routes_add)) }
+            OutlinedButton(onClick = { save(parse(Prefs.DEFAULT_ROUTES)) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.routes_default))
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+    if (add) {
+        TextDialog(
+            stringResource(R.string.routes_add), "", stringResource(R.string.routes_hint),
+            onDismiss = { add = false },
+            onApply = { v ->
+                add = false
+                val ok = Regex("[0-9a-fA-F:.]+(/[0-9]{1,3})?").matches(v)
+                if (ok && v !in routes) save(routes + v)
+            }
+        )
     }
 }
 HYDRA_EOF
@@ -5757,8 +741,6 @@ fun AppsScreen(prefs: Prefs) {
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp)) {
-            RainbowText(stringResource(R.string.apps_title))
-            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = onlySelected,
@@ -6187,6 +1169,272 @@ suspend fun runDiagnostics(): DiagResult = withContext(Dispatchers.IO) {
         (kv["colo"] ?: "").uppercase(), kv["warp"].orEmpty()
     )
 }
+
+// ---------- Полная диагностика и отчёт ----------
+
+data class DiagCheck(val name: String, val ok: Boolean, val detail: String)
+
+private fun tcpCheck(host: String, port: Int): Pair<Boolean, String> {
+    val t = System.currentTimeMillis()
+    return try {
+        java.net.Socket().use { s -> s.connect(java.net.InetSocketAddress(host, port), 4000) }
+        true to ((System.currentTimeMillis() - t).toString() + " ms")
+    } catch (e: Exception) {
+        false to (e.message ?: e.javaClass.simpleName)
+    }
+}
+
+/** Набор проверок «мимо VPN»: DNS, HTTPS, API регистрации, сервер MASQUE, IPv6, обычный сайт. */
+suspend fun runFullDiagnostics(ctx: android.content.Context): List<DiagCheck> = withContext(Dispatchers.IO) {
+    val out = mutableListOf<DiagCheck>()
+    val base = runDiagnostics()
+    out += DiagCheck(ctx.getString(R.string.chk_dns), base.dnsOk, if (base.dnsOk) "${base.dnsMs} ms" else ctx.getString(R.string.diag_fail))
+    val httpsDetail = if (base.httpsOk) "${base.httpsMs} ms" + (if (base.colo.isNotEmpty()) " · ${base.colo}" else "") else ctx.getString(R.string.diag_fail)
+    out += DiagCheck(ctx.getString(R.string.chk_https), base.httpsOk, httpsDetail)
+    val api = tcpCheck("api.cloudflareclient.com", 443)
+    out += DiagCheck(ctx.getString(R.string.chk_api), api.first, api.second)
+    val ms = tcpCheck("162.159.198.2", 443)
+    out += DiagCheck(ctx.getString(R.string.chk_masque), ms.first, ms.second)
+    val v6 = tcpCheck("2606:4700:4700::1111", 443)
+    out += DiagCheck(ctx.getString(R.string.chk_v6), v6.first, v6.second)
+    val web = tcpCheck("www.google.com", 443)
+    out += DiagCheck(ctx.getString(R.string.chk_web), web.first, web.second)
+    out
+}
+
+/** Тип текущей сети (без самого VPN). */
+fun networkType(ctx: android.content.Context): String = try {
+    val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    var wifi = false
+    var cell = false
+    for (n in cm.allNetworks) {
+        val c = cm.getNetworkCapabilities(n) ?: continue
+        if (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) continue
+        if (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) wifi = true
+        if (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) cell = true
+    }
+    when {
+        wifi -> ctx.getString(R.string.net_wifi)
+        cell -> ctx.getString(R.string.net_cell)
+        else -> "—"
+    }
+} catch (t: Throwable) {
+    "—"
+}
+
+fun fmtBytes(n: Long): String {
+    if (n < 1024) return "$n B"
+    val u = arrayOf("KB", "MB", "GB", "TB")
+    var v = n.toDouble()
+    var i = -1
+    while (v >= 1024 && i < u.size - 1) { v /= 1024; i++ }
+    return String.format(java.util.Locale.US, "%.1f %s", v, u[i])
+}
+
+/** Строки журнала с ошибками и предупреждениями. */
+fun journalErrors(): List<String> = try {
+    mobile.Mobile.getJournal(0).lines().filter { it.contains("✘") || it.contains("⚠") || it.contains("⛔") || it.contains("ошибк", true) }
+} catch (t: Throwable) { emptyList() }
+
+/** Текст отчёта для разработчика: версия, устройство, состояние, проверки, журнал. Ключи и токены не включаются. */
+fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, account: AccountController, checks: List<DiagCheck>): String {
+    val sb = StringBuilder()
+    sb.append("Hydra report ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())).append('\n')
+    sb.append("device: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
+        .append(", Android ").append(android.os.Build.VERSION.RELEASE).append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n")
+    sb.append("core: ").append(try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" }).append('\n')
+    sb.append("state: ").append(vpn.state).append(", strategy: ").append(vpn.strategy).append(", colo: ").append(vpn.colo)
+        .append(", rtt: ").append(vpn.rttMs).append(" ms, rx/tx: ").append(fmtBytes(vpn.rxBytes)).append(" / ").append(fmtBytes(vpn.txBytes)).append('\n')
+    if (vpn.message.isNotEmpty()) sb.append("message: ").append(vpn.message).append('\n')
+    sb.append("network: ").append(networkType(ctx)).append('\n')
+    sb.append("account: masque=").append(account.id.take(8)).append(" wg=").append(account.wgId.take(8)).append('\n')
+    sb.append("settings: protocol=").append(prefs.protocol).append(", channel=").append(prefs.channel)
+        .append(", blockedColos=").append(prefs.blockedColos).append(", allowColos=").append(prefs.allowColos)
+        .append(", fallbackAny=").append(prefs.fallbackAny).append(", customSni=").append(prefs.customSni)
+        .append(", customEndpoint=").append(prefs.customEndpoint).append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off").append('\n')
+    if (checks.isNotEmpty()) {
+        sb.append("\n--- checks ---\n")
+        checks.forEach { sb.append(if (it.ok) "OK   " else "FAIL ").append(it.name).append(": ").append(it.detail).append('\n') }
+    }
+    sb.append("\n--- journal ---\n")
+    sb.append(try { mobile.Mobile.getJournal(600) } catch (t: Throwable) { "" })
+    return sb.toString()
+}
+HYDRA_EOF
+
+putv app/src/main/java/app/hydra/DiagnosticsScreen.kt <<'HYDRA_EOF'
+package app.hydra
+
+import android.content.Intent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+
+/** «Диагностика»: состояние, проверки, ошибки, журнал, отчёт. */
+@Composable
+fun DiagnosticsScreen(
+    prefs: Prefs,
+    account: AccountController,
+    vpn: VpnController,
+    onBack: () -> Unit,
+    onErrors: () -> Unit,
+    onJournal: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var checks by remember { mutableStateOf<List<DiagCheck>>(emptyList()) }
+    var base by remember { mutableStateOf<DiagResult?>(null) }
+    var quick by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+
+    val onWord = stringResource(R.string.diag_on)
+    val offWord = stringResource(R.string.diag_off)
+    val dash = "—"
+    val stateText = when (vpn.state) {
+        "up" -> onWord
+        "connecting" -> stringResource(R.string.vpn_connecting)
+        "reconnecting" -> stringResource(R.string.vpn_reconnecting)
+        "failed" -> stringResource(R.string.vpn_failed)
+        else -> offWord
+    }
+
+    SubPage(stringResource(R.string.menu_diag), onBack) {
+        SectionLabel(stringResource(R.string.diag_sec_conn))
+        RowDivider()
+        SettingRow(stringResource(R.string.diag_conn), value = stateText)
+        SettingRow(stringResource(R.string.diag_proto), value = if (vpn.strategy.isEmpty()) dash else stringResource(protoRes(vpn.strategy)))
+        SettingRow(stringResource(R.string.diag_strategy), value = if (vpn.strategy.isEmpty()) dash else vpn.strategy)
+        SettingRow(stringResource(R.string.diag_dc), value = if (vpn.colo.isEmpty()) dash else coloLabel(vpn.colo))
+        SettingRow(stringResource(R.string.diag_ping), value = if (vpn.state == "up") stringResource(R.string.diag_ms, vpn.rttMs) else dash)
+
+        SectionLabel(stringResource(R.string.diag_sec_dev))
+        RowDivider()
+        SettingRow(stringResource(R.string.diag_nettype), value = networkType(ctx))
+        SettingRow(stringResource(R.string.diag_ip), value = base?.ip?.ifEmpty { dash } ?: dash)
+
+        SectionLabel(stringResource(R.string.diag_sec_cfg))
+        RowDivider()
+        SettingRow(stringResource(R.string.diag_id), value = account.id.ifEmpty { dash })
+        SettingRow(stringResource(R.string.diag_id_wg), value = account.wgId.ifEmpty { dash })
+
+        SectionLabel(stringResource(R.string.diag_sec_stats))
+        RowDivider()
+        SettingRow(stringResource(R.string.diag_rx), value = if (vpn.active) fmtBytes(vpn.rxBytes) else dash)
+        SettingRow(stringResource(R.string.diag_tx), value = if (vpn.active) fmtBytes(vpn.txBytes) else dash)
+
+        SectionLabel(stringResource(R.string.diag_sec_tools))
+        RowDivider()
+        SettingRow(
+            stringResource(R.string.diag_quick),
+            stringResource(R.string.diag_quick_sub),
+            value = if (quick) "…" else null,
+            onClick = {
+                if (!quick) {
+                    quick = true
+                    scope.launch { base = runDiagnostics(); quick = false }
+                }
+            }
+        )
+        SettingRow(
+            stringResource(R.string.diag_full),
+            stringResource(R.string.diag_full_sub),
+            value = if (running) "…" else null,
+            onClick = {
+                if (!running) {
+                    running = true
+                    scope.launch {
+                        checks = runFullDiagnostics(ctx)
+                        running = false
+                    }
+                }
+            }
+        )
+        SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
+        SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
+        SettingRow(
+            stringResource(R.string.diag_share),
+            stringResource(R.string.diag_share_sub),
+            onClick = {
+                val text = buildReport(ctx, prefs, vpn, account, checks)
+                val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+            }
+        )
+        SettingRow(
+            stringResource(R.string.diag_copy_report),
+            value = if (copied) stringResource(R.string.diag_report_copied) else null,
+            onClick = {
+                clipboard.setText(AnnotatedString(buildReport(ctx, prefs, vpn, account, checks)))
+                copied = true
+            }
+        )
+
+        if (checks.isNotEmpty()) {
+            SectionLabel(stringResource(R.string.diag_full))
+            RowDivider()
+            checks.forEach { c ->
+                SettingRow(c.name, value = (if (c.ok) "✔ " else "✘ ") + c.detail)
+            }
+            NoteText(stringResource(R.string.diag_direct_hint))
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Только сбои из журнала. */
+@Composable
+fun ErrorsScreen(onBack: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    var lines by remember { mutableStateOf(journalErrors()) }
+    SubPage(stringResource(R.string.diag_errors), onBack) {
+        SettingRow(stringResource(R.string.errors_refresh), onClick = { lines = journalErrors() })
+        SettingRow(stringResource(R.string.journal_copy), onClick = { clipboard.setText(AnnotatedString(lines.joinToString("\n"))) })
+        if (lines.isEmpty()) {
+            NoteText(stringResource(R.string.errors_none))
+        } else {
+            SelectionContainer {
+                Text(
+                    lines.reversed().joinToString("\n"),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp)
+                )
+            }
+        }
+    }
+}
+
+/** Полный журнал. */
+@Composable
+fun JournalScreen(onBack: () -> Unit) {
+    SubPage(stringResource(R.string.journal_title), onBack) {
+        Column(Modifier.padding(12.dp)) { JournalCard() }
+    }
+}
 HYDRA_EOF
 
 putv app/src/main/java/app/hydra/HomeScreen.kt <<'HYDRA_EOF'
@@ -6197,48 +1445,66 @@ import android.net.VpnService
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.material3.OutlinedButton
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
+private val TitleBlue = Color(0xFF3949D8)
+
+/** Главный экран: как у 1.1.1.1 — название, большой ползунок, статус. Меню (три полоски) — справа сверху. */
 @Composable
-fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
+fun HomeScreen(
+    prefs: Prefs,
+    account: AccountController,
+    vpn: VpnController,
+    onAdvanced: () -> Unit,
+    onDiag: () -> Unit
+) {
     val ctx = LocalContext.current
-    val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
     val hasAccount = account.id.isNotEmpty() || account.wgId.isNotEmpty()
     val needAppsToast = stringResource(R.string.need_apps_toast)
     val scope = rememberCoroutineScope()
+    var menu by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) vpn.start()
@@ -6258,15 +1524,9 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
         }
     }
 
+    val up = vpn.state == "up"
+    val busy = account.working || vpn.state == "connecting" || vpn.state == "reconnecting"
     val scheme = MaterialTheme.colorScheme
-    val mode = when {
-        account.working -> HeroMode.Registering
-        !hasAccount -> HeroMode.Off
-        vpn.state == "up" -> HeroMode.Connected
-        vpn.state == "connecting" || vpn.state == "reconnecting" -> HeroMode.Connecting
-        vpn.state == "failed" -> HeroMode.Failed
-        else -> HeroMode.Registered
-    }
 
     val title = when {
         account.working -> stringResource(R.string.home_status_registering)
@@ -6280,67 +1540,80 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
     val sub = when {
         account.working -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
-        vpn.state == "up" ->
-            if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_up_sub, coloLabel(vpn.colo))
+        up -> if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.home_private)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
         vpn.state == "reconnecting" || vpn.state == "failed" ->
             if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_connecting_sub)
-        else -> stringResource(R.string.vpn_off_sub)
-    }
-    val titleColor = when (mode) {
-        HeroMode.Connected -> NeonGreen
-        HeroMode.Failed -> scheme.error
-        HeroMode.Registering -> NeonAmber
-        HeroMode.Connecting -> NeonOrange
-        HeroMode.Off, HeroMode.Registered -> scheme.onBackground
+        else -> stringResource(R.string.home_not_private)
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp, vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painterResource(R.drawable.ic_launcher_art),
-                contentDescription = null,
-                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                RainbowText("HYDRA", fontSize = 32.sp, letterSpacing = 5.sp)
-                Text(
-                    stringResource(R.string.home_tagline),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // три полоски справа сверху: «Дополнительно» и «Диагностика»
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.menu_title), modifier = Modifier.size(32.dp))
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.menu_advanced)) },
+                        onClick = { menu = false; onAdvanced() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.menu_diag)) },
+                        onClick = { menu = false; onDiag() }
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(6.dp))
-        HydraHero(mode = mode, onClick = onTap, modifier = Modifier.fillMaxWidth(0.92f))
-
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = titleColor)
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.weight(1.1f))
         Text(
-            sub,
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant,
+            "WARP CLAUDE",
+            color = TitleBlue,
+            fontSize = 40.sp,
+            fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.weight(0.9f))
 
-        // Все маршруты ведут в запрещённый дата-центр: предлагаем выход одним нажатием.
+        BigToggle(on = up, busy = busy, onClick = onTap)
+
+        Spacer(Modifier.height(28.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(14.dp))
+        Text(
+            sub,
+            fontSize = 20.sp,
+            lineHeight = 26.sp,
+            color = Color.White,
+            textAlign = TextAlign.Center
+        )
+        if (up && vpn.colo.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                coloLabel(vpn.colo) + " · " + stringResource(R.string.diag_ms, vpn.rttMs),
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant
+            )
+        }
+
+        // ошибка регистрации: показываем причину и запасной путь
+        val failKind = account.failKind
+        if (!hasAccount && !account.working && failKind.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text(failText(failKind), style = MaterialTheme.typography.bodySmall, color = scheme.error, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { account.registerViaCellular() }) {
+                Text(stringResource(R.string.action_register_cell))
+            }
+        }
+
+        // все маршруты ведут в запрещённый дата-центр: выход одним нажатием
         if (vpn.state == "failed" && vpn.message.startsWith("⛔")) {
-            HCard(accent = NeonAmber) {
-                Text(
-                    stringResource(R.string.banner_blocked_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = NeonAmber
-                )
+            Spacer(Modifier.height(16.dp))
+            HCard {
+                Text(stringResource(R.string.banner_blocked_title), fontWeight = FontWeight.SemiBold, color = NeonAmber)
                 Text(
                     stringResource(R.string.banner_blocked_text),
                     style = MaterialTheme.typography.bodySmall,
@@ -6364,88 +1637,30 @@ fun HomeScreen(prefs: Prefs, account: AccountController, vpn: VpnController) {
                     ) { Text(stringResource(R.string.banner_allow)) }
                 }
             }
-            Spacer(Modifier.height(12.dp))
         }
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Tile(
-                stringResource(R.string.tile_dc),
-                if (vpn.state == "up" && vpn.colo.isNotEmpty()) vpn.colo else "—",
-                NeonGreen,
-                Modifier.weight(1f)
-            )
-            Tile(
-                stringResource(R.string.tile_rtt),
-                if (vpn.state == "up") stringResource(R.string.diag_ms, vpn.rttMs) else "—",
-                NeonViolet,
-                Modifier.weight(1f)
-            )
-            Tile(
-                stringResource(R.string.tile_route),
-                if (vpn.state == "up") routeLabel(vpn.strategy) else "—",
-                NeonCyan,
-                Modifier.weight(1f)
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-        HCard(accent = NeonGreen) {
-            SectionTitle(stringResource(R.string.ready_title), NeonGreen)
-            StepRow(StepState.Done, stringResource(R.string.step_engine), engine)
-            val failKind = account.failKind
-            val registerLabel = stringResource(R.string.action_register)
-            StepRow(
-                when {
-                    hasAccount -> StepState.Done
-                    failKind.isNotEmpty() -> StepState.Failed
-                    else -> StepState.Pending
-                },
-                stringResource(R.string.step_account),
-                when {
-                    account.id.isNotEmpty() -> stringResource(R.string.step_account_ok, account.id.take(8))
-                    account.wgId.isNotEmpty() -> stringResource(R.string.step_account_wg, account.wgId.take(8))
-                    failKind.isNotEmpty() -> failText(failKind)
-                    else -> stringResource(R.string.step_account_none)
-                },
-                actionLabel = if (hasAccount || account.working) null else registerLabel,
-                onAction = { account.register() }
-            )
-            StepRow(
-                if (vpn.state == "up") StepState.Done else StepState.Pending,
-                stringResource(R.string.step_connect),
-                stringResource(R.string.step_connect_sub)
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-        HCard(accent = NeonViolet) {
-            SectionTitle(stringResource(R.string.dc_title), NeonViolet)
-            Spacer(Modifier.height(6.dp))
-            val blocked = prefs.blockedColos.trim()
-            if (blocked.isNotEmpty()) {
-                Text(stringResource(R.string.dc_blocked, blocked), style = MaterialTheme.typography.bodyMedium)
-            }
-            val allow = prefs.allowColos.trim()
-            if (allow.isNotEmpty()) {
-                Text(stringResource(R.string.dc_allow, allow), style = MaterialTheme.typography.bodyMedium)
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                stringResource(R.string.dc_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.weight(2.2f))
     }
 }
 
+/** Большой ползунок как у 1.1.1.1: белый кружок слева — выключено, справа — включено. */
 @Composable
-fun Tile(label: String, value: String, accent: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
-    HCard(modifier, accent = accent) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+fun BigToggle(on: Boolean, busy: Boolean, onClick: () -> Unit) {
+    val right = on || busy
+    val offset by animateDpAsState(if (right) 74.dp else 0.dp, label = "thumb")
+    val track = when {
+        on -> Color(0xFF2F6BFF)
+        busy -> Color(0xFFE8A317)
+        else -> Color(0xFF1E1E1E)
+    }
+    Box(
+        Modifier
+            .size(width = 150.dp, height = 76.dp)
+            .clip(RoundedCornerShape(38.dp))
+            .background(track)
+            .clickable(onClick = onClick)
+            .padding(7.dp)
+    ) {
+        Box(Modifier.offset(x = offset).size(62.dp).clip(CircleShape).background(Color.White))
     }
 }
 HYDRA_EOF
@@ -6671,6 +1886,7 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
+import android.telephony.TelephonyManager
 import android.util.Log
 
 /**
@@ -6779,6 +1995,8 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
+            mobile.Mobile.setCustomSNI(prefs.customSni)
+            mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
         } catch (t: Throwable) {
@@ -6839,12 +2057,40 @@ class HydraVpnService : VpnService() {
             .setMtu(1280)
             .addAddress(v4, 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("1.0.0.1")
+
+        // свой DNS (внутри туннеля) или по умолчанию Cloudflare
+        var dnsAdded = 0
+        if (prefs.customDnsOn) {
+            for (d in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                if (!d.matches(Regex("[0-9a-fA-F:.]+"))) continue
+                try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
+            }
+        }
+        if (dnsAdded == 0) {
+            b.addDnsServer("1.1.1.1")
+            b.addDnsServer("1.0.0.1")
+        }
+
+        // подсети, которые идут напрямую, мимо VPN (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33) {
+            for (r in prefs.excludedRoutes.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                try {
+                    val parts = r.split("/")
+                    if (!parts[0].matches(Regex("[0-9a-fA-F:.]+"))) continue
+                    val len = parts.getOrNull(1)?.toIntOrNull() ?: if (parts[0].contains(":")) 128 else 32
+                    b.excludeRoute(android.net.IpPrefix(java.net.InetAddress.getByName(parts[0]), len))
+                } catch (e: Exception) { }
+            }
+        }
         if (v6.isNotEmpty()) {
             b.addAddress(v6, 128)
             b.addRoute("::", 0)
             b.addDnsServer("2606:4700:4700::1111")
+        } else {
+            // IPv6 в аккаунте нет: всё равно забираем ::/0 в TUN, ядро его отбросит —
+            // иначе IPv6-трафик пошёл бы мимо VPN
+            b.addAddress("fd00:7a7a::2", 128)
+            b.addRoute("::", 0)
         }
 
         val apps = prefs.splitApps
@@ -6895,21 +2141,38 @@ class HydraVpnService : VpnService() {
         handler.postDelayed(statusUpdater, 3000)
     }
 
-    /** Ключ сети: "cell" при принудительном канале, иначе "wifi"/"cell"/"default" (сам VPN не считается). */
+    /** Оператор сотовой сети (MCC+MNC, без разрешений): у разных операторов разный DPI. */
+    private fun cellOperator(): String = try {
+        (getSystemService(TELEPHONY_SERVICE) as TelephonyManager).networkOperator.orEmpty()
+    } catch (t: Throwable) { "" }
+
+    /** Отпечаток Wi-Fi: шлюз + DNS (SSID без разрешения на геолокацию недоступен). */
+    private fun wifiPrint(n: Network): String = try {
+        val lp = cm().getLinkProperties(n)
+        val gw = lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress.orEmpty()
+        val dns = lp?.dnsServers?.joinToString(",") { it.hostAddress.orEmpty() }.orEmpty()
+        Integer.toHexString((gw + "|" + dns).hashCode())
+    } catch (t: Throwable) { "" }
+
+    /**
+     * Ключ сети для памяти стратегий: "wifi:<отпечаток>", "cell:<MCC+MNC>" или "default".
+     * Сам VPN не считается. При принудительном канале — всегда сотовая.
+     */
     private fun currentNetKey(): String {
-        if (forceCell) return "cell"
+        val op = cellOperator()
+        if (forceCell) return "cell:$op"
         return try {
-            var wifi = false
+            var wifi: String? = null
             var cell = false
             for (n in cm().allNetworks) {
                 val c = cm().getNetworkCapabilities(n) ?: continue
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
-                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = true
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = wifiPrint(n)
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) cell = true
             }
             when {
-                wifi -> "wifi"
-                cell -> "cell"
+                wifi != null -> "wifi:$wifi"
+                cell -> "cell:$op"
                 else -> "default"
             }
         } catch (t: Throwable) {
@@ -6977,6 +2240,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -6989,8 +2253,6 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -7001,6 +2263,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -7046,13 +2309,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+enum class Dest { Home, Advanced, Conn, Dns, Routes, Apps, More, Diag, Errors, Journal }
+
 @Composable
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = remember { AccountController(ctx.applicationContext, ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
-    var tab by rememberSaveable { mutableStateOf(0) }
+    val stack = remember { mutableStateListOf(Dest.Home) }
+
+    fun go(d: Dest) { stack.add(d) }
+    fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    BackHandler(enabled = stack.size > 1) { back() }
 
     // разрешение на уведомления (Android 13+): постоянное уведомление держит VPN живым
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -7065,44 +2334,27 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
         account.ensureAll()
     }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
-                NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_home)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_split)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
-                    icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_diag)) }
-                )
-                NavigationBarItem(
-                    selected = tab == 3,
-                    onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_settings)) }
-                )
+    Box(Modifier.fillMaxSize().statusBarsPadding()) {
+        when (stack.last()) {
+            Dest.Home -> HomeScreen(prefs, account, vpn, onAdvanced = { go(Dest.Advanced) }, onDiag = { go(Dest.Diag) })
+            Dest.Advanced -> AdvancedScreen(onBack = { back() }, onConn = { go(Dest.Conn) }, onMore = { go(Dest.More) })
+            Dest.Conn -> ConnScreen(
+                prefs, account, vpn, onBack = { back() },
+                onApps = { go(Dest.Apps) }, onRoutes = { go(Dest.Routes) }, onDns = { go(Dest.Dns) },
+                onResetAll = onLanguageChanged
+            )
+            Dest.Dns -> DnsScreen(prefs, vpn, onBack = { back() })
+            Dest.Routes -> RoutesScreen(prefs, vpn, onBack = { back() })
+            Dest.Apps -> SubPage(stringResource(R.string.conn_apps), onBack = { back() }, scroll = false) { AppsScreen(prefs) }
+            Dest.More -> SubPage(stringResource(R.string.adv_more), onBack = { back() }, scroll = false) {
+                SettingsScreen(prefs, account, onLanguageChanged)
             }
-        }
-    ) { pad ->
-        Box(Modifier.padding(pad).statusBarsPadding().fillMaxSize()) {
-            when (tab) {
-                0 -> HomeScreen(prefs, account, vpn)
-                1 -> AppsScreen(prefs)
-                2 -> DiagScreen(prefs, vpn)
-                else -> SettingsScreen(prefs, account, onLanguageChanged)
-            }
+            Dest.Diag -> DiagnosticsScreen(
+                prefs, account, vpn, onBack = { back() },
+                onErrors = { go(Dest.Errors) }, onJournal = { go(Dest.Journal) }
+            )
+            Dest.Errors -> ErrorsScreen(onBack = { back() })
+            Dest.Journal -> JournalScreen(onBack = { back() })
         }
     }
 }
@@ -7165,6 +2417,38 @@ class Prefs(ctx: Context) {
     var protocol: String
         get() = sp.getString("protocol", "auto") ?: "auto"
         set(v) { sp.edit().putString("protocol", v).apply() }
+
+    /** Свой SNI для туннеля MASQUE ("" — по умолчанию). */
+    var customSni: String
+        get() = sp.getString("custom_sni", "") ?: ""
+        set(v) { sp.edit().putString("custom_sni", v).apply() }
+
+    /** Свой адрес сервера MASQUE: "IP" или "IP:порт". */
+    var customEndpoint: String
+        get() = sp.getString("custom_endpoint", "") ?: ""
+        set(v) { sp.edit().putString("custom_endpoint", v).apply() }
+
+    /** Свой DNS внутри туннеля: IP-адреса через запятую. */
+    var customDns: String
+        get() = sp.getString("custom_dns", "") ?: ""
+        set(v) { sp.edit().putString("custom_dns", v).apply() }
+
+    var customDnsOn: Boolean
+        get() = sp.getBoolean("custom_dns_on", false)
+        set(v) { sp.edit().putBoolean("custom_dns_on", v).apply() }
+
+    /** Подсети, которые идут напрямую, мимо VPN (Android 13+). */
+    var excludedRoutes: String
+        get() = sp.getString("excl_routes", null) ?: DEFAULT_ROUTES
+        set(v) { sp.edit().putString("excl_routes", v).apply() }
+
+    fun resetAll() { sp.edit().clear().apply() }
+
+    companion object {
+        const val DEFAULT_ROUTES =
+            "10.0.0.0/8,100.64.0.0/10,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.168.0.0/16," +
+            "224.0.0.0/24,240.0.0.0/4,239.255.255.250/32,255.255.255.255/32,17.249.0.0/16"
+    }
 
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
@@ -7275,7 +2559,6 @@ fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: 
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        RainbowText(stringResource(R.string.settings_title))
 
         // Язык
         HCard(accent = NeonCyan) {
@@ -7721,21 +3004,21 @@ val RainbowColors = listOf(
 val HydraGreen = NeonGreen
 
 private val HydraColors = darkColorScheme(
-    primary = NeonViolet,
-    onPrimary = Color(0xFF1B0F52),
+    primary = Color(0xFF2F6BFF),
+    onPrimary = Color.White,
     primaryContainer = Color(0xFF0F2A57),
     onPrimaryContainer = Color(0xFFCFE8FF),
-    secondary = NeonCyan,
-    onSecondary = Color(0xFF00243D),
+    secondary = Color(0xFF3949D8),
+    onSecondary = Color.White,
     tertiary = NeonGreen,
-    background = Color(0xFF080C18),
-    onBackground = Color(0xFFE6ECFA),
-    surface = Color(0xFF080C18),
-    onSurface = Color(0xFFE6ECFA),
-    surfaceVariant = Color(0xFF111B33),
-    onSurfaceVariant = Color(0xFFA9B6D3),
-    outline = Color(0xFF3C4B70),
-    error = Color(0xFFFF8A80),
+    background = Color.Black,
+    onBackground = Color.White,
+    surface = Color.Black,
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF1E1E1E),
+    onSurfaceVariant = Color(0xFF9E9E9E),
+    outline = Color(0xFF3A3A3A),
+    error = Color(0xFFFF6B6B),
     onError = Color(0xFF410002)
 )
 
@@ -7745,48 +3028,16 @@ fun HydraTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = HydraColors, content = content)
 }
 
-/** Плитка «карбона» 24×24: тёмные и чуть светлее квадраты в шахматном порядке. */
-private fun carbonTile(): ImageBitmap {
-    val bmp = ImageBitmap(24, 24)
-    val c = GfxCanvas(bmp)
-    val dark = Paint().apply { color = Color(0xFF0A0F1D) }
-    val light = Paint().apply { color = Color(0xFF0F1628) }
-    c.drawRect(0f, 0f, 24f, 24f, dark)
-    c.drawRect(0f, 0f, 12f, 12f, light)
-    c.drawRect(12f, 12f, 24f, 24f, light)
-    return bmp
-}
-
-/** Фон приложения: карбон с мягким неоновым свечением сверху. */
+/** Фон приложения: чистый чёрный, как у 1.1.1.1. */
 @Composable
 fun HydraBackground(content: @Composable () -> Unit) {
-    val tile = remember { carbonTile() }
-    val carbon = remember(tile) { ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated)) }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xFF080C18))
-            .drawBehind { drawRect(brush = carbon) }
-            .background(
-                Brush.verticalGradient(
-                    listOf(NeonPink.copy(alpha = 0.10f), Color.Transparent, NeonOrange.copy(alpha = 0.07f))
-                )
-            )
-    ) { content() }
+    Box(Modifier.fillMaxSize().background(Color.Black)) { content() }
 }
 
-/** Заголовок с радужной заливкой, как у RotatorOS. */
+/** Заголовок экрана: обычный жирный белый текст (имя оставлено для совместимости). */
 @Composable
 fun RainbowText(text: String, fontSize: TextUnit = 28.sp, letterSpacing: TextUnit = 0.sp) {
-    Text(
-        text,
-        style = TextStyle(
-            brush = Brush.linearGradient(RainbowColors),
-            fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = letterSpacing
-        )
-    )
+    Text(text, style = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Bold, letterSpacing = letterSpacing))
 }
 HYDRA_EOF
 
@@ -7794,6 +3045,21 @@ putv app/src/main/java/app/hydra/Ui.kt <<'HYDRA_EOF'
 package app.hydra
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -7822,7 +3088,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** Карточка с неоновой рамкой: цвет рамки — accent. */
+/** Плоская тёмно-серая карточка (accent оставлен для совместимости и не используется). */
 @Composable
 fun HCard(
     modifier: Modifier = Modifier,
@@ -7831,11 +3097,8 @@ fun HCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-        ),
-        border = BorderStroke(1.6.dp, accent.copy(alpha = 0.85f))
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(Modifier.padding(16.dp), content = content)
     }
@@ -7937,6 +3200,135 @@ fun coloLabel(code: String): String {
 /** Разбирает "DME, led;fra" в множество кодов в верхнем регистре. */
 fun parseColos(s: String): Set<String> =
     s.split(',', ';', ' ', '\n').map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
+
+// ---------- Экраны настроек в стиле 1.1.1.1 ----------
+
+/** Страница с серой шапкой: стрелка «назад» и заголовок. */
+@Composable
+fun SubPage(title: String, onBack: () -> Unit, scroll: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .height(56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
+            Spacer(Modifier.width(16.dp))
+            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        val m = if (scroll) Modifier.fillMaxSize().verticalScroll(rememberScrollState()) else Modifier.fillMaxSize()
+        Column(m, content = content)
+    }
+}
+
+@Composable
+fun RowDivider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2C2C2C)))
+}
+
+/** Строка списка: заголовок, необязательные пояснение и значение справа. */
+@Composable
+fun SettingRow(title: String, subtitle: String? = null, value: String? = null, onClick: (() -> Unit)? = null) {
+    var m = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)
+    if (onClick != null) m = m.clickable { onClick() }
+    Row(m.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (value != null) {
+            Spacer(Modifier.width(12.dp))
+            Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(0.6f, fill = false))
+        }
+    }
+    RowDivider()
+}
+
+@Composable
+fun SettingSwitchRow(title: String, subtitle: String? = null, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onChange(!checked) }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+    RowDivider()
+}
+
+/** Мелкая подпись раздела на чёрном фоне. */
+@Composable
+fun SectionLabel(text: String) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(start = 16.dp, top = 22.dp, bottom = 8.dp)
+    )
+}
+
+@Composable
+fun NoteText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+    )
+}
+
+/** Диалог с одной строкой ввода: «Сбросить» / «Применить». */
+@Composable
+fun TextDialog(
+    title: String,
+    initial: String,
+    hint: String,
+    onDismiss: () -> Unit,
+    onApply: (String) -> Unit,
+    onReset: (() -> Unit)? = null
+) {
+    var v by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(value = v, onValueChange = { v = it }, singleLine = true, placeholder = { Text(hint) })
+        },
+        confirmButton = { TextButton(onClick = { onApply(v.trim()) }) { Text(stringResource(R.string.btn_apply)) } },
+        dismissButton = {
+            if (onReset != null) TextButton(onClick = onReset) { Text(stringResource(R.string.btn_reset)) }
+            else TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
+        }
+    )
+}
+
+/** Подтверждение опасного действия. */
+@Composable
+fun ConfirmDialog(title: String, text: String, onDismiss: () -> Unit, onOk: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = { TextButton(onClick = onOk) { Text(stringResource(R.string.btn_ok)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) } }
+    )
+}
 HYDRA_EOF
 
 putv app/src/main/java/app/hydra/VpnController.kt <<'HYDRA_EOF'
@@ -7956,7 +3348,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Состояние VPN для интерфейса: раз в секунду спрашивает у Go-ядра, как дела. */
-class VpnController(private val ctx: Context, scope: CoroutineScope) {
+class VpnController(private val ctx: Context, private val scope: CoroutineScope) {
 
     var state by mutableStateOf("off")
         private set
@@ -7969,7 +3361,22 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
     var message by mutableStateOf("")
         private set
 
+    var rxBytes by mutableStateOf(0L)
+        private set
+    var txBytes by mutableStateOf(0L)
+        private set
+
     val active: Boolean get() = state != "off"
+
+    /** Применить изменённые настройки: если VPN включён — переподключить. */
+    fun restartIfActive() {
+        if (!active) return
+        scope.launch {
+            stop()
+            delay(1200)
+            start()
+        }
+    }
 
     init {
         scope.launch {
@@ -7994,6 +3401,8 @@ class VpnController(private val ctx: Context, scope: CoroutineScope) {
         colo = p.getOrElse(2) { "" }
         rttMs = p.getOrElse(3) { "0" }.toIntOrNull() ?: 0
         message = p.getOrElse(4) { "" }
+        rxBytes = p.getOrElse(5) { "0" }.toLongOrNull() ?: 0L
+        txBytes = p.getOrElse(6) { "0" }.toLongOrNull() ?: 0L
     }
 
     fun start() {
@@ -10444,7 +5853,7 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="tile_dc">Дата-центр</string>
     <string name="tile_rtt">Задержка</string>
     <string name="tile_route">Маршрут</string>
-    <string name="need_apps_toast">Сначала выбери приложения (вкладка «Приложения») или включи режим «Все, кроме выбранных»</string>
+    <string name="need_apps_toast">Сначала выберите приложения (Меню → Дополнительно → Параметры подключения → Управление исключёнными приложениями) или включите режим «Все, кроме выбранных»</string>
 
     <string name="apps_header_chosen">Выбранные (%1$d)</string>
     <string name="apps_header_rest">Все приложения</string>
@@ -10509,6 +5918,78 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="wg_edit">Править конфигурацию</string>
     <string name="wg_cancel">Отменить правку</string>
     <string name="wg_save">Сохранить конфигурацию</string>
+    <string name="menu_title">Меню</string>
+    <string name="menu_advanced">Дополнительно</string>
+    <string name="menu_diag">Диагностика</string>
+    <string name="home_private">Ваше интернет-подключение конфиденциально.</string>
+    <string name="home_not_private">Ваше интернет-подключение не конфиденциально.</string>
+    <string name="btn_apply">Применить</string>
+    <string name="btn_reset">Сбросить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="btn_ok">Да</string>
+    <string name="value_default">По умолчанию</string>
+    <string name="conn_params">Параметры подключения</string>
+    <string name="adv_more">Расширенные настройки Гидры</string>
+    <string name="adv_more_sub">Язык, дата-центры, канал связи, автозапуск, аккаунт и WireGuard</string>
+    <string name="conn_apps">Управление исключёнными приложениями</string>
+    <string name="conn_routes">Управление исключёнными маршрутами</string>
+    <string name="conn_dns">Параметры DNS</string>
+    <string name="conn_proto">Протокол туннелирования</string>
+    <string name="conn_reset_keys">Сбросить ключи безопасности</string>
+    <string name="conn_reset_keys_q">Аккаунты WARP будут удалены и созданы заново. VPN выключится.</string>
+    <string name="conn_reset_all">Сбросить все настройки</string>
+    <string name="conn_reset_all_q">Все настройки приложения вернутся к значениям по умолчанию. Аккаунт сохранится. VPN выключится.</string>
+    <string name="conn_sni">Польз. SNI (MASQUE)</string>
+    <string name="conn_sni_sub">Переопределяет SNI для туннеля MASQUE</string>
+    <string name="conn_sni_hint">например cdnjs.cloudflare.com</string>
+    <string name="conn_endpoint">Польз. конечная точка</string>
+    <string name="conn_endpoint_sub">Свой адрес сервера, пробуется первым</string>
+    <string name="conn_endpoint_hint">IP-адрес с портом</string>
+    <string name="dns_note">Свой DNS работает внутри туннеля WARP: сервер видит адрес Cloudflare, а не ваш. Изменения применяются после переподключения.</string>
+    <string name="dns_use">Использовать польз. DNS</string>
+    <string name="dns_server">DNS-сервер</string>
+    <string name="dns_default">Cloudflare 1.1.1.1</string>
+    <string name="dns_hint">IP через запятую, например 8.8.8.8</string>
+    <string name="dns_soon">Пока поддерживаются только IP-адреса (DNS поверх WARP). DoH и DoT по имени хоста появятся позже.</string>
+    <string name="routes_list">Исключённые IP-адреса и подсети</string>
+    <string name="routes_note">Указанные подсети идут напрямую, мимо VPN. Работает на Android 13 и новее.</string>
+    <string name="routes_add">Ввести исключённые маршруты</string>
+    <string name="routes_default">Восстановить значения по умолчанию</string>
+    <string name="routes_hint">например 192.168.0.0/16</string>
+    <string name="diag_on">ВКЛ</string>
+    <string name="diag_off">ВЫКЛ</string>
+    <string name="diag_sec_conn">Подключение</string>
+    <string name="diag_conn">Подключение</string>
+    <string name="diag_strategy">Стратегия</string>
+    <string name="diag_sec_dev">Ваше устройство</string>
+    <string name="diag_nettype">Тип подключения</string>
+    <string name="net_wifi">Wi-Fi</string>
+    <string name="net_cell">Мобильная сеть</string>
+    <string name="diag_sec_cfg">Конфигурация клиента</string>
+    <string name="diag_id">ID (MASQUE)</string>
+    <string name="diag_id_wg">ID (WireGuard)</string>
+    <string name="diag_sec_stats">Статистика</string>
+    <string name="diag_rx">Получено</string>
+    <string name="diag_tx">Отправлено</string>
+    <string name="diag_sec_tools">Инструменты</string>
+    <string name="diag_quick">Быстрая проверка</string>
+    <string name="diag_quick_sub">Узнать публичный IP и дата-центр напрямую</string>
+    <string name="diag_full">Полная диагностика</string>
+    <string name="diag_full_sub">DNS, HTTPS, API Cloudflare, сервер MASQUE, IPv6, интернет</string>
+    <string name="diag_errors">Ошибки</string>
+    <string name="diag_errors_sub">Только сбои и предупреждения из журнала</string>
+    <string name="diag_share">Поделиться отчётом</string>
+    <string name="diag_share_sub">Версия, устройство, проверки и журнал (без ключей)</string>
+    <string name="diag_copy_report">Скопировать отчёт</string>
+    <string name="diag_report_copied">Скопировано</string>
+    <string name="errors_none">Ошибок в журнале нет.</string>
+    <string name="errors_refresh">Обновить</string>
+    <string name="chk_dns">DNS (cloudflare.com)</string>
+    <string name="chk_https">HTTPS (cloudflare.com)</string>
+    <string name="chk_api">API регистрации WARP</string>
+    <string name="chk_masque">Сервер MASQUE (TCP 443)</string>
+    <string name="chk_v6">IPv6</string>
+    <string name="chk_web">Интернет (google.com)</string>
 </resources>
 HYDRA_EOF
 
@@ -10622,7 +6103,7 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="tile_dc">Datacenter</string>
     <string name="tile_rtt">Latency</string>
     <string name="tile_route">Route</string>
-    <string name="need_apps_toast">Select apps first (Apps tab) or switch the mode to “All except selected”</string>
+    <string name="need_apps_toast">First choose apps (Menu → Advanced → Connection settings → Manage excluded apps) or switch to the "All except selected" mode</string>
 
     <string name="apps_header_chosen">Selected (%1$d)</string>
     <string name="apps_header_rest">All apps</string>
@@ -10687,7 +6168,5397 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="wg_edit">Edit config</string>
     <string name="wg_cancel">Cancel editing</string>
     <string name="wg_save">Save config</string>
+    <string name="menu_title">Menu</string>
+    <string name="menu_advanced">Advanced</string>
+    <string name="menu_diag">Diagnostics</string>
+    <string name="home_private">Your internet connection is private.</string>
+    <string name="home_not_private">Your internet connection is not private.</string>
+    <string name="btn_apply">Apply</string>
+    <string name="btn_reset">Reset</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_ok">Yes</string>
+    <string name="value_default">Default</string>
+    <string name="conn_params">Connection settings</string>
+    <string name="adv_more">Hydra advanced options</string>
+    <string name="adv_more_sub">Language, data centers, channel, autostart, account and WireGuard</string>
+    <string name="conn_apps">Manage excluded apps</string>
+    <string name="conn_routes">Manage excluded routes</string>
+    <string name="conn_dns">DNS settings</string>
+    <string name="conn_proto">Tunnel protocol</string>
+    <string name="conn_reset_keys">Reset security keys</string>
+    <string name="conn_reset_keys_q">WARP accounts will be deleted and created again. The VPN will turn off.</string>
+    <string name="conn_reset_all">Reset all settings</string>
+    <string name="conn_reset_all_q">All app settings return to defaults. The account is kept. The VPN will turn off.</string>
+    <string name="conn_sni">Custom SNI (MASQUE)</string>
+    <string name="conn_sni_sub">Overrides the SNI of the MASQUE tunnel</string>
+    <string name="conn_sni_hint">e.g. cdnjs.cloudflare.com</string>
+    <string name="conn_endpoint">Custom endpoint</string>
+    <string name="conn_endpoint_sub">Your own server address, tried first</string>
+    <string name="conn_endpoint_hint">IP address with port</string>
+    <string name="dns_note">Custom DNS works inside the WARP tunnel: the server sees a Cloudflare address, not yours. Changes apply after reconnecting.</string>
+    <string name="dns_use">Use custom DNS</string>
+    <string name="dns_server">DNS server</string>
+    <string name="dns_default">Cloudflare 1.1.1.1</string>
+    <string name="dns_hint">IPs separated by commas, e.g. 8.8.8.8</string>
+    <string name="dns_soon">Only IP addresses are supported for now (DNS over WARP). DoH and DoT by hostname will come later.</string>
+    <string name="routes_list">Excluded IP addresses and subnets</string>
+    <string name="routes_note">These subnets go directly, bypassing the VPN. Works on Android 13 and newer.</string>
+    <string name="routes_add">Add excluded route</string>
+    <string name="routes_default">Restore defaults</string>
+    <string name="routes_hint">e.g. 192.168.0.0/16</string>
+    <string name="diag_on">ON</string>
+    <string name="diag_off">OFF</string>
+    <string name="diag_sec_conn">Connection</string>
+    <string name="diag_conn">Connection</string>
+    <string name="diag_strategy">Strategy</string>
+    <string name="diag_sec_dev">Your device</string>
+    <string name="diag_nettype">Connection type</string>
+    <string name="net_wifi">Wi-Fi</string>
+    <string name="net_cell">Mobile network</string>
+    <string name="diag_sec_cfg">Client configuration</string>
+    <string name="diag_id">ID (MASQUE)</string>
+    <string name="diag_id_wg">ID (WireGuard)</string>
+    <string name="diag_sec_stats">Statistics</string>
+    <string name="diag_rx">Received</string>
+    <string name="diag_tx">Sent</string>
+    <string name="diag_sec_tools">Tools</string>
+    <string name="diag_quick">Quick check</string>
+    <string name="diag_quick_sub">Find the public IP and data center directly</string>
+    <string name="diag_full">Full diagnostics</string>
+    <string name="diag_full_sub">DNS, HTTPS, Cloudflare API, MASQUE server, IPv6, internet</string>
+    <string name="diag_errors">Errors</string>
+    <string name="diag_errors_sub">Only failures and warnings from the journal</string>
+    <string name="diag_share">Share report</string>
+    <string name="diag_share_sub">Version, device, checks and journal (no keys)</string>
+    <string name="diag_copy_report">Copy report</string>
+    <string name="diag_report_copied">Copied</string>
+    <string name="errors_none">No errors in the journal.</string>
+    <string name="errors_refresh">Refresh</string>
+    <string name="chk_dns">DNS (cloudflare.com)</string>
+    <string name="chk_https">HTTPS (cloudflare.com)</string>
+    <string name="chk_api">WARP registration API</string>
+    <string name="chk_masque">MASQUE server (TCP 443)</string>
+    <string name="chk_v6">IPv6</string>
+    <string name="chk_web">Internet (google.com)</string>
 </resources>
+HYDRA_EOF
+
+putv app/src/main/res/values/themes.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Hydra" parent="android:Theme.Material.NoActionBar" />
+</resources>
+HYDRA_EOF
+
+putv build.gradle.kts <<'HYDRA_EOF'
+plugins {
+    id("com.android.application") version "8.7.3" apply false
+    id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+}
+HYDRA_EOF
+
+putv "$GODIR/colo.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// ColoPolicy — политика выбора дата-центра Cloudflare (по коду аэропорта).
+// Block — запрещённые коды; Allow — если не пусто, разрешены только они.
+type ColoPolicy struct {
+	Block []string
+	Allow []string
+}
+
+// DefaultColoPolicy: никакой Москвы (DME) и остальных российских точек Cloudflare.
+func DefaultColoPolicy() *ColoPolicy {
+	return &ColoPolicy{Block: []string{"DME", "LED", "SVX", "KJA", "OVB", "KHV", "VVO", "KZN"}}
+}
+
+func normColo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
+
+// Allows: nil-политика и неизвестный дата-центр (пустой код) не блокируются.
+func (p *ColoPolicy) Allows(colo string) bool {
+	if p == nil {
+		return true
+	}
+	c := normColo(colo)
+	if c == "" {
+		return true
+	}
+	for _, b := range p.Block {
+		if normColo(b) == c {
+			return false
+		}
+	}
+	if len(p.Allow) > 0 {
+		for _, a := range p.Allow {
+			if normColo(a) == c {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+// ParseColoList разбирает "dme, LED;fra" в ["DME","LED","FRA"] без повторов.
+func ParseColoList(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	split := func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' }
+	for _, f := range strings.FieldsFunc(s, split) {
+		c := normColo(f)
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ColoError — туннель поднялся, но попал в запрещённый дата-центр.
+type ColoError struct{ Colo string }
+
+func (e *ColoError) Error() string {
+	return fmt.Sprintf("дата-центр %s запрещён политикой", e.Colo)
+}
+
+// ColoReporter — необязательный интерфейс туннеля: сказать, через какой
+// дата-центр он идёт. Туннели без него пропускаются без проверки.
+type ColoReporter interface {
+	Colo(ctx context.Context) (string, error)
+}
+
+// ParseTrace разбирает ответ https://cloudflare.com/cdn-cgi/trace.
+func ParseTrace(body string) map[string]string {
+	m := map[string]string{}
+	sc := bufio.NewScanner(strings.NewReader(body))
+	for sc.Scan() {
+		if k, v, ok := strings.Cut(sc.Text(), "="); ok {
+			m[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return m
+}
+
+// TraceColo — стандартный способ узнать дата-центр: запрос trace через туннель.
+func TraceColo(ctx context.Context, t Tunnel) (string, error) {
+	tr := &http.Transport{
+		DialContext:         t.DialContext,
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: 8 * time.Second,
+	}
+	cl := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://cloudflare.com/cdn-cgi/trace", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	colo := normColo(ParseTrace(string(body))["colo"])
+	if colo == "" {
+		return "", errors.New("в ответе trace нет colo")
+	}
+	return colo, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/colo_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+type coloTunnel struct {
+	*fakeTunnel
+	colo string
+}
+
+func (c *coloTunnel) Colo(context.Context) (string, error) { return c.colo, nil }
+
+func coloTransport(colos map[string]string, order ...string) *fakeTransport {
+	var ss []Strategy
+	for _, id := range order {
+		ss = append(ss, Strategy{ID: id, Transport: "fake"})
+	}
+	return &fakeTransport{
+		strategies: ss,
+		dial: func(ctx context.Context, s Strategy) (Tunnel, error) {
+			return &coloTunnel{newFakeTunnel(0), colos[s.ID]}, nil
+		},
+	}
+}
+
+func TestColoPolicy(t *testing.T) {
+	p := DefaultColoPolicy()
+	for _, c := range []string{"DME", "dme", " LED "} {
+		if p.Allows(c) {
+			t.Fatalf("%q должен быть запрещён", c)
+		}
+	}
+	for _, c := range []string{"HEL", "FRA", "AMS", "ARN", ""} {
+		if !p.Allows(c) {
+			t.Fatalf("%q должен быть разрешён", c)
+		}
+	}
+	onlyEU := &ColoPolicy{Allow: []string{"hel", "fra"}}
+	if !onlyEU.Allows("HEL") || onlyEU.Allows("AMS") {
+		t.Fatal("Allow-список работает неверно")
+	}
+	var nilp *ColoPolicy
+	if !nilp.Allows("DME") {
+		t.Fatal("nil-политика ничего не блокирует")
+	}
+}
+
+func TestParseColoList(t *testing.T) {
+	got := strings.Join(ParseColoList("dme, LED;fra  dme"), ",")
+	if got != "DME,LED,FRA" {
+		t.Fatalf("получили %q", got)
+	}
+}
+
+func TestParseTrace(t *testing.T) {
+	m := ParseTrace("fl=1\nip=1.2.3.4\ncolo=HEL\nwarp=on\n")
+	if m["colo"] != "HEL" || m["warp"] != "on" || m["ip"] != "1.2.3.4" {
+		t.Fatalf("разбор trace: %v", m)
+	}
+}
+
+func TestRaceSkipsBlockedColo(t *testing.T) {
+	ft := coloTransport(map[string]string{"dme": "DME", "hel": "HEL"}, "dme", "hel")
+	mem, _ := LoadMemory("")
+	o := New(fastCfg(), mem, []Transport{ft}, nil)
+	tun, s, err := o.race(context.Background(), "wifi:home", "")
+	if err != nil || s.ID != "hel" {
+		t.Fatalf("ждали hel, получили %q %v", s.ID, err)
+	}
+	tun.Close()
+}
+
+func TestRaceAllBlocked(t *testing.T) {
+	ft := coloTransport(map[string]string{"a": "DME", "b": "LED"}, "a", "b")
+	mem, _ := LoadMemory("")
+	o := New(fastCfg(), mem, []Transport{ft}, nil)
+	_, _, err := o.race(context.Background(), "wifi:home", "")
+	if err == nil || !strings.Contains(err.Error(), "DME") {
+		t.Fatalf("ждали ошибку про запрещённые дата-центры, получили %v", err)
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/custom.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"net"
+	"strconv"
+	"strings"
+)
+
+// CustomEndpointStrategies — стратегии MASQUE для адреса, который задал пользователь
+// ("IP" или "IP:порт"). Они пробуются раньше остальных. Неверный адрес даёт nil.
+func CustomEndpointStrategies(ep string) []Strategy {
+	ep = strings.TrimSpace(ep)
+	if ep == "" {
+		return nil
+	}
+	host := hostOnly(ep)
+	if net.ParseIP(host) == nil {
+		return nil
+	}
+	hostPort := ep
+	if _, _, err := net.SplitHostPort(ep); err != nil {
+		hostPort = net.JoinHostPort(host, "443")
+	}
+	mk := func(proto, alias string, fv *fakeVariant) Strategy {
+		p := map[string]string{"endpoint": hostPort, "sni": defaultMasqueSNI, "h2": "0"}
+		if proto == "h2" {
+			p["h2"] = "1"
+		}
+		if fv != nil && fv.count > 0 {
+			p["fake"] = fv.sni
+			p["fttl"] = strconv.Itoa(fv.ttl)
+			p["fcount"] = strconv.Itoa(fv.count)
+			p["fsize"] = strconv.Itoa(fv.size)
+		}
+		return Strategy{ID: proto + "/" + hostPort + "/" + alias, Transport: "masque", Params: p}
+	}
+	var out []Strategy
+	for i := 0; i < 3 && i < len(fakeVariants); i++ {
+		out = append(out, mk("h3", fakeVariants[i].alias, &fakeVariants[i]))
+	}
+	return append(out, mk("h2", "std", nil))
+}
+HYDRA_EOF
+
+putv "$GODIR/dns.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"net"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+// На Android у Go нет /etc/resolv.conf, поэтому встроенный резолвер идёт на
+// localhost:53 — а там никого нет, и любое имя «не находится». Лечим: сами
+// задаём DNS-серверы. Системные присылает Android-часть, запасные — ниже.
+var fallbackDNS = []string{"8.8.8.8", "1.1.1.1", "77.88.8.8"}
+
+// SetSystemDNS подменяет резолвер процесса: сначала переданные серверы
+// (только IP-адреса), потом запасные. Каждая новая попытка идёт на следующий сервер.
+func SetSystemDNS(servers []string) {
+	var list []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || net.ParseIP(s) == nil || seen[s] {
+			return
+		}
+		seen[s] = true
+		list = append(list, s)
+	}
+	for _, s := range servers {
+		add(s)
+	}
+	for _, s := range fallbackDNS {
+		add(s)
+	}
+	var n uint32
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			i := int(atomic.AddUint32(&n, 1)-1) % len(list)
+			d := net.Dialer{Timeout: 3 * time.Second}
+			return d.DialContext(ctx, network, net.JoinHostPort(list[i], "53"))
+		},
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/dns_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"net"
+	"testing"
+)
+
+func TestSetSystemDNSRotatesServers(t *testing.T) {
+	old := net.DefaultResolver
+	defer func() { net.DefaultResolver = old }()
+
+	SetSystemDNS([]string{"127.0.0.1", "мусор", "127.0.0.2", "127.0.0.1"})
+	r := net.DefaultResolver
+	if !r.PreferGo || r.Dial == nil {
+		t.Fatal("резолвер не подменён")
+	}
+	var got []string
+	for i := 0; i < 2; i++ {
+		c, err := r.Dial(context.Background(), "udp", "ignored:53")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, c.RemoteAddr().String())
+		c.Close()
+	}
+	if got[0] != "127.0.0.1:53" || got[1] != "127.0.0.2:53" {
+		t.Fatalf("серверы по кругу: %v", got)
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/engine.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand"
+	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// Engine — «сердце» Гидры на телефоне. Android отдаёт TUN (поток IP-пакетов),
+// Engine гоняет их через туннель WARP и сам следит за ним:
+//   - после подключения узнаёт дата-центр Cloudflare; запрещённый — отбрасывает;
+//   - проверяет, что через туннель реально проходит TCP, а не только «рукопожатие»;
+//   - при смене сети (Wi-Fi ↔ мобильная) сразу переподключается;
+//   - при сбое переходит на другую стратегию; запоминает, что работало в каждой сети;
+//   - всё, что происходит и почему, пишет в журнал.
+
+// PacketDevice — «сетевая карта» для туннеля (те же методы, что у TunnelDevice в usque).
+type PacketDevice interface {
+	ReadPacket(buf []byte) (int, error)
+	WritePacket(pkt []byte) error
+}
+
+// Runner держит туннель по стратегии s, пока ctx не отменён или не случилась
+// непоправимая ошибка. Пакеты читает/пишет через dev.
+type Runner func(ctx context.Context, dev PacketDevice, s Strategy) error
+
+type EngineConfig struct {
+	LocalIP      net.IP // IPv4-адрес внутри туннеля (из аккаунта)
+	Strategies   []Strategy
+	Runner       Runner
+	Policy       *ColoPolicy
+	SoftFallback bool // если все адреса ведут в запрещённый дата-центр — всё равно подключиться
+	Mem          *Memory
+	NetKey       func() string
+	NetChanged   <-chan struct{} // сигнал «сеть сменилась» от Android
+	ProbeEvery   time.Duration
+	UpTimeout    time.Duration // сколько ждать первого ответа после старта стратегии
+	BadProbes    int           // сколько проб подряд без ответа = туннель умер
+	TCPCheck     bool          // проверять реальную передачу TCP
+	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
+	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
+}
+
+func DefaultEngineConfig() EngineConfig {
+	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 6 * time.Second, BadProbes: 3, TCPCheck: true}
+}
+
+type Status struct {
+	State    string // connecting | up | reconnecting | failed
+	Strategy string
+	Colo     string
+	RTT      time.Duration
+	Message  string
+}
+
+type Engine struct {
+	cfg     EngineConfig
+	tun     io.ReadWriteCloser
+	out     chan []byte // пакеты из TUN (от приложений)
+	probeQ  chan []byte
+	port    uint16
+	tcpPort uint16
+	tcpSeq  uint32
+	tcpAck  chan struct{}
+	nextID  uint32
+	events  chan Event
+	tunDead chan struct{}
+	rx, tx  uint64 // байты из туннеля в приложения / из приложений в туннель
+	once    sync.Once
+	soft    bool
+
+	mu      sync.Mutex
+	status  Status
+	waiters map[uint16]chan string
+}
+
+func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
+	d := DefaultEngineConfig()
+	if cfg.ProbeEvery <= 0 {
+		cfg.ProbeEvery = d.ProbeEvery
+	}
+	if cfg.UpTimeout <= 0 {
+		cfg.UpTimeout = d.UpTimeout
+	}
+	if cfg.BadProbes <= 0 {
+		cfg.BadProbes = d.BadProbes
+	}
+	if cfg.TCPTimeout <= 0 {
+		cfg.TCPTimeout = 2 * time.Second
+	}
+	if cfg.Mem == nil {
+		cfg.Mem, _ = LoadMemory("")
+	}
+	if cfg.NetKey == nil {
+		cfg.NetKey = func() string { return "default" }
+	}
+	return &Engine{
+		cfg:     cfg,
+		tun:     tun,
+		out:     make(chan []byte, 512),
+		probeQ:  make(chan []byte, 16),
+		port:    uint16(20000 + rand.Intn(20000)),
+		tcpPort: uint16(41000 + rand.Intn(20000)),
+		tcpAck:  make(chan struct{}, 1),
+		events:  make(chan Event, 64),
+		tunDead: make(chan struct{}),
+		waiters: map[uint16]chan string{},
+		status:  Status{State: "connecting"},
+	}
+}
+
+func (e *Engine) Events() <-chan Event { return e.events }
+
+func (e *Engine) Status() Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.status
+}
+
+func (e *Engine) setStatus(s Status) {
+	e.mu.Lock()
+	e.status = s
+	e.mu.Unlock()
+}
+
+func (e *Engine) emit(kind, strategy, msg string) {
+	select {
+	case e.events <- Event{Kind: kind, Strategy: strategy, Msg: msg, At: time.Now()}:
+	default:
+	}
+}
+
+func (e *Engine) Close() { e.once.Do(func() { e.tun.Close() }) }
+
+func (e *Engine) policy() *ColoPolicy {
+	if e.soft {
+		return nil
+	}
+	return e.cfg.Policy
+}
+
+// readTun читает пакеты приложений. Пока туннеля нет, лишние пакеты отбрасываются.
+func (e *Engine) readTun() {
+	defer close(e.tunDead)
+	for {
+		buf := make([]byte, 2048)
+		n, err := e.tun.Read(buf)
+		if err != nil {
+			return
+		}
+		if e.cfg.DropV6 && n > 0 && buf[0]>>4 == 6 {
+			continue
+		}
+		atomic.AddUint64(&e.tx, uint64(n))
+		select {
+		case e.out <- buf[:n]:
+		default:
+		}
+	}
+}
+
+// attemptDev — «карта» одной попытки: после отмены попытки её горутины
+// просыпаются с ошибкой и не крадут пакеты у следующей попытки.
+type attemptDev struct {
+	e    *Engine
+	done <-chan struct{}
+}
+
+func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
+	select {
+	case <-d.done:
+		return 0, io.EOF
+	case <-d.e.tunDead:
+		return 0, io.EOF
+	case p := <-d.e.probeQ:
+		return copy(buf, p), nil
+	case p := <-d.e.out:
+		return copy(buf, p), nil
+	}
+}
+
+func (d *attemptDev) WritePacket(pkt []byte) error {
+	select {
+	case <-d.done:
+		return io.ErrClosedPipe
+	default:
+	}
+	if id, colo, ok := ParseColoReply(pkt, d.e.port); ok {
+		d.e.deliver(id, colo)
+		return nil
+	}
+	if ParseTCPSynAck(pkt, d.e.tcpPort, atomic.LoadUint32(&d.e.tcpSeq)+1) {
+		select {
+		case d.e.tcpAck <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	atomic.AddUint64(&d.e.rx, uint64(len(pkt)))
+	_, err := d.e.tun.Write(pkt)
+	return err
+}
+
+// Traffic — сколько байт получено из туннеля и отправлено в него с запуска.
+func (e *Engine) Traffic() (rx, tx uint64) {
+	return atomic.LoadUint64(&e.rx), atomic.LoadUint64(&e.tx)
+}
+
+func (e *Engine) deliver(id uint16, colo string) {
+	e.mu.Lock()
+	ch := e.waiters[id]
+	e.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- colo:
+		default:
+		}
+	}
+}
+
+// probe шлёт UDP-пробу (DNS id.server) и ждёт ответ: задержка и код дата-центра.
+func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duration, string, error) {
+	id := uint16(atomic.AddUint32(&e.nextID, 1))
+	ch := make(chan string, 1)
+	e.mu.Lock()
+	e.waiters[id] = ch
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		delete(e.waiters, id)
+		e.mu.Unlock()
+	}()
+	pkt := BuildColoProbe(e.cfg.LocalIP, e.port, id)
+	if pkt == nil {
+		return 0, "", errors.New("нет IPv4-адреса туннеля")
+	}
+	t0 := time.Now()
+	select {
+	case e.probeQ <- pkt:
+	default:
+		return 0, "", errors.New("очередь проб переполнена")
+	}
+	select {
+	case colo := <-ch:
+		return time.Since(t0), colo, nil
+	case <-time.After(timeout):
+		return 0, "", errors.New("нет ответа на пробу")
+	case <-ctx.Done():
+		return 0, "", ctx.Err()
+	}
+}
+
+// tcpProbe: SYN на 1.1.1.1:443 через туннель, ждём SYN-ACK.
+func (e *Engine) tcpProbe(ctx context.Context, timeout time.Duration) (time.Duration, error) {
+	seq := rand.Uint32()
+	atomic.StoreUint32(&e.tcpSeq, seq)
+	select {
+	case <-e.tcpAck:
+	default:
+	}
+	id := uint16(atomic.AddUint32(&e.nextID, 1))
+	syn := BuildTCPSyn(e.cfg.LocalIP, e.tcpPort, seq, id)
+	if syn == nil {
+		return 0, errors.New("нет IPv4-адреса туннеля")
+	}
+	t0 := time.Now()
+	select {
+	case e.probeQ <- syn:
+	default:
+		return 0, errors.New("очередь проб переполнена")
+	}
+	select {
+	case <-e.tcpAck:
+		rtt := time.Since(t0)
+		if rst := BuildTCPRst(e.cfg.LocalIP, e.tcpPort, seq+1, id+1); rst != nil {
+			select {
+			case e.probeQ <- rst:
+			default:
+			}
+		}
+		return rtt, nil
+	case <-time.After(timeout):
+		return 0, errors.New("нет SYN-ACK")
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+type outcome struct {
+	wasUp       bool
+	netChanged  bool
+	coloBlocked string
+	reason      string
+}
+
+func policyText(p *ColoPolicy) string {
+	if p == nil || (len(p.Block) == 0 && len(p.Allow) == 0) {
+		return "нет"
+	}
+	s := strings.Join(p.Block, ",")
+	if len(p.Allow) > 0 {
+		s += "; только: " + strings.Join(p.Allow, ",")
+	}
+	return s
+}
+
+func (e *Engine) fail(nk string, s Strategy, msg string) outcome {
+	e.cfg.Mem.Record(nk, s.ID, false, 0)
+	e.emit("failed", s.ID, msg)
+	return outcome{reason: msg}
+}
+
+func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome {
+	e.setStatus(Status{State: "connecting", Strategy: s.ID})
+	e.emit("connecting", s.ID, "")
+	Logf("▶ стратегия %s", s.ID)
+	Logf("   %s", describeStrategy(s))
+	select {
+	case <-e.cfg.NetChanged:
+	default:
+	}
+	// старые пробы от прошлых попыток в очереди только мешают
+	for drained := false; !drained; {
+		select {
+		case <-e.probeQ:
+		default:
+			drained = true
+		}
+	}
+
+	actx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dev := &attemptDev{e: e, done: actx.Done()}
+	errc := make(chan error, 1)
+	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
+
+	timeout := e.cfg.UpTimeout
+	if e.cfg.Mem.Worked(nk, s.ID) {
+		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+	}
+	start := time.Now()
+	var colo string
+	var rtt time.Duration
+	up := false
+	for !up && time.Since(start) < timeout {
+		select {
+		case err := <-errc:
+			msg := "туннель не поднялся"
+			if err != nil {
+				msg = err.Error()
+			}
+			Logf("   ✘ клиент остановился: %s", msg)
+			return e.fail(nk, s, msg)
+		case <-ctx.Done():
+			return outcome{reason: "остановка"}
+		case <-e.cfg.NetChanged:
+			Logf("   ↻ сеть сменилась во время подключения — начинаю заново")
+			return outcome{netChanged: true, reason: "сменилась сеть"}
+		default:
+		}
+		r, c, err := e.probe(actx, 1500*time.Millisecond)
+		if err == nil {
+			up, colo, rtt = true, c, r
+		} else {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	if !up {
+		hint := ""
+		if s.Transport == "wg" {
+			hint = " — похоже, провайдер режет WireGuard (UDP) к этому адресу"
+		} else if s.Params["h2"] != "1" {
+			hint = " — похоже, провайдер режет QUIC к этому адресу"
+		}
+		msg := fmt.Sprintf("нет ответа от туннеля за %d с%s", int(timeout.Seconds()), hint)
+		Logf("   ✘ %s", msg)
+		return e.fail(nk, s, msg)
+	}
+	Logf("   туннель ответил за %d мс, дата-центр Cloudflare: %s", rtt.Milliseconds(), colo)
+
+	if !e.policy().Allows(colo) {
+		Logf("   ✘ дата-центр %s запрещён настройками — отбрасываю этот туннель", colo)
+		e.cfg.Mem.Record(nk, s.ID, false, 0)
+		e.emit("colo_blocked", s.ID, colo)
+		return outcome{coloBlocked: colo, reason: "дата-центр " + colo + " запрещён"}
+	}
+
+	if e.cfg.TCPCheck {
+		var tcpRTT time.Duration
+		var terr error
+		for i := 0; i < 3; i++ {
+			if tcpRTT, terr = e.tcpProbe(actx, e.cfg.TCPTimeout); terr == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return outcome{reason: "остановка"}
+			}
+		}
+		if terr != nil {
+			msg := "UDP через туннель идёт, а TCP — нет (туннель не пропускает интернет)"
+			Logf("   ✘ %s", msg)
+			return e.fail(nk, s, msg)
+		}
+		Logf("   ✔ TCP до 1.1.1.1:443 проходит (%d мс)", tcpRTT.Milliseconds())
+	}
+
+	e.cfg.Mem.Record(nk, s.ID, true, time.Since(start))
+	msg := ""
+	if e.soft {
+		msg = "режим «всё равно»: другого дата-центра нет"
+		Logf("   ⚠ %s", msg)
+	}
+	e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: rtt, Message: msg})
+	e.emit("connected", s.ID, colo)
+	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(start).Seconds(), s.ID, colo, rtt.Milliseconds())
+
+	bad, ticks := 0, 0
+	tk := time.NewTicker(e.cfg.ProbeEvery)
+	defer tk.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return outcome{wasUp: true, reason: "остановка"}
+		case <-e.cfg.NetChanged:
+			Logf("↻ сеть сменилась — переподключаюсь")
+			return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
+		case err := <-errc:
+			msg := "туннель закрылся"
+			if err != nil {
+				msg = err.Error()
+			}
+			Logf("✘ %s", msg)
+			e.cfg.Mem.Record(nk, s.ID, false, 0)
+			return outcome{wasUp: true, reason: msg}
+		case <-tk.C:
+			if e.cfg.NetKey() != nk {
+				Logf("↻ сеть сменилась (%s → %s) — переподключаюсь", nk, e.cfg.NetKey())
+				return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
+			}
+			ticks++
+			r, c, err := e.probe(actx, e.cfg.ProbeEvery)
+			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
+				_, err = e.tcpProbe(actx, e.cfg.TCPTimeout)
+			}
+			if err != nil {
+				bad++
+				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
+				if bad >= e.cfg.BadProbes {
+					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.emit("degraded", s.ID, "туннель перестал отвечать")
+					Logf("✘ туннель перестал отвечать — меняю стратегию")
+					return outcome{wasUp: true, reason: "туннель перестал отвечать"}
+				}
+				continue
+			}
+			bad = 0
+			if c != colo {
+				Logf("   дата-центр сменился: %s → %s", colo, c)
+				colo = c
+				if !e.policy().Allows(c) {
+					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.emit("colo_blocked", s.ID, c)
+					Logf("✘ дата-центр %s запрещён — меняю стратегию", c)
+					return outcome{wasUp: true, coloBlocked: c, reason: "дата-центр " + c + " запрещён"}
+				}
+			}
+			e.setStatus(Status{State: "up", Strategy: s.ID, Colo: colo, RTT: r, Message: e.Status().Message})
+		}
+	}
+}
+
+// Run — главный цикл: подключиться, следить, при сбое перейти на другую стратегию.
+func (e *Engine) Run(ctx context.Context) error {
+	defer e.Close()
+	go e.readTun()
+	Logf("Гидра запущена: стратегий %d, запрещённые дата-центры: %s", len(e.cfg.Strategies), policyText(e.cfg.Policy))
+
+	backoff := time.Second
+	skip := ""
+	lastNK := ""
+	blocked := map[string]time.Time{}
+	for ctx.Err() == nil {
+		select {
+		case <-e.tunDead:
+			return errors.New("TUN закрыт")
+		default:
+		}
+		nk := e.cfg.NetKey()
+		if nk != lastNK {
+			if lastNK != "" {
+				Logf("↻ сеть: %s → %s", lastNK, nk)
+			} else {
+				Logf("сеть: %s", nk)
+			}
+			lastNK = nk
+			blocked = map[string]time.Time{}
+			e.soft = false
+			skip = ""
+		}
+		cands := e.cfg.Mem.Rank(nk, e.cfg.Strategies)
+		ran, skipped := 0, 0
+		lastReason := ""
+		sawBlocked := false
+		restart := false
+		for _, s := range cands {
+			if ctx.Err() != nil {
+				break
+			}
+			if s.ID == skip {
+				continue
+			}
+			ep := s.Params["endpoint"]
+			epKey := hostOnly(ep)
+			if until, ok := blocked[epKey]; ep != "" && ok && time.Now().Before(until) {
+				skipped++
+				continue
+			}
+			ran++
+			r := e.runStrategy(ctx, nk, s)
+			if ctx.Err() != nil {
+				break
+			}
+			lastReason = r.reason
+			if r.coloBlocked != "" {
+				sawBlocked = true
+				if ep != "" {
+					blocked[epKey] = time.Now().Add(10 * time.Minute)
+					Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, r.coloBlocked)
+				}
+			}
+			if r.netChanged {
+				skip = ""
+				restart = true
+				break
+			}
+			if r.wasUp {
+				skip = s.ID
+				e.setStatus(Status{State: "reconnecting", Message: r.reason})
+				backoff = time.Second
+				restart = true
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if restart {
+			continue
+		}
+		if sawBlocked && e.cfg.SoftFallback && !e.soft {
+			e.soft = true
+			blocked = map[string]time.Time{}
+			Logf("⚠ все рабочие адреса ведут в запрещённые дата-центры; включён режим «всё равно» — принимаю любой")
+			continue
+		}
+		skip = ""
+		msg := lastReason
+		switch {
+		case ran == 0 && skipped > 0:
+			msg = "⛔ все адреса сейчас ведут в запрещённые дата-центры — жду"
+		case ran == 0:
+			msg = "нет стратегий"
+		case sawBlocked:
+			msg = "⛔ рабочие маршруты ведут только в запрещённые дата-центры"
+		}
+		Logf("✘ подключиться не удалось: %s; повтор через %s", msg, backoff)
+		e.setStatus(Status{State: "failed", Message: msg})
+		e.emit("failed", "", msg)
+		if !sleep(ctx, backoff) {
+			break
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+	return ctx.Err()
+}
+HYDRA_EOF
+
+putv "$GODIR/engine_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type fakeTun struct {
+	rd   chan []byte
+	wr   chan []byte
+	done chan struct{}
+	once sync.Once
+}
+
+func newFakeTun() *fakeTun {
+	return &fakeTun{rd: make(chan []byte, 16), wr: make(chan []byte, 64), done: make(chan struct{})}
+}
+func (f *fakeTun) Read(p []byte) (int, error) {
+	select {
+	case b := <-f.rd:
+		return copy(p, b), nil
+	case <-f.done:
+		return 0, io.EOF
+	}
+}
+func (f *fakeTun) Write(p []byte) (int, error) {
+	select {
+	case f.wr <- append([]byte(nil), p...):
+	default:
+	}
+	return len(p), nil
+}
+func (f *fakeTun) Close() error { f.once.Do(func() { close(f.done) }); return nil }
+
+// fakeRunner изображает туннель: отвечает на пробы кодом дата-центра из
+// параметров стратегии; "dieAfter" — через сколько мс перестать отвечать;
+// "dead" — не отвечать вовсе.
+func fakeRunner(started *int32) Runner {
+	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		atomic.AddInt32(started, 1)
+		t0 := time.Now()
+		buf := make([]byte, 2048)
+		for {
+			n, err := dev.ReadPacket(buf)
+			if err != nil {
+				return nil
+			}
+			if s.Params["dead"] == "1" {
+				continue
+			}
+			if d := s.Params["dieAfter"]; d != "" {
+				ms := 0
+				for _, c := range d {
+					ms = ms*10 + int(c-'0')
+				}
+				if time.Since(t0) > time.Duration(ms)*time.Millisecond {
+					continue
+				}
+			}
+			switch buf[9] {
+			case 17: // UDP — проба дата-центра
+				dev.WritePacket(buildColoReply(append([]byte(nil), buf[:n]...), s.Params["colo"]))
+			case 6: // TCP — проба SYN (RST и прочее игнорируем)
+				if s.Params["notcp"] != "1" && buf[ihlOf(buf)+13] == 0x02 {
+					dev.WritePacket(buildSynAck(append([]byte(nil), buf[:n]...)))
+				}
+			}
+		}
+	}
+}
+
+func ihlOf(b []byte) int { return int(b[0]&0x0f) * 4 }
+
+func testEngine(t *testing.T, ss []Strategy, policy *ColoPolicy, tcpCheck bool) (*Engine, context.CancelFunc, *int32) {
+	var started int32
+	cfg := DefaultEngineConfig()
+	cfg.LocalIP = net.ParseIP("172.16.0.2")
+	cfg.Strategies = ss
+	cfg.Runner = fakeRunner(&started)
+	cfg.Policy = policy
+	cfg.ProbeEvery = 40 * time.Millisecond
+	cfg.UpTimeout = 600 * time.Millisecond
+	cfg.BadProbes = 2
+	cfg.TCPCheck = tcpCheck
+	cfg.TCPTimeout = 150 * time.Millisecond
+	e := NewEngine(newFakeTun(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go e.Run(ctx)
+	return e, cancel, &started
+}
+
+func waitStatus(t *testing.T, e *Engine, what string, ok func(Status) bool) Status {
+	t.Helper()
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := e.Status(); ok(st) {
+			return st
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("не дождались: %s; статус %+v", what, e.Status())
+	return Status{}
+}
+
+func TestEngineSkipsBlockedColo(t *testing.T) {
+	ss := []Strategy{
+		{ID: "moscow", Transport: "masque", Params: map[string]string{"colo": "DME"}},
+		{ID: "helsinki", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
+	defer cancel()
+	st := waitStatus(t, e, "up через HEL", func(s Status) bool { return s.State == "up" && s.Colo == "HEL" })
+	if st.Strategy != "helsinki" {
+		t.Fatalf("ждали стратегию helsinki, получили %q", st.Strategy)
+	}
+}
+
+func TestEngineFailsOverWhenTunnelDies(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL", "dieAfter": "250"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	e, cancel, started := testEngine(t, ss, DefaultColoPolicy(), false)
+	defer cancel()
+	waitStatus(t, e, "up через a", func(s Status) bool { return s.State == "up" && s.Strategy == "a" })
+	st := waitStatus(t, e, "переход на b", func(s Status) bool { return s.State == "up" && s.Strategy == "b" })
+	if st.Colo != "FRA" || atomic.LoadInt32(started) < 2 {
+		t.Fatalf("неверное состояние после сбоя: %+v", st)
+	}
+}
+
+func TestEngineReportsFailureWhenEverythingBlocked(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "DME"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"dead": "1"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), false)
+	defer cancel()
+	waitStatus(t, e, "state=failed", func(s Status) bool { return s.State == "failed" })
+}
+
+func TestEngineRequiresRealTCP(t *testing.T) {
+	ss := []Strategy{
+		{ID: "udp-only", Transport: "masque", Params: map[string]string{"colo": "HEL", "notcp": "1"}},
+		{ID: "full", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	e, cancel, _ := testEngine(t, ss, DefaultColoPolicy(), true)
+	defer cancel()
+	st := waitStatus(t, e, "up через full", func(s Status) bool { return s.State == "up" && s.Strategy == "full" })
+	if st.Colo != "FRA" {
+		t.Fatalf("неверный дата-центр: %+v", st)
+	}
+}
+
+func TestEngineReactsToNetworkChange(t *testing.T) {
+	ss := []Strategy{
+		{ID: "a", Transport: "masque", Params: map[string]string{"colo": "HEL"}},
+		{ID: "b", Transport: "masque", Params: map[string]string{"colo": "FRA"}},
+	}
+	var started int32
+	cfg := DefaultEngineConfig()
+	cfg.LocalIP = net.ParseIP("172.16.0.2")
+	cfg.Strategies = ss
+	cfg.Runner = fakeRunner(&started)
+	cfg.Policy = DefaultColoPolicy()
+	cfg.ProbeEvery = time.Hour // сам не заметит — только по сигналу
+	cfg.UpTimeout = 600 * time.Millisecond
+	cfg.TCPCheck = false
+	changed := make(chan struct{}, 1)
+	cfg.NetChanged = changed
+	e := NewEngine(newFakeTun(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+
+	waitStatus(t, e, "up", func(s Status) bool { return s.State == "up" })
+	before := atomic.LoadInt32(&started)
+	changed <- struct{}{}
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt32(&started) <= before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&started) <= before {
+		t.Fatal("после смены сети переподключения не произошло")
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/events.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"time"
+)
+
+// Cause — почему сломалось. Нужен для понятного статуса и точечного лечения.
+type Cause int
+
+const (
+	CauseUnknown Cause = iota
+	CauseNetwork       // сети нет вообще
+	CauseDNS
+	CauseDPI      // сеть есть, но наш трафик режут
+	CauseEndpoint // сеть и DNS в порядке, сервер не отвечает
+)
+
+func (c Cause) String() string {
+	switch c {
+	case CauseNetwork:
+		return "нет сети"
+	case CauseDNS:
+		return "сломан DNS"
+	case CauseDPI:
+		return "оператор режет трафик (DPI)"
+	case CauseEndpoint:
+		return "сервер не отвечает"
+	}
+	return "неизвестно"
+}
+
+// Diagnoser определяет причину сбоя (реальная реализация — позже).
+type Diagnoser interface {
+	Diagnose(ctx context.Context) Cause
+}
+
+type nopDiagnoser struct{}
+
+func (nopDiagnoser) Diagnose(context.Context) Cause { return CauseUnknown }
+
+// Event — то, что UI показывает человеку.
+type Event struct {
+	Kind     string // connecting | connected | degraded | failover | failed
+	Strategy string
+	Cause    Cause
+	Msg      string
+	At       time.Time
+}
+HYDRA_EOF
+
+putv "$GODIR/front.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"encoding/binary"
+	"io"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+)
+
+// Front — постоянный локальный SOCKS5-вход. Android-часть (hev-socks5-tunnel)
+// всегда ходит в один и тот же адрес, а туннель под ним Гидра меняет на лету:
+// новые соединения сразу идут через новый туннель.
+type Front struct {
+	mu          sync.RWMutex
+	cur         Tunnel
+	ln          net.Listener
+	DialTimeout time.Duration
+}
+
+func NewFront() *Front { return &Front{DialTimeout: 10 * time.Second} }
+
+// Set подставляет активный туннель (nil — туннеля нет).
+func (f *Front) Set(t Tunnel) {
+	f.mu.Lock()
+	f.cur = t
+	f.mu.Unlock()
+}
+
+func (f *Front) tunnel() Tunnel {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.cur
+}
+
+// Listen начинает слушать addr (например "127.0.0.1:0") и возвращает реальный адрес.
+func (f *Front) Listen(addr string) (string, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return "", err
+	}
+	f.ln = ln
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go f.handle(c)
+		}
+	}()
+	return ln.Addr().String(), nil
+}
+
+func (f *Front) Close() error {
+	if f.ln != nil {
+		return f.ln.Close()
+	}
+	return nil
+}
+
+func socksReply(c net.Conn, code byte) error {
+	_, err := c.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0})
+	return err
+}
+
+func (f *Front) handle(c net.Conn) {
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+
+	var hdr [2]byte
+	if _, err := io.ReadFull(c, hdr[:]); err != nil || hdr[0] != 5 {
+		return
+	}
+	if _, err := io.ReadFull(c, make([]byte, hdr[1])); err != nil {
+		return
+	}
+	if _, err := c.Write([]byte{5, 0}); err != nil {
+		return
+	}
+
+	var req [4]byte
+	if _, err := io.ReadFull(c, req[:]); err != nil || req[0] != 5 {
+		return
+	}
+	var host string
+	switch req[3] {
+	case 1:
+		var b [4]byte
+		if _, err := io.ReadFull(c, b[:]); err != nil {
+			return
+		}
+		host = net.IP(b[:]).String()
+	case 3:
+		var l [1]byte
+		if _, err := io.ReadFull(c, l[:]); err != nil {
+			return
+		}
+		b := make([]byte, l[0])
+		if _, err := io.ReadFull(c, b); err != nil {
+			return
+		}
+		host = string(b)
+	case 4:
+		var b [16]byte
+		if _, err := io.ReadFull(c, b[:]); err != nil {
+			return
+		}
+		host = net.IP(b[:]).String()
+	default:
+		socksReply(c, 8)
+		return
+	}
+	var pb [2]byte
+	if _, err := io.ReadFull(c, pb[:]); err != nil {
+		return
+	}
+	port := binary.BigEndian.Uint16(pb[:])
+
+	if req[1] != 1 { // пока только CONNECT; UDP ASSOCIATE — следующим шагом
+		socksReply(c, 7)
+		return
+	}
+	t := f.tunnel()
+	if t == nil {
+		socksReply(c, 3) // network unreachable
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), f.DialTimeout)
+	up, err := t.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
+	cancel()
+	if err != nil {
+		socksReply(c, 5)
+		return
+	}
+	defer up.Close()
+	c.SetDeadline(time.Time{})
+	if socksReply(c, 0) != nil {
+		return
+	}
+	pipe(c, up)
+}
+
+func pipe(a, b net.Conn) {
+	done := make(chan struct{}, 2)
+	cp := func(dst, src net.Conn) {
+		io.Copy(dst, src)
+		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		} else {
+			dst.Close()
+		}
+		done <- struct{}{}
+	}
+	go cp(a, b)
+	go cp(b, a)
+	<-done
+	<-done
+}
+HYDRA_EOF
+
+putv "$GODIR/front_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"io"
+	"net"
+	"strconv"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func (t *fakeTunnel) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	atomic.AddInt32(&t.dials, 1)
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
+}
+
+func echoServer(t *testing.T) string {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { io.Copy(c, c); c.Close() }()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// socksConnect делает рукопожатие SOCKS5 и возвращает соединение и код ответа.
+func socksConnect(t *testing.T, proxy, target string) (net.Conn, byte) {
+	c, err := net.DialTimeout("tcp", proxy, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	c.Write([]byte{5, 1, 0})
+	var r [2]byte
+	if _, err := io.ReadFull(c, r[:]); err != nil || r[0] != 5 || r[1] != 0 {
+		t.Fatalf("рукопожатие: %v %v", r, err)
+	}
+	host, ps, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(ps)
+	req := []byte{5, 1, 0, 1}
+	req = append(req, net.ParseIP(host).To4()...)
+	req = append(req, byte(port>>8), byte(port))
+	c.Write(req)
+	var rep [10]byte
+	if _, err := io.ReadFull(c, rep[:]); err != nil {
+		t.Fatalf("ответ: %v", err)
+	}
+	return c, rep[1]
+}
+
+func TestFrontSwapsTunnels(t *testing.T) {
+	echo := echoServer(t)
+	front := NewFront()
+	addr, err := front.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { front.Close() })
+
+	t1, t2 := newFakeTunnel(0), newFakeTunnel(0)
+
+	front.Set(t1)
+	c, code := socksConnect(t, addr, echo)
+	if code != 0 {
+		t.Fatalf("код %d", code)
+	}
+	c.Write([]byte("ping"))
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "ping" {
+		t.Fatalf("эхо: %q %v", buf, err)
+	}
+	if atomic.LoadInt32(&t1.dials) != 1 {
+		t.Fatal("соединение должно идти через t1")
+	}
+
+	front.Set(t2) // «горячая» подмена
+	if _, code := socksConnect(t, addr, echo); code != 0 {
+		t.Fatalf("код %d", code)
+	}
+	if atomic.LoadInt32(&t2.dials) != 1 || atomic.LoadInt32(&t1.dials) != 1 {
+		t.Fatal("новое соединение должно идти через t2")
+	}
+
+	front.Set(nil)
+	if _, code := socksConnect(t, addr, echo); code != 3 {
+		t.Fatalf("без туннеля ждали код 3, получили %d", code)
+	}
+}
+HYDRA_EOF
+
+putv gradle.properties <<'HYDRA_EOF'
+org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+HYDRA_EOF
+
+putv "$GODIR/journal.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Журнал Гидры: подробно и по-русски, что происходит и почему.
+// Показывается в приложении (вкладка «Проверка»).
+
+type journalBuf struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+var jr = &journalBuf{max: 1200}
+
+// Logf добавляет строку в журнал.
+func Logf(format string, a ...any) {
+	line := time.Now().Format("15:04:05.000") + "  " + fmt.Sprintf(format, a...)
+	jr.mu.Lock()
+	jr.lines = append(jr.lines, line)
+	if len(jr.lines) > jr.max {
+		jr.lines = append([]string(nil), jr.lines[len(jr.lines)-jr.max:]...)
+	}
+	jr.mu.Unlock()
+}
+
+// JournalText возвращает последние n строк (0 — все), новые в конце.
+func JournalText(n int) string {
+	jr.mu.Lock()
+	defer jr.mu.Unlock()
+	ls := jr.lines
+	if n > 0 && len(ls) > n {
+		ls = ls[len(ls)-n:]
+	}
+	return strings.Join(ls, "\n")
+}
+
+func JournalClear() {
+	jr.mu.Lock()
+	jr.lines = nil
+	jr.mu.Unlock()
+}
+
+// JournalWriter — io.Writer для стандартного log: строки клиента MASQUE
+// (usque) тоже попадут в журнал.
+type JournalWriter struct{}
+
+func (JournalWriter) Write(p []byte) (int, error) {
+	for _, l := range strings.Split(strings.TrimRight(string(p), "\r\n"), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.Contains(l, "Hop Limit too small") {
+			continue // служебные пакеты с hop limit 1 — не интересны
+		}
+		Logf("· %s", l)
+	}
+	return len(p), nil
+}
+HYDRA_EOF
+
+putv "$GODIR/masque_runner.go" <<'HYDRA_EOF'
+//go:build usque
+
+package hydra
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"math/big"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/inipew/usque/api"
+	"github.com/inipew/usque/masque"
+)
+
+// Этот файл собирается только с тегом usque: он подтягивает клиент MASQUE из
+// проекта usque (MIT, автор Diniboy1123). Без тега ядро и тесты не требуют
+// сетевых зависимостей.
+
+func parsePeerKey(s string) (*ecdsa.PublicKey, error) {
+	s = strings.TrimSpace(s)
+	var der []byte
+	if blk, _ := pem.Decode([]byte(s)); blk != nil {
+		der = blk.Bytes
+	} else {
+		var err error
+		if der, err = base64.StdEncoding.DecodeString(s); err != nil {
+			return nil, fmt.Errorf("ключ сервера: %w", err)
+		}
+	}
+	pub, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("ключ сервера: %w", err)
+	}
+	ec, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("ключ сервера не ECDSA")
+	}
+	return ec, nil
+}
+
+func selfSignedCert(priv *ecdsa.PrivateKey) ([]byte, error) {
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	tpl := &x509.Certificate{
+		SerialNumber: serial.Add(serial, big.NewInt(1)),
+		Subject:      pkix.Name{CommonName: "hydra"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	return x509.CreateCertificate(rand.Reader, tpl, tpl, &priv.PublicKey, priv)
+}
+
+// NewMasqueRunner создаёт Runner, который держит туннель WARP средствами usque.
+func NewMasqueRunner(acc *Account) (Runner, error) {
+	keyDER, err := base64.StdEncoding.DecodeString(acc.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("ключ аккаунта: %w", err)
+	}
+	priv, err := x509.ParseECPrivateKey(keyDER)
+	if err != nil {
+		return nil, fmt.Errorf("ключ аккаунта: %w", err)
+	}
+	peer, err := parsePeerKey(acc.PeerPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		cert, err := selfSignedCert(priv)
+		if err != nil {
+			return err
+		}
+		sni := s.Params["sni"]
+		if sni == "" {
+			sni = defaultMasqueSNI
+		}
+		tlsCfg, err := masque.PrepareTlsConfig(priv, peer, [][]byte{cert}, sni, true)
+		if err != nil {
+			return err
+		}
+		host, portStr, err := net.SplitHostPort(s.Params["endpoint"])
+		if err != nil {
+			return err
+		}
+		port := 443
+		fmt.Sscanf(portStr, "%d", &port)
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return errors.New("адрес сервера не IP: " + host)
+		}
+		h2 := s.Params["h2"] == "1"
+		if !h2 {
+			// быстрая проверка маршрута: «network is unreachable» (например, нет IPv6) — сразу отказ
+			c, derr := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
+			if derr != nil {
+				Logf("   ✘ нет маршрута до %s: %v", host, derr)
+				return fmt.Errorf("нет маршрута до %s", host)
+			}
+			c.Close()
+		}
+		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
+		if h2 {
+			ep = &net.TCPAddr{IP: ip, Port: port}
+		} else if fsni := s.Params["fake"]; fsni != "" {
+			// фейковые QUIC-пакеты с малым TTL перед рукопожатием (как у Zarp)
+			var fk FakeSpec
+			fk.TTL = atoiDefault(s.Params["fttl"], 5)
+			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
+				if p, err := BuildFakeQUICInitial(fsni, atoiDefault(s.Params["fsize"], 1357)); err == nil {
+					fk.Payloads = append(fk.Payloads, p)
+				}
+			}
+			if len(fk.Payloads) > 0 {
+				relay, err := StartUDPRelay(&net.UDPAddr{IP: ip, Port: port}, fk)
+				if err != nil {
+					return err
+				}
+				defer relay.Close()
+				ep = relay.Addr()
+			}
+		}
+		Logf("   запускаю клиент MASQUE (usque)…")
+		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
+			TLSConfig:         tlsCfg,
+			KeepalivePeriod:   30 * time.Second,
+			InitialPacketSize: 1242,
+			Endpoint:          ep,
+			Device:            dev,
+			MTU:               1280,
+			ReconnectDelay:    time.Second,
+			AlwaysReconnect:   true,
+			UseHTTP2:          h2,
+		})
+		return ctx.Err()
+	}, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/memory.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/json"
+	"math"
+	"os"
+	"sort"
+	"sync"
+	"time"
+)
+
+type stat struct {
+	OK     int       `json:"ok"`
+	Fail   int       `json:"fail"`
+	EWMAms float64   `json:"ewma_ms"`
+	LastOK time.Time `json:"last_ok"`
+}
+
+// Memory — «память Гидры»: что работало в какой сети.
+// Ключ сети (net) выдаёт Android-часть: например "wifi:<hash>" или "cell:25001".
+type Memory struct {
+	mu      sync.Mutex
+	path    string
+	pending bool // отложенное сохранение уже запланировано
+	Nets map[string]map[string]*stat `json:"nets"`
+}
+
+func LoadMemory(path string) (*Memory, error) {
+	m := &Memory{path: path, Nets: map[string]map[string]*stat{}}
+	if path == "" {
+		return m, nil
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return m, nil
+	}
+	if err != nil {
+		return m, err
+	}
+	if err := json.Unmarshal(b, m); err != nil {
+		m.Nets = map[string]map[string]*stat{}
+		return m, err
+	}
+	if m.Nets == nil {
+		m.Nets = map[string]map[string]*stat{}
+	}
+	return m, nil
+}
+
+func (m *Memory) Save() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.path == "" {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	tmp := m.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.path)
+}
+
+func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := m.Nets[net]
+	if n == nil {
+		n = map[string]*stat{}
+		m.Nets[net] = n
+	}
+	s := n[id]
+	if s == nil {
+		s = &stat{}
+		n[id] = s
+	}
+	if ok {
+		s.OK++
+		s.LastOK = time.Now()
+		ms := float64(d.Milliseconds())
+		if s.EWMAms == 0 {
+			s.EWMAms = ms
+		} else {
+			s.EWMAms = 0.7*s.EWMAms + 0.3*ms
+		}
+	} else {
+		s.Fail++
+	}
+	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
+		s.OK /= 2
+		s.Fail /= 2
+	}
+	// Сохраняем сразу после результата (с паузой, чтобы не писать на каждый чих):
+	// если систему убьёт процесс, накопленный опыт не пропадёт.
+	if m.path != "" && !m.pending {
+		m.pending = true
+		time.AfterFunc(2*time.Second, func() {
+			m.mu.Lock()
+			m.pending = false
+			m.mu.Unlock()
+			_ = m.Save()
+		})
+	}
+}
+
+// Worked: стратегия уже хотя бы раз подключалась в этой сети.
+func (m *Memory) Worked(net, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	return st != nil && st.OK > 0
+}
+
+// Rank сортирует стратегии: лучшие для этой сети — первыми.
+// Неизвестные получают нейтральный балл и пробуются после проверенных.
+func (m *Memory) Rank(net string, all []Strategy) []Strategy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := append([]Strategy(nil), all...)
+	score := func(s Strategy) float64 {
+		st := m.Nets[net][s.ID]
+		if st == nil {
+			return 0.5
+		}
+		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
+		pen := math.Min(st.EWMAms/5000, 0.3)
+		bonus := 0.0
+		if time.Since(st.LastOK) < 24*time.Hour {
+			bonus = 0.1
+		}
+		return rate - pen + bonus
+	}
+	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
+	return out
+}
+HYDRA_EOF
+
+putv "$GODIR/mobile/mobile.go" <<'HYDRA_EOF'
+// Package mobile — тонкая обвязка для gomobile: то, что видно из Kotlin.
+// Только простые типы (строки), чтобы привязка собиралась без сюрпризов.
+package mobile
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	hydra "hydra/core"
+)
+
+const version = "0.6.0"
+
+// Version проверяет, что Go-ядро собрано и вызывается из Android.
+func Version() string {
+	cfg := hydra.DefaultConfig()
+	return fmt.Sprintf("hydra-core %s (probe %s)", version, cfg.ProbeEvery)
+}
+
+// DefaultBlockedColos — запрещённые по умолчанию дата-центры ("DME,LED,...").
+func DefaultBlockedColos() string {
+	return strings.Join(hydra.DefaultColoPolicy().Block, ",")
+}
+
+// NormalizeColos приводит ввод пользователя к виду "DME,LED,FRA".
+func NormalizeColos(s string) string {
+	return strings.Join(hydra.ParseColoList(s), ",")
+}
+
+func init() {
+	// Без этого Go на Android не умеет разрешать имена (нет resolv.conf).
+	hydra.SetSystemDNS(nil)
+	// Строки клиента MASQUE (usque) тоже попадают в журнал приложения.
+	log.SetFlags(0)
+	log.SetOutput(hydra.JournalWriter{})
+}
+
+// GetJournal возвращает последние n строк журнала (0 — все), новые в конце.
+func GetJournal(n int) string { return hydra.JournalText(n) }
+
+// ClearJournal очищает журнал.
+func ClearJournal() { hydra.JournalClear() }
+
+// SetDNS принимает DNS-серверы текущей сети от Android ("ip1,ip2,...").
+func SetDNS(csv string) {
+	hydra.SetSystemDNS(strings.Split(csv, ","))
+}
+
+func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
+func wgPath(dir string) string      { return filepath.Join(dir, "wg.json") }
+
+// AccountID возвращает ID сохранённого аккаунта или "".
+func AccountID(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.ID
+}
+
+// RegisterReport регистрирует аккаунт WARP для MASQUE (если его ещё нет). Первая строка
+// отчёта: "OK" или "FAIL <вид>", вид: rate_limited | blocked | dns | api | storage.
+func RegisterReport(dir string) string { return registerReport(accountPath(dir), false) }
+
+// RegisterWireguardReport создаёт обычную конфигурацию WARP (WireGuard), как wgcf.
+func RegisterWireguardReport(dir string) string { return registerReport(wgPath(dir), true) }
+
+func registerReport(path string, wg bool) string {
+	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
+		return "OK\nуже есть: " + a.ID
+	}
+	var sb strings.Builder
+	r := hydra.NewRegistrar()
+	r.WG = wg
+	r.Log = func(s string) {
+		sb.WriteString(s + "\n")
+		hydra.Logf("регистрация: %s", s)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	acc, err := r.Register(ctx)
+	if err != nil {
+		kind := "blocked"
+		var re *hydra.RegError
+		if errors.As(err, &re) {
+			kind = re.Kind
+		}
+		return fmt.Sprintf("FAIL %s\n%s%v", kind, sb.String(), err)
+	}
+	if err := acc.Save(path); err != nil {
+		return "FAIL storage\n" + err.Error()
+	}
+	return "OK\n" + sb.String() + "id: " + acc.ID
+}
+
+// DeleteAccount удаляет аккаунт MASQUE (для «Сбросить ключи»).
+func DeleteAccount(dir string) { os.Remove(accountPath(dir)) }
+
+// ExportAccount возвращает строку для переноса аккаунта или "".
+func ExportAccount(dir string) string {
+	a, err := hydra.LoadAccount(accountPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.Export()
+}
+
+// ImportAccount сохраняет аккаунт из строки; пустой ответ — успех.
+func ImportAccount(dir, text string) string {
+	a, err := hydra.ImportAccount(text)
+	if err != nil {
+		return err.Error()
+	}
+	if err := a.Save(accountPath(dir)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func stripMask(a string) string { return strings.TrimSpace(strings.Split(a, "/")[0]) }
+
+// AccountAddr4 — IPv4-адрес устройства внутри туннеля ("" если аккаунта нет).
+func AccountAddr4(dir string) string {
+	a := primaryAccount(dir)
+	if a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV4)
+}
+
+// primaryAccount: аккаунт MASQUE, а если его нет — конфигурация WireGuard.
+func primaryAccount(dir string) *hydra.Account {
+	if a, err := hydra.LoadAccount(accountPath(dir)); err == nil && a != nil {
+		return a
+	}
+	if a, err := hydra.LoadAccount(wgPath(dir)); err == nil && a != nil {
+		return a
+	}
+	return nil
+}
+
+// AccountAddr6 — IPv6-адрес устройства внутри туннеля.
+func AccountAddr6(dir string) string {
+	a := primaryAccount(dir)
+	if a == nil {
+		return ""
+	}
+	return stripMask(a.AddrV6)
+}
+
+// WireguardAccountID — ID конфигурации WireGuard ("custom" для импортированной) или "".
+func WireguardAccountID(dir string) string {
+	a, err := hydra.LoadAccount(wgPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.ID
+}
+
+// ExportWireguardConfig — текст .conf для других приложений (WireGuard/AmneziaWG) или "".
+func ExportWireguardConfig(dir string) string {
+	a, err := hydra.LoadAccount(wgPath(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.WGConfig()
+}
+
+// ImportWireguardConfig сохраняет свою конфигурацию (.conf); пустой ответ — успех.
+func ImportWireguardConfig(dir, text string) string {
+	a, err := hydra.ParseWGConfig(text)
+	if err != nil {
+		return err.Error()
+	}
+	if err := a.Save(wgPath(dir)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
+func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }
+HYDRA_EOF
+
+putv "$GODIR/mobile/policy.go" <<'HYDRA_EOF'
+package mobile
+
+import (
+	"strings"
+	"sync"
+
+	hydra "hydra/core"
+)
+
+var (
+	polMu    sync.Mutex
+	polBlock = ""
+	polAllow = ""
+	polSoft  = false
+	polProto = "auto"
+	netKey   = "default"
+	polSNI   = "" // свой SNI для туннеля MASQUE ("" — по умолчанию)
+	polEP    = "" // свой адрес сервера "IP" или "IP:порт" ("" — не задан)
+	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
+	netEvents = make(chan struct{}, 1)
+)
+
+// SetColoPolicy задаёт запрещённые и (необязательно) единственно разрешённые
+// дата-центры Cloudflare: "DME,LED" и "HEL,FRA".
+func SetColoPolicy(block, allow string) {
+	polMu.Lock()
+	polBlock, polAllow = block, allow
+	polMu.Unlock()
+}
+
+// SetFallback: если все адреса ведут в запрещённый дата-центр — всё равно подключиться.
+func SetFallback(on bool) {
+	polMu.Lock()
+	polSoft = on
+	polMu.Unlock()
+}
+
+// SetProtocol выбирает протокол: "auto" (оба, запасной подхватывает), "masque" или "wg".
+func SetProtocol(p string) {
+	polMu.Lock()
+	polProto = strings.TrimSpace(p)
+	polMu.Unlock()
+}
+
+func currentProtocol() string {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polProto
+}
+
+// SetNetKey сообщает ядру, в какой сети телефон ("wifi", "cell"). Смена ключа
+// сразу будит движок.
+func SetNetKey(k string) {
+	k = strings.TrimSpace(k)
+	polMu.Lock()
+	changed := k != netKey
+	netKey = k
+	polMu.Unlock()
+	if changed {
+		select {
+		case netEvents <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func currentNetKey() string {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return netKey
+}
+
+func currentFallback() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polSoft
+}
+
+func currentPolicy() *hydra.ColoPolicy {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return &hydra.ColoPolicy{Block: hydra.ParseColoList(polBlock), Allow: hydra.ParseColoList(polAllow)}
+}
+
+// SetCustomSNI переопределяет SNI в TLS-рукопожатии туннеля MASQUE ("" — сброс).
+func SetCustomSNI(s string) {
+	polMu.Lock()
+	polSNI = strings.TrimSpace(s)
+	polMu.Unlock()
+}
+
+// SetCustomEndpoint задаёт свой адрес сервера MASQUE ("IP" или "IP:порт"): он пробуется первым.
+func SetCustomEndpoint(s string) {
+	polMu.Lock()
+	polEP = strings.TrimSpace(s)
+	polMu.Unlock()
+}
+
+func currentCustom() (sni, ep string) {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polSNI, polEP
+}
+HYDRA_EOF
+
+putv "$GODIR/mobile/vpn_stub.go" <<'HYDRA_EOF'
+//go:build !usque
+
+package mobile
+
+// Сборка без клиента MASQUE (без тега usque): подключение недоступно.
+
+func StartTunnel(dir string, tunFd int) string {
+	return "сборка без движка MASQUE (нет тега usque)"
+}
+
+func StopTunnel() {}
+
+func EngineStatus() string { return "off||||" }
+HYDRA_EOF
+
+putv "$GODIR/mobile/vpn_usque.go" <<'HYDRA_EOF'
+//go:build usque
+
+package mobile
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	hydra "hydra/core"
+)
+
+var (
+	vpnMu     sync.Mutex
+	vpnEngine *hydra.Engine
+	vpnCancel context.CancelFunc
+)
+
+// StartTunnel запускает Гидру на TUN-интерфейсе, который создал Android (tunFd).
+// Пустая строка — успех, иначе текст ошибки.
+func StartTunnel(dir string, tunFd int) string {
+	vpnMu.Lock()
+	defer vpnMu.Unlock()
+	if vpnEngine != nil {
+		return "уже запущено"
+	}
+	macc, _ := hydra.LoadAccount(accountPath(dir))
+	wacc, _ := hydra.LoadAccount(wgPath(dir))
+	if macc == nil && wacc == nil {
+		return "нет аккаунта WARP"
+	}
+	runners := map[string]hydra.Runner{}
+	var strategies []hydra.Strategy
+	if macc != nil {
+		r, err := hydra.NewMasqueRunner(macc)
+		if err != nil {
+			return err.Error()
+		}
+		runners["masque"] = r
+	}
+	if wacc != nil {
+		r, err := hydra.NewWGRunner(wacc)
+		if err != nil {
+			return err.Error()
+		}
+		runners["wg"] = r
+	}
+	var mS, wS []hydra.Strategy
+	if macc != nil {
+		mS = hydra.MasqueStrategies(macc)
+		sni, cep := currentCustom()
+		if cep != "" {
+			mS = append(hydra.CustomEndpointStrategies(cep), mS...) // свой адрес — первым
+		}
+		if sni != "" {
+			for i := range mS {
+				mS[i].Params["sni"] = sni
+			}
+		}
+	}
+	if wacc != nil {
+		wS = hydra.WGStrategies(wacc)
+	}
+	switch currentProtocol() {
+	case "masque":
+		if len(mS) > 0 {
+			wS = nil
+		}
+	case "wg":
+		if len(wS) > 0 {
+			mS = nil
+		}
+	}
+	strategies = hydra.Interleave(mS, wS, 3)
+	runner := func(ctx context.Context, d hydra.PacketDevice, s hydra.Strategy) error {
+		r := runners[s.Transport]
+		if r == nil {
+			return fmt.Errorf("нет транспорта %q", s.Transport)
+		}
+		return r(ctx, d, s)
+	}
+	acc := primaryAccount(dir)
+	ip := net.ParseIP(strings.Split(acc.AddrV4, "/")[0])
+	if ip == nil {
+		return "в аккаунте нет IPv4-адреса"
+	}
+	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
+
+	cfg := hydra.DefaultEngineConfig()
+	cfg.LocalIP = ip
+	cfg.Strategies = strategies
+	cfg.Runner = runner
+	cfg.Policy = currentPolicy()
+	cfg.Mem = mem
+	cfg.NetKey = currentNetKey
+	cfg.NetChanged = netEvents
+	cfg.SoftFallback = currentFallback()
+	cfg.DropV6 = stripMask(acc.AddrV6) == ""
+
+	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	vpnEngine, vpnCancel = e, cancel
+	go func() {
+		e.Run(ctx)
+		mem.Save()
+		vpnMu.Lock()
+		if vpnEngine == e {
+			vpnEngine, vpnCancel = nil, nil
+		}
+		vpnMu.Unlock()
+	}()
+	return ""
+}
+
+// StopTunnel останавливает Гидру и закрывает TUN.
+func StopTunnel() {
+	vpnMu.Lock()
+	c, e := vpnCancel, vpnEngine
+	vpnMu.Unlock()
+	if c != nil {
+		c()
+	}
+	if e != nil {
+		e.Close()
+	}
+}
+
+// EngineStatus: "состояние|стратегия|дата-центр|задержка_мс|сообщение".
+// Состояния: off, connecting, up, reconnecting, failed.
+func EngineStatus() string {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e == nil {
+		return "off||||"
+	}
+	st := e.Status()
+	rx, tx := e.Traffic()
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d", st.State, st.Strategy, st.Colo,
+		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"), rx, tx)
+}
+HYDRA_EOF
+
+putv "$GODIR/orchestrator.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Stagger       time.Duration // пауза между стартами кандидатов в гонке
+	DialTimeout   time.Duration
+	ProbeEvery    time.Duration
+	BadProbes     int     // сколько плохих проб подряд = деградация
+	MaxRTTFactor  float64 // во сколько раз RTT может вырасти от базового
+	MaxLoss       float64
+	StandbyWait   time.Duration // сколько ждать резерв при сбое
+	Colo          *ColoPolicy   // политика дата-центров (nil — без ограничений)
+}
+
+func DefaultConfig() Config {
+	return Config{
+		Stagger:      300 * time.Millisecond,
+		DialTimeout:  10 * time.Second,
+		ProbeEvery:   5 * time.Second,
+		BadProbes:    3,
+		MaxRTTFactor: 3,
+		MaxLoss:      0.2,
+		StandbyWait:  2 * time.Second,
+		Colo:         DefaultColoPolicy(),
+	}
+}
+
+var errNoStrategies = errors.New("нет доступных стратегий")
+
+type Orchestrator struct {
+	cfg    Config
+	mem    *Memory
+	ts     map[string]Transport
+	order  []Transport
+	diag   Diagnoser
+	events chan Event
+	front  *Front
+}
+
+func New(cfg Config, mem *Memory, ts []Transport, d Diagnoser) *Orchestrator {
+	if d == nil {
+		d = nopDiagnoser{}
+	}
+	o := &Orchestrator{cfg: cfg, mem: mem, ts: map[string]Transport{}, order: ts, diag: d,
+		events: make(chan Event, 64), front: NewFront()}
+	for _, t := range ts {
+		o.ts[t.Name()] = t
+	}
+	return o
+}
+
+func (o *Orchestrator) Events() <-chan Event { return o.events }
+
+// Front — постоянный локальный SOCKS5-вход; туннель под ним меняется на лету.
+func (o *Orchestrator) Front() *Front { return o.front }
+
+func (o *Orchestrator) emit(kind, strategy string, c Cause, msg string) {
+	select {
+	case o.events <- Event{Kind: kind, Strategy: strategy, Cause: c, Msg: msg, At: time.Now()}:
+	default: // UI не успевает — не блокируем ядро
+	}
+}
+
+func (o *Orchestrator) candidates(net, skip string) []Strategy {
+	var all []Strategy
+	for _, t := range o.order {
+		for _, s := range t.Strategies() {
+			if s.ID != skip {
+				all = append(all, s)
+			}
+		}
+	}
+	return o.mem.Rank(net, all)
+}
+
+type dialRes struct {
+	t    Tunnel
+	s    Strategy
+	d    time.Duration
+	err  error
+	colo string
+}
+
+func drain(res <-chan dialRes, n int) {
+	for i := 0; i < n; i++ {
+		if r := <-res; r.err == nil && r.t != nil {
+			r.t.Close()
+		}
+	}
+}
+
+// checkColo спрашивает у туннеля, через какой дата-центр он идёт, и отбрасывает
+// запрещённые политикой. Туннели без ColoReporter пропускаются без проверки.
+func (o *Orchestrator) checkColo(ctx context.Context, t Tunnel) (Tunnel, string, error) {
+	rep, ok := t.(ColoReporter)
+	if !ok || o.cfg.Colo == nil {
+		return t, "", nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	colo, err := rep.Colo(cctx)
+	cancel()
+	if err != nil {
+		return t, "", nil // не смогли узнать — не блокируем
+	}
+	if !o.cfg.Colo.Allows(colo) {
+		t.Close()
+		return nil, colo, &ColoError{Colo: colo}
+	}
+	return t, colo, nil
+}
+
+// race — «гонка стратегий»: кандидаты стартуют по очереди с небольшим
+// сдвигом, побеждает первый рабочий, остальные отменяются.
+func (o *Orchestrator) race(ctx context.Context, net, skip string) (Tunnel, Strategy, error) {
+	cands := o.candidates(net, skip)
+	if len(cands) == 0 {
+		return nil, Strategy{}, errNoStrategies
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	res := make(chan dialRes, len(cands))
+	started, finished := 0, 0
+	var blockedColos []string
+	start := func() {
+		s := cands[started]
+		started++
+		go func() {
+			t0 := time.Now()
+			dctx, c := context.WithTimeout(rctx, o.cfg.DialTimeout)
+			defer c()
+			t, err := o.ts[s.Transport].Dial(dctx, s)
+			colo := ""
+			if err == nil {
+				t, colo, err = o.checkColo(rctx, t)
+			}
+			res <- dialRes{t, s, time.Since(t0), err, colo}
+		}()
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			go drain(res, started-finished)
+			return nil, Strategy{}, ctx.Err()
+		case <-timer.C:
+			if started < len(cands) {
+				start()
+				timer.Reset(o.cfg.Stagger)
+			}
+		case r := <-res:
+			finished++
+			if r.err == nil {
+				o.mem.Record(net, r.s.ID, true, r.d)
+				if r.colo != "" {
+					o.emit("colo", r.s.ID, CauseUnknown, r.colo)
+				}
+				cancel()
+				go drain(res, started-finished)
+				return r.t, r.s, nil
+			}
+			if ctx.Err() == nil {
+				o.mem.Record(net, r.s.ID, false, r.d)
+			}
+			var ce *ColoError
+			if errors.As(r.err, &ce) {
+				blockedColos = append(blockedColos, ce.Colo)
+				o.emit("colo_blocked", r.s.ID, CauseUnknown, ce.Colo)
+			}
+			if finished == len(cands) {
+				if len(blockedColos) > 0 {
+					return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали (запрещённые дата-центры: %s)",
+						len(cands), strings.Join(blockedColos, ", "))
+				}
+				return nil, Strategy{}, fmt.Errorf("все %d стратегий не сработали", len(cands))
+			}
+			if finished == started && started < len(cands) {
+				start() // ничего не бежит — не ждём паузу
+				timer.Reset(o.cfg.Stagger)
+			}
+		}
+	}
+}
+
+// watch следит за качеством. Возвращает причину и флаг «сменилась сеть».
+func (o *Orchestrator) watch(ctx context.Context, netKey func() string, net string, t Tunnel) (string, bool) {
+	tk := time.NewTicker(o.cfg.ProbeEvery)
+	defer tk.Stop()
+	var base time.Duration
+	bad := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return "остановка", false
+		case <-t.Done():
+			return "туннель закрылся", false
+		case <-tk.C:
+			if netKey() != net {
+				return "сменилась сеть", true
+			}
+			pctx, c := context.WithTimeout(ctx, o.cfg.ProbeEvery)
+			q, err := t.Probe(pctx)
+			c()
+			degraded := err != nil || q.Loss > o.cfg.MaxLoss ||
+				(base > 0 && float64(q.RTT) > float64(base)*o.cfg.MaxRTTFactor)
+			if !degraded {
+				if base == 0 {
+					base = q.RTT
+				} else {
+					base = (base*9 + q.RTT) / 10
+				}
+				bad = 0
+				continue
+			}
+			bad++
+			if bad >= o.cfg.BadProbes {
+				return "качество упало", false
+			}
+		}
+	}
+}
+
+type standbyRes struct {
+	t   Tunnel
+	s   Strategy
+	err error
+}
+
+type standby struct {
+	cancel context.CancelFunc
+	ch     chan standbyRes
+}
+
+// warm прогревает резервный туннель на другой стратегии.
+func (o *Orchestrator) warm(ctx context.Context, net, skip string) *standby {
+	cctx, cancel := context.WithCancel(ctx)
+	sb := &standby{cancel: cancel, ch: make(chan standbyRes, 1)}
+	go func() {
+		t, s, err := o.race(cctx, net, skip)
+		sb.ch <- standbyRes{t, s, err}
+	}()
+	return sb
+}
+
+func (sb *standby) stop() {
+	sb.cancel()
+	go func() {
+		if r := <-sb.ch; r.err == nil {
+			r.t.Close()
+		}
+	}()
+}
+
+// session ведёт активный туннель + резерв; возвращается, когда нужна новая гонка.
+func (o *Orchestrator) session(ctx context.Context, netKey func() string, net string, t Tunnel, s Strategy) {
+	defer o.front.Set(nil)
+	sb := o.warm(ctx, net, s.ID)
+	for {
+		reason, netChanged := o.watch(ctx, netKey, net, t)
+		if ctx.Err() != nil || netChanged {
+			t.Close()
+			sb.stop()
+			return
+		}
+		o.mem.Record(net, s.ID, false, 0)
+		cause := o.diag.Diagnose(ctx)
+		o.emit("degraded", s.ID, cause, reason)
+		select {
+		case r := <-sb.ch:
+			if r.err == nil {
+				old := t
+				t, s = r.t, r.s
+				o.front.Set(t)
+				old.Close()
+				o.emit("failover", s.ID, cause, "переключился на резерв")
+				sb = o.warm(ctx, net, s.ID)
+				continue
+			}
+			t.Close()
+			return
+		case <-time.After(o.cfg.StandbyWait):
+			t.Close()
+			sb.stop()
+			return
+		}
+	}
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
+// Run — главный цикл Гидры: подключиться, следить, лечить.
+func (o *Orchestrator) Run(ctx context.Context, netKey func() string) error {
+	backoff := time.Second
+	for ctx.Err() == nil {
+		net := netKey()
+		o.emit("connecting", "", CauseUnknown, net)
+		t, s, err := o.race(ctx, net, "")
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			c := o.diag.Diagnose(ctx)
+			o.emit("failed", "", c, err.Error())
+			if !sleep(ctx, backoff) {
+				break
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = time.Second
+		o.front.Set(t)
+		o.emit("connected", s.ID, CauseUnknown, "net="+net)
+		o.session(ctx, netKey, net, t, s)
+		_ = o.mem.Save()
+	}
+	return ctx.Err()
+}
+HYDRA_EOF
+
+putv "$GODIR/orchestrator_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+)
+
+type fakeTunnel struct {
+	done  chan struct{}
+	once  sync.Once
+	dials int32
+}
+
+func newFakeTunnel(dieAfter time.Duration) *fakeTunnel {
+	t := &fakeTunnel{done: make(chan struct{})}
+	if dieAfter > 0 {
+		time.AfterFunc(dieAfter, func() { t.Close() })
+	}
+	return t
+}
+func (t *fakeTunnel) Probe(context.Context) (Quality, error) { return Quality{RTT: 10 * time.Millisecond}, nil }
+func (t *fakeTunnel) Done() <-chan struct{}                  { return t.done }
+func (t *fakeTunnel) Close() error                           { t.once.Do(func() { close(t.done) }); return nil }
+
+type fakeTransport struct {
+	strategies []Strategy
+	dial       func(ctx context.Context, s Strategy) (Tunnel, error)
+}
+
+func (f *fakeTransport) Name() string                { return "fake" }
+func (f *fakeTransport) Strategies() []Strategy      { return f.strategies }
+func (f *fakeTransport) Dial(ctx context.Context, s Strategy) (Tunnel, error) { return f.dial(ctx, s) }
+
+func fastCfg() Config {
+	c := DefaultConfig()
+	c.Stagger = 50 * time.Millisecond
+	c.ProbeEvery = 20 * time.Millisecond
+	return c
+}
+
+func TestRaceWinnerAndMemory(t *testing.T) {
+	ft := &fakeTransport{
+		strategies: []Strategy{{ID: "bad", Transport: "fake"}, {ID: "slow", Transport: "fake"}, {ID: "good", Transport: "fake"}},
+		dial: func(ctx context.Context, s Strategy) (Tunnel, error) {
+			switch s.ID {
+			case "bad":
+				return nil, errors.New("blocked")
+			case "slow":
+				select {
+				case <-time.After(2 * time.Second):
+					return newFakeTunnel(0), nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+			return newFakeTunnel(0), nil
+		},
+	}
+	mem, _ := LoadMemory("")
+	o := New(fastCfg(), mem, []Transport{ft}, nil)
+
+	t0 := time.Now()
+	tun, s, err := o.race(context.Background(), "wifi:home", "")
+	if err != nil || s.ID != "good" || time.Since(t0) > time.Second {
+		t.Fatalf("ожидали good быстро, получили %v %v %v", s.ID, err, time.Since(t0))
+	}
+	tun.Close()
+
+	// второй раз память должна поставить good первым
+	if first := o.candidates("wifi:home", "")[0].ID; first != "good" {
+		t.Fatalf("память не подняла good, первый: %s", first)
+	}
+	// в другой сети порядок исходный
+	if first := o.candidates("cell:other", "")[0].ID; first != "bad" {
+		t.Fatalf("в чужой сети память не должна влиять, первый: %s", first)
+	}
+}
+
+func TestFailoverToStandby(t *testing.T) {
+	ft := &fakeTransport{
+		strategies: []Strategy{{ID: "A", Transport: "fake"}, {ID: "B", Transport: "fake"}},
+		dial: func(ctx context.Context, s Strategy) (Tunnel, error) {
+			if s.ID == "A" {
+				return newFakeTunnel(150 * time.Millisecond), nil // A умирает
+			}
+			return newFakeTunnel(0), nil
+		},
+	}
+	mem, _ := LoadMemory("")
+	o := New(fastCfg(), mem, []Transport{ft}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go o.Run(ctx, func() string { return "wifi:home" })
+
+	var got []string
+	for {
+		select {
+		case e := <-o.Events():
+			got = append(got, e.Kind+":"+e.Strategy)
+			if e.Kind == "failover" {
+				if e.Strategy != "B" {
+					t.Fatalf("резерв должен быть B, события: %v", got)
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatalf("failover не случился, события: %v", got)
+		}
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/probe.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/binary"
+	"net"
+	"strings"
+)
+
+// Проба дата-центра без всякого TCP/IP-стека: сами строим UDP-пакет с DNS-запросом
+// «CHAOS TXT id.server» к 1.1.1.1. Резолвер Cloudflare отвечает кодом дата-центра
+// (HEL, FRA, DME...). Пакет уходит в туннель, ответ приходит из туннеля — так мы
+// заодно измеряем задержку и проверяем, что туннель вообще живой.
+
+var probeDst = net.IPv4(1, 1, 1, 1).To4()
+
+func ipChecksum(h []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(h); i += 2 {
+		sum += uint32(h[i])<<8 | uint32(h[i+1])
+	}
+	for sum>>16 != 0 {
+		sum = sum&0xffff + sum>>16
+	}
+	return ^uint16(sum)
+}
+
+// BuildColoProbe строит IPv4-пакет с запросом id.server. nil, если src не IPv4.
+func BuildColoProbe(src net.IP, srcPort, id uint16) []byte {
+	s4 := src.To4()
+	if s4 == nil {
+		return nil
+	}
+	dns := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	dns = append(dns, 2, 'i', 'd', 6, 's', 'e', 'r', 'v', 'e', 'r', 0, 0, 16, 0, 3) // TXT, класс CH
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000) // DF
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], s4)
+	copy(p[16:20], probeDst)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], srcPort)
+	binary.BigEndian.PutUint16(p[22:], 53)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	// контрольная сумма UDP = 0: для IPv4 это допустимо
+	copy(p[28:], dns)
+	return p
+}
+
+func skipName(b []byte, off int) int {
+	for off < len(b) {
+		c := int(b[off])
+		switch {
+		case c == 0:
+			return off + 1
+		case c&0xC0 == 0xC0:
+			return off + 2
+		default:
+			off += c + 1
+		}
+	}
+	return -1
+}
+
+// normProbeColo: из ответа берём код аэропорта (первые три буквы, заглавными).
+func normProbeColo(s string) string {
+	s = strings.ToUpper(strings.Trim(strings.TrimSpace(s), `"`))
+	if len(s) > 3 {
+		ok := true
+		for _, r := range s[:3] {
+			if r < 'A' || r > 'Z' {
+				ok = false
+			}
+		}
+		if ok {
+			return s[:3]
+		}
+	}
+	return s
+}
+
+// ParseColoReply разбирает ответ на пробу, пришедший на порт dstPort.
+func ParseColoReply(pkt []byte, dstPort uint16) (id uint16, colo string, ok bool) {
+	if len(pkt) < 28 || pkt[0]>>4 != 4 {
+		return
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+8+12 || pkt[9] != 17 {
+		return
+	}
+	if !net.IP(pkt[12:16]).Equal(probeDst) {
+		return
+	}
+	udp := pkt[ihl:]
+	if binary.BigEndian.Uint16(udp[0:]) != 53 || binary.BigEndian.Uint16(udp[2:]) != dstPort {
+		return
+	}
+	dns := udp[8:]
+	if ulen := int(binary.BigEndian.Uint16(udp[4:])); ulen >= 8 && ulen-8 <= len(dns) {
+		dns = dns[:ulen-8]
+	}
+	if len(dns) < 12 || dns[2]&0x80 == 0 || dns[3]&0x0f != 0 {
+		return
+	}
+	id = binary.BigEndian.Uint16(dns[0:])
+	qd := int(binary.BigEndian.Uint16(dns[4:]))
+	an := int(binary.BigEndian.Uint16(dns[6:]))
+	if an < 1 {
+		return
+	}
+	off := 12
+	for i := 0; i < qd; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+4 > len(dns) {
+			return
+		}
+		off += 4
+	}
+	off = skipName(dns, off)
+	if off < 0 || off+10 > len(dns) {
+		return
+	}
+	typ := binary.BigEndian.Uint16(dns[off:])
+	rdlen := int(binary.BigEndian.Uint16(dns[off+8:]))
+	off += 10
+	if typ != 16 || rdlen < 1 || off+rdlen > len(dns) {
+		return
+	}
+	n := int(dns[off])
+	if n+1 > rdlen {
+		return
+	}
+	colo = normProbeColo(string(dns[off+1 : off+1+n]))
+	return id, colo, colo != ""
+}
+
+// ---------- TCP-проба: проходит ли через туннель настоящий TCP ----------
+// Шлём SYN на 1.1.1.1:443 и ждём SYN-ACK: так мы убеждаемся, что туннель не
+// просто «подключён», а реально пропускает TCP (а на нём — весь интернет).
+
+func tcpChecksum(src, dst net.IP, seg []byte) uint16 {
+	pseudo := make([]byte, 0, 12+len(seg))
+	pseudo = append(pseudo, src.To4()...)
+	pseudo = append(pseudo, dst.To4()...)
+	pseudo = append(pseudo, 0, 6, byte(len(seg)>>8), byte(len(seg)))
+	pseudo = append(pseudo, seg...)
+	if len(pseudo)%2 == 1 {
+		pseudo = append(pseudo, 0)
+	}
+	var sum uint32
+	for i := 0; i+1 < len(pseudo); i += 2 {
+		sum += uint32(pseudo[i])<<8 | uint32(pseudo[i+1])
+	}
+	for sum>>16 != 0 {
+		sum = sum&0xffff + sum>>16
+	}
+	return ^uint16(sum)
+}
+
+func buildTCP(src net.IP, sport uint16, seq, ack uint32, flags byte, id uint16, withMSS bool) []byte {
+	s4 := src.To4()
+	if s4 == nil {
+		return nil
+	}
+	tcpLen := 20
+	if withMSS {
+		tcpLen = 24
+	}
+	total := 20 + tcpLen
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000)
+	p[8] = 64
+	p[9] = 6
+	copy(p[12:16], s4)
+	copy(p[16:20], probeDst)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+
+	t := p[20:]
+	binary.BigEndian.PutUint16(t[0:], sport)
+	binary.BigEndian.PutUint16(t[2:], 443)
+	binary.BigEndian.PutUint32(t[4:], seq)
+	binary.BigEndian.PutUint32(t[8:], ack)
+	t[12] = byte(tcpLen/4) << 4
+	t[13] = flags
+	binary.BigEndian.PutUint16(t[14:], 65535)
+	if withMSS {
+		t[20], t[21], t[22], t[23] = 2, 4, 0x04, 0xD8 // MSS 1240
+	}
+	binary.BigEndian.PutUint16(t[16:], tcpChecksum(s4, probeDst, t))
+	return p
+}
+
+// BuildTCPSyn строит SYN к 1.1.1.1:443.
+func BuildTCPSyn(src net.IP, sport uint16, seq uint32, id uint16) []byte {
+	return buildTCP(src, sport, seq, 0, 0x02, id, true)
+}
+
+// BuildTCPRst строит RST — закрыть «полуоткрытое» соединение после пробы.
+func BuildTCPRst(src net.IP, sport uint16, seq uint32, id uint16) []byte {
+	return buildTCP(src, sport, seq, 0, 0x04, id, false)
+}
+
+// ParseTCPSynAck: это SYN-ACK от 1.1.1.1:443 на наш порт с ожидаемым ack?
+func ParseTCPSynAck(pkt []byte, dport uint16, wantAck uint32) bool {
+	if len(pkt) < 40 || pkt[0]>>4 != 4 || pkt[9] != 6 {
+		return false
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+20 || !net.IP(pkt[12:16]).Equal(probeDst) {
+		return false
+	}
+	t := pkt[ihl:]
+	if binary.BigEndian.Uint16(t[0:]) != 443 || binary.BigEndian.Uint16(t[2:]) != dport {
+		return false
+	}
+	if t[13]&0x12 != 0x12 { // SYN+ACK
+		return false
+	}
+	return binary.BigEndian.Uint32(t[8:]) == wantAck
+}
+HYDRA_EOF
+
+putv "$GODIR/probe_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/binary"
+	"net"
+	"testing"
+)
+
+// buildColoReply — «сервер» для тестов: отвечает на пробу кодом дата-центра.
+func buildColoReply(probe []byte, colo string) []byte {
+	ihl := int(probe[0]&0x0f) * 4
+	srcIP := probe[12:16]
+	udp := probe[ihl:]
+	sport := binary.BigEndian.Uint16(udp[0:])
+	q := udp[8:]
+	id := binary.BigEndian.Uint16(q[0:])
+
+	dns := []byte{byte(id >> 8), byte(id), 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0}
+	dns = append(dns, q[12:]...) // вопрос как есть
+	dns = append(dns, 0xC0, 0x0C, 0, 16, 0, 3, 0, 0, 0, 0, 0, byte(len(colo)+1), byte(len(colo)))
+	dns = append(dns, colo...)
+
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], probeDst)
+	copy(p[16:20], srcIP)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], 53)
+	binary.BigEndian.PutUint16(p[22:], sport)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	copy(p[28:], dns)
+	return p
+}
+
+func TestProbeRoundTrip(t *testing.T) {
+	probe := BuildColoProbe(net.ParseIP("172.16.0.2"), 40000, 7)
+	if probe == nil || len(probe) < 40 {
+		t.Fatal("проба не построена")
+	}
+	if ipChecksum(probe[:20]) != 0 {
+		t.Fatal("контрольная сумма IP неверна")
+	}
+	reply := buildColoReply(probe, "HEL")
+	id, colo, ok := ParseColoReply(reply, 40000)
+	if !ok || id != 7 || colo != "HEL" {
+		t.Fatalf("разбор ответа: %v %q %v", id, colo, ok)
+	}
+	if _, _, ok := ParseColoReply(reply, 40001); ok {
+		t.Fatal("ответ на чужой порт должен игнорироваться")
+	}
+	if _, _, ok := ParseColoReply(probe, 40000); ok {
+		t.Fatal("сам запрос не должен приниматься за ответ")
+	}
+	if BuildColoProbe(net.ParseIP("2001:db8::1"), 1, 1) != nil {
+		t.Fatal("для IPv6-адреса пробы нет")
+	}
+}
+
+func TestNormProbeColo(t *testing.T) {
+	for in, want := range map[string]string{"HEL": "HEL", `"ams"`: "AMS", "fra1": "FRA", "DME": "DME"} {
+		if got := normProbeColo(in); got != want {
+			t.Fatalf("%q -> %q, ждали %q", in, got, want)
+		}
+	}
+}
+
+// buildSynAck — «сервер» для тестов: отвечает SYN-ACK на SYN.
+func buildSynAck(syn []byte) []byte {
+	ihl := int(syn[0]&0x0f) * 4
+	t := syn[ihl:]
+	sport := binary.BigEndian.Uint16(t[0:])
+	seq := binary.BigEndian.Uint32(t[4:])
+	p := make([]byte, 40)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], 40)
+	p[8] = 64
+	p[9] = 6
+	copy(p[12:16], probeDst)
+	copy(p[16:20], syn[12:16])
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	r := p[20:]
+	binary.BigEndian.PutUint16(r[0:], 443)
+	binary.BigEndian.PutUint16(r[2:], sport)
+	binary.BigEndian.PutUint32(r[4:], 12345)
+	binary.BigEndian.PutUint32(r[8:], seq+1)
+	r[12] = 5 << 4
+	r[13] = 0x12
+	binary.BigEndian.PutUint16(r[14:], 65535)
+	return p
+}
+
+func TestTCPSynRoundTrip(t *testing.T) {
+	src := net.ParseIP("172.16.0.2")
+	syn := BuildTCPSyn(src, 41000, 1000, 9)
+	if syn == nil || ipChecksum(syn[:20]) != 0 {
+		t.Fatal("SYN не построен или неверная сумма IP")
+	}
+	if tcpChecksum(src, probeDst, syn[20:]) != 0 {
+		t.Fatal("контрольная сумма TCP неверна")
+	}
+	rep := buildSynAck(syn)
+	if !ParseTCPSynAck(rep, 41000, 1001) {
+		t.Fatal("SYN-ACK не распознан")
+	}
+	if ParseTCPSynAck(rep, 41001, 1001) || ParseTCPSynAck(rep, 41000, 999) {
+		t.Fatal("чужой порт или чужой ack не должен приниматься")
+	}
+	if BuildTCPRst(src, 41000, 1001, 10) == nil {
+		t.Fatal("RST не построен")
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/quicfake.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"errors"
+	"io"
+	"net"
+	"time"
+)
+
+// Фейковый QUIC Initial с чужим именем (SNI), например vk.com. Его отправляют
+// перед настоящим рукопожатием с малым TTL: оборудование провайдера (DPI)
+// видит «разрешённый» сайт и пропускает поток, а до сервера пакет не доходит.
+// Реализация следует RFC 9001 (защита Initial-пакетов по версии QUIC v1).
+
+var quicV1Salt = []byte{0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
+	0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a}
+
+func hkdfExtract(salt, ikm []byte) []byte {
+	m := hmac.New(sha256.New, salt)
+	m.Write(ikm)
+	return m.Sum(nil)
+}
+
+// hkdfExpandLabel — HKDF-Expand-Label из TLS 1.3 для длины до 32 байт.
+func hkdfExpandLabel(secret []byte, label string, length int) []byte {
+	full := "tls13 " + label
+	info := []byte{byte(length >> 8), byte(length), byte(len(full))}
+	info = append(info, full...)
+	info = append(info, 0)
+	m := hmac.New(sha256.New, secret)
+	m.Write(info)
+	m.Write([]byte{1})
+	return m.Sum(nil)[:length]
+}
+
+func initialKeys(dcid []byte) (key, iv, hp []byte) {
+	cs := hkdfExpandLabel(hkdfExtract(quicV1Salt, dcid), "client in", 32)
+	return hkdfExpandLabel(cs, "quic key", 16), hkdfExpandLabel(cs, "quic iv", 12), hkdfExpandLabel(cs, "quic hp", 16)
+}
+
+func quicVarint(n int) []byte {
+	switch {
+	case n < 64:
+		return []byte{byte(n)}
+	case n < 16384:
+		return []byte{0x40 | byte(n>>8), byte(n)}
+	}
+	return []byte{0x80 | byte(n>>24), byte(n >> 16), byte(n >> 8), byte(n)}
+}
+
+// clientHelloFor получает настоящий ClientHello TLS 1.3 с нужным SNI, дав
+// стандартному TLS-клиенту «поговорить» с заглушкой.
+func clientHelloFor(sni string) ([]byte, error) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		c := tls.Client(a, &tls.Config{
+			ServerName:         sni,
+			MinVersion:         tls.VersionTLS13,
+			NextProtos:         []string{"h3"},
+			CurvePreferences:   []tls.CurveID{tls.X25519}, // без гибридного ключа: ClientHello остаётся коротким
+			InsecureSkipVerify: true,
+		})
+		c.Handshake()
+	}()
+	b.SetReadDeadline(time.Now().Add(2 * time.Second))
+	hdr := make([]byte, 5)
+	if _, err := io.ReadFull(b, hdr); err != nil {
+		return nil, err
+	}
+	body := make([]byte, int(hdr[3])<<8|int(hdr[4]))
+	if _, err := io.ReadFull(b, body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// BuildFakeQUICInitial строит один UDP-датаграмму-«Initial» длиной size байт.
+func BuildFakeQUICInitial(sni string, size int) ([]byte, error) {
+	ch, err := clientHelloFor(sni)
+	if err != nil {
+		return nil, err
+	}
+	dcid := make([]byte, 8)
+	scid := make([]byte, 8)
+	rand.Read(dcid)
+	rand.Read(scid)
+	key, iv, hp := initialKeys(dcid)
+
+	frame := append([]byte{0x06, 0x00}, quicVarint(len(ch))...) // CRYPTO, offset 0
+	frame = append(frame, ch...)
+
+	const pnLen, tagLen = 2, 16
+	hdrLen := 1 + 4 + 1 + len(dcid) + 1 + len(scid) + 1 + 2 + pnLen
+	payloadLen := size - hdrLen - tagLen
+	if payloadLen < len(frame) {
+		payloadLen = len(frame)
+	}
+	payload := make([]byte, payloadLen) // нули = PADDING
+	copy(payload, frame)
+
+	lengthVal := pnLen + payloadLen + tagLen
+	if lengthVal >= 16384 {
+		return nil, errors.New("слишком длинный Initial")
+	}
+	header := []byte{0xC0 | byte(pnLen-1), 0, 0, 0, 1, byte(len(dcid))}
+	header = append(header, dcid...)
+	header = append(header, byte(len(scid)))
+	header = append(header, scid...)
+	header = append(header, 0) // длина токена
+	header = append(header, 0x40|byte(lengthVal>>8), byte(lengthVal))
+	pnOff := len(header)
+	header = append(header, 0, 0) // номер пакета 0
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := append([]byte(nil), iv...) // номер пакета 0: nonce = iv
+	sealed := gcm.Seal(nil, nonce, payload, header)
+	pkt := append(append([]byte(nil), header...), sealed...)
+
+	hb, err := aes.NewCipher(hp)
+	if err != nil {
+		return nil, err
+	}
+	mask := make([]byte, 16)
+	hb.Encrypt(mask, pkt[pnOff+4:pnOff+4+16])
+	pkt[0] ^= mask[0] & 0x0f
+	pkt[pnOff] ^= mask[1]
+	pkt[pnOff+1] ^= mask[2]
+	return pkt, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/quicfake_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"testing"
+)
+
+func TestFakeQUICInitialDecrypts(t *testing.T) {
+	pkt, err := BuildFakeQUICInitial("vk.com", 1357)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkt) != 1357 {
+		t.Fatalf("длина %d, ждали 1357 (ClientHello раздулся и фейк не влезает в один пакет)", len(pkt))
+	}
+	if pkt[0]&0x80 == 0 {
+		t.Fatal("ждали длинный заголовок")
+	}
+
+	// разбор «как это делает сервер»
+	dl := int(pkt[5])
+	dcid := pkt[6 : 6+dl]
+	off := 6 + dl
+	off += 1 + int(pkt[off]) // SCID
+	off++                    // длина токена (0)
+	length := int(pkt[off]&0x3f)<<8 | int(pkt[off+1])
+	off += 2
+	pnOff := off
+
+	key, iv, hp := initialKeys(dcid)
+	hb, _ := aes.NewCipher(hp)
+	mask := make([]byte, 16)
+	hb.Encrypt(mask, pkt[pnOff+4:pnOff+4+16])
+	first := pkt[0] ^ (mask[0] & 0x0f)
+	pnLen := int(first&3) + 1
+	hdr := append([]byte(nil), pkt[:pnOff+pnLen]...)
+	hdr[0] = first
+	for i := 0; i < pnLen; i++ {
+		hdr[pnOff+i] ^= mask[1+i]
+	}
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	plain, err := gcm.Open(nil, iv, pkt[pnOff+pnLen:pnOff+length], hdr)
+	if err != nil {
+		t.Fatalf("не расшифровывается: %v", err)
+	}
+	if plain[0] != 0x06 || !bytes.Contains(plain, []byte("vk.com")) {
+		t.Fatalf("в CRYPTO-кадре нет ClientHello с vk.com")
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/register.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"bytes"
+	"context"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Регистрация устройства в Cloudflare WARP + привязка ключа MASQUE.
+// Протокол повторяет Android-клиент (описание: usque, MIT).
+//
+// Главная идея Гидры: регистрация — это не один запрос, а «гонка маршрутов».
+// Если api.cloudflareclient.com режут (DPI, DNS, блок по SNI), пробуем:
+//   direct   — как обычное приложение
+//   frag     — ClientHello режется на два TCP-сегмента
+//   doh      — имя резолвится через DoH по IP-адресам, мимо системного DNS
+//   doh+frag — оба приёма сразу
+// и по каждой доступной сети (Wi-Fi, мобильная) отдельно — их передаёт Android.
+
+const (
+	apiHost    = "api.cloudflareclient.com"
+	apiBaseURL = "https://" + apiHost + "/v0a4471"
+)
+
+var apiHeaders = map[string]string{
+	"User-Agent":        "WARP for Android",
+	"CF-Client-Version": "a-6.35-4471",
+	"Content-Type":      "application/json; charset=UTF-8",
+}
+
+// ---------- аккаунт ----------
+
+// Account — всё, что нужно для подключения. Хранится на устройстве; можно
+// перенести на другое устройство через Export/ImportAccount.
+type Account struct {
+	ID            string    `json:"id"`
+	Token         string    `json:"token"`
+	PrivateKey    string    `json:"private_key"` // base64(SEC1 DER), ключ MASQUE (P-256)
+	PeerPublicKey string    `json:"peer_public_key"`
+	EndpointV4    string    `json:"endpoint_v4"`
+	EndpointV6    string    `json:"endpoint_v6"`
+	AddrV4        string    `json:"addr_v4"`
+	AddrV6        string    `json:"addr_v6"`
+	Created       time.Time `json:"created"`
+
+	// Для конфигураций WireGuard (Kind == "wg"): ключ — X25519 в base64.
+	Kind     string `json:"kind,omitempty"`
+	Custom   bool   `json:"custom,omitempty"` // импортирована пользователем
+	Jc       int    `json:"jc,omitempty"`     // «мусорные» пакеты перед рукопожатием (как в AmneziaWG)
+	Jmin     int    `json:"jmin,omitempty"`
+	Jmax     int    `json:"jmax,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+}
+
+const exportPrefix = "hydra1:"
+
+// Export превращает аккаунт в строку, которую удобно скопировать.
+func (a *Account) Export() string {
+	b, _ := json.Marshal(a)
+	return exportPrefix + base64.RawURLEncoding.EncodeToString(b)
+}
+
+// ImportAccount разбирает строку из Export.
+func ImportAccount(s string) (*Account, error) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, exportPrefix) {
+		return nil, errors.New("это не аккаунт Гидры (нет префикса hydra1:)")
+	}
+	b, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, exportPrefix))
+	if err != nil {
+		return nil, fmt.Errorf("повреждённая строка: %w", err)
+	}
+	var a Account
+	if err := json.Unmarshal(b, &a); err != nil {
+		return nil, fmt.Errorf("повреждённые данные: %w", err)
+	}
+	if a.ID == "" || a.Token == "" || a.PrivateKey == "" {
+		return nil, errors.New("в аккаунте не хватает данных")
+	}
+	return &a, nil
+}
+
+// LoadAccount читает аккаунт с диска; если файла нет — (nil, nil).
+func LoadAccount(path string) (*Account, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var a Account
+	if err := json.Unmarshal(b, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (a *Account) Save(path string) error {
+	b, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// EnsureAccount: берёт сохранённый аккаунт или регистрирует новый.
+// Повторно не регистрируемся без нужды — у Cloudflare есть лимиты на регистрации.
+func EnsureAccount(ctx context.Context, path string, r *Registrar) (*Account, error) {
+	if a, err := LoadAccount(path); err == nil && a != nil {
+		return a, nil
+	}
+	a, err := r.Register(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.Save(path); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// ---------- ошибки ----------
+
+const (
+	KindRateLimited = "rate_limited" // 429: слишком много регистраций с этого IP
+	KindBlocked     = "blocked"      // до API не достучаться (DPI/сеть)
+	KindDNS         = "dns"          // имя API не определяется, DoH тоже не помог
+	KindAPI         = "api"          // API ответил, но отказал
+)
+
+type RegError struct {
+	Kind       string
+	Detail     []string
+	RetryAfter time.Duration
+}
+
+func (e *RegError) Error() string {
+	return fmt.Sprintf("регистрация WARP не удалась (%s): %s", e.Kind, strings.Join(e.Detail, "; "))
+}
+
+type httpError struct {
+	Status     int
+	RetryAfter time.Duration
+	Body       string
+}
+
+func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d %s", e.Status, e.Body) }
+
+// protoError — API ответил, но не так, как ждали (формат изменился?).
+type protoError struct{ msg string }
+
+func (e *protoError) Error() string { return e.msg }
+
+func classify(errs []error) *RegError {
+	re := &RegError{Kind: KindBlocked}
+	rate, api, dns := false, false, false
+	for _, e := range errs {
+		re.Detail = append(re.Detail, e.Error())
+		var he *httpError
+		var pe *protoError
+		switch {
+		case errors.As(e, &he):
+			if he.Status == http.StatusTooManyRequests {
+				rate = true
+				if he.RetryAfter > re.RetryAfter {
+					re.RetryAfter = he.RetryAfter
+				}
+			} else {
+				api = true
+			}
+		case errors.As(e, &pe):
+			api = true
+		case strings.Contains(e.Error(), "lookup "):
+			dns = true
+		}
+	}
+	switch {
+	case rate:
+		re.Kind = KindRateLimited
+	case api:
+		re.Kind = KindAPI
+	case dns:
+		re.Kind = KindDNS
+	}
+	return re
+}
+
+// ---------- регистратор ----------
+
+// NamedDialer — способ открыть TCP-соединение. Android передаёт по одному на
+// каждую доступную сеть (Wi-Fi, мобильная), привязанному к ней.
+type NamedDialer struct {
+	Name string
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+type regMethod struct {
+	name      string
+	doh, frag bool
+	sni       string // другое имя в TLS; Host в запросе остаётся настоящим
+}
+
+var allMethods = []regMethod{
+	{"direct", false, false, ""},
+	{"frag", false, true, ""},
+	{"doh", true, false, ""},
+	{"doh+frag", true, true, ""},
+	{"front-speed", true, false, "speed.cloudflare.com"},
+	{"front-www", true, true, "www.cloudflare.com"},
+}
+
+type route struct {
+	name string
+	d    NamedDialer
+	m    regMethod
+	base string // адрес API (у Cloudflare их два: api.cloudflareclient.com и api.devices.cloudflare.com)
+}
+
+type Registrar struct {
+	Dialers  []NamedDialer // пусто = системная сеть
+	Methods  []string      // пусто = все способы
+	BaseURL  string        // для тестов; по умолчанию боевой API
+	Stagger  time.Duration // пауза между стартами маршрутов
+	Timeout  time.Duration // на один маршрут
+	Attempts int           // сколько раундов гонки
+	Backoff  time.Duration // базовая пауза между раундами (удваивается)
+	WG       bool          // регистрировать конфигурацию WireGuard (а не MASQUE)
+	Log      func(string)
+}
+
+func NewRegistrar() *Registrar {
+	return &Registrar{
+		Stagger:  400 * time.Millisecond,
+		Timeout:  15 * time.Second,
+		Attempts: 3,
+		Backoff:  2 * time.Second,
+	}
+}
+
+func (r *Registrar) logf(format string, a ...any) {
+	if r.Log != nil {
+		r.Log(fmt.Sprintf(format, a...))
+	}
+}
+
+func (r *Registrar) base() string {
+	if r.BaseURL != "" {
+		return r.BaseURL
+	}
+	return apiBaseURL
+}
+
+func (r *Registrar) routes() []route {
+	ds := r.Dialers
+	if len(ds) == 0 {
+		d := &net.Dialer{Timeout: 8 * time.Second}
+		ds = []NamedDialer{{Name: "system", Dial: d.DialContext}}
+	}
+	var ms []regMethod
+	for _, m := range allMethods {
+		if len(r.Methods) == 0 {
+			ms = append(ms, m)
+			continue
+		}
+		for _, want := range r.Methods {
+			if want == m.name {
+				ms = append(ms, m)
+			}
+		}
+	}
+	type baseSpec struct{ tag, url string }
+	bases := []baseSpec{
+		{"cf", apiBaseURL},
+		{"dev4471", "https://api.devices.cloudflare.com/v0a4471"},
+		{"dev5641", "https://api.devices.cloudflare.com/v0a5641"},
+	}
+	if r.BaseURL != "" { // тесты
+		bases = []baseSpec{{"", r.BaseURL}}
+	}
+	var out []route
+	for _, m := range ms { // сначала дешёвые способы на всех сетях
+		for _, b := range bases {
+			for _, d := range ds {
+				name := m.name + "@" + d.Name
+				if b.tag != "" {
+					name += "/" + b.tag
+				}
+				out = append(out, route{name: name, d: d, m: m, base: b.url})
+			}
+		}
+	}
+	return out
+}
+
+// Register регистрирует новое устройство, перебирая маршруты и повторяя раунды.
+func (r *Registrar) Register(ctx context.Context) (*Account, error) {
+	var last error
+	for i := 0; i < r.Attempts; i++ {
+		acc, err := r.raceOnce(ctx)
+		if err == nil {
+			return acc, nil
+		}
+		last = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if i == r.Attempts-1 {
+			break
+		}
+		wait := r.Backoff << uint(i)
+		var re *RegError
+		if errors.As(err, &re) && re.RetryAfter > wait {
+			wait = re.RetryAfter
+		}
+		r.logf("раунд %d не удался, пауза %s", i+1, wait)
+		if !sleep(ctx, wait) {
+			return nil, ctx.Err()
+		}
+	}
+	return nil, last
+}
+
+type regRes struct {
+	acc   *Account
+	err   error
+	route string
+}
+
+func (r *Registrar) raceOnce(ctx context.Context) (*Account, error) {
+	routes := r.routes()
+	if len(routes) == 0 {
+		return nil, errors.New("нет маршрутов для регистрации")
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch := make(chan regRes, len(routes))
+	started, finished := 0, 0
+	start := func() {
+		rt := routes[started]
+		started++
+		go func() {
+			actx, c := context.WithTimeout(rctx, r.Timeout)
+			defer c()
+			acc, err := r.attempt(actx, rt)
+			ch <- regRes{acc, err, rt.name}
+		}()
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	var errs []error
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			if started < len(routes) {
+				start()
+				timer.Reset(r.Stagger)
+			}
+		case x := <-ch:
+			finished++
+			if x.err == nil {
+				r.logf("✔ %s: регистрация прошла", x.route)
+				return x.acc, nil
+			}
+			r.logf("✘ %s: %v", x.route, x.err)
+			errs = append(errs, x.err)
+			if finished == len(routes) {
+				return nil, classify(errs)
+			}
+			if finished == started && started < len(routes) {
+				start()
+				timer.Reset(r.Stagger)
+			}
+		}
+	}
+}
+
+// ---------- один маршрут ----------
+
+type regConfig struct {
+	ClientID string `json:"client_id"`
+	Peers []struct {
+		PublicKey string `json:"public_key"`
+		Endpoint  struct {
+			V4   string `json:"v4"`
+			V6   string `json:"v6"`
+			Host string `json:"host"`
+		} `json:"endpoint"`
+	} `json:"peers"`
+	Interface struct {
+		Addresses struct {
+			V4 string `json:"v4"`
+			V6 string `json:"v6"`
+		} `json:"addresses"`
+	} `json:"interface"`
+}
+
+type regResp struct {
+	ID     string     `json:"id"`
+	Token  string     `json:"token"`
+	Config regConfig  `json:"config"`
+	Result *regResp   `json:"result"`
+}
+
+// norm: в разных версиях API ответ лежит либо в корне, либо в "result".
+func (x *regResp) norm() *regResp {
+	if x.Result != nil {
+		return x.Result
+	}
+	return x
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
+	cl := r.client(rt)
+	if r.WG {
+		return r.attemptWG(ctx, cl, rt.base)
+	}
+
+	wgPub := make([]byte, 32) // как у приложения: «ключ WireGuard», который мы не используем
+	rand.Read(wgPub)
+	regBody := map[string]any{
+		"key":           base64.StdEncoding.EncodeToString(wgPub),
+		"install_id":    "",
+		"fcm_token":     "",
+		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		"model":         "Android",
+		"serial_number": randHex(8),
+		"locale":        "en_US",
+		"key_type":      "curve25519",
+		"tunnel_type":   "wireguard",
+	}
+	var reg regResp
+	if err := r.do(ctx, cl, rt.base, "POST", "/reg", "", regBody, &reg); err != nil {
+		return nil, err
+	}
+	rr := reg.norm()
+	if rr.ID == "" || rr.Token == "" {
+		return nil, &protoError{"пустой ответ API при регистрации"}
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	privDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	enroll := map[string]any{
+		"key":         base64.StdEncoding.EncodeToString(pubDER),
+		"key_type":    "secp256r1",
+		"tunnel_type": "masque",
+		"name":        "Hydra",
+	}
+	var en regResp
+	if err := r.do(ctx, cl, rt.base, "PATCH", "/reg/"+rr.ID, rr.Token, enroll, &en); err != nil {
+		return nil, err
+	}
+
+	cfg := en.norm().Config
+	if len(cfg.Peers) == 0 {
+		cfg = rr.Config
+	}
+	acc := &Account{
+		ID:         rr.ID,
+		Token:      rr.Token,
+		PrivateKey: base64.StdEncoding.EncodeToString(privDER),
+		AddrV4:     cfg.Interface.Addresses.V4,
+		AddrV6:     cfg.Interface.Addresses.V6,
+		Created:    time.Now().UTC(),
+	}
+	if len(cfg.Peers) > 0 {
+		acc.PeerPublicKey = cfg.Peers[0].PublicKey
+		acc.EndpointV4 = cfg.Peers[0].Endpoint.V4
+		acc.EndpointV6 = cfg.Peers[0].Endpoint.V6
+	}
+	return acc, nil
+}
+
+func (r *Registrar) do(ctx context.Context, cl *http.Client, base, verb, path, token string, body, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, verb, base+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	for k, v := range apiHeaders {
+		req.Header.Set(k, v)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		he := &httpError{Status: resp.StatusCode, Body: strings.TrimSpace(truncate(string(data), 160))}
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if n, err := strconv.Atoi(ra); err == nil {
+				he.RetryAfter = time.Duration(n) * time.Second
+			}
+		}
+		return he
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return &protoError{"неожиданный ответ API: " + err.Error()}
+	}
+	return nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// ---------- сеть: клиент, фрагментация, DoH ----------
+
+func (r *Registrar) client(rt route) *http.Client {
+	tr := &http.Transport{
+		DisableKeepAlives:     true,
+		ForceAttemptHTTP2:     false,
+		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		DialContext:           rt.d.Dial,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
+	tr.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return r.dialTLS(ctx, rt, addr)
+	}
+	return &http.Client{Transport: tr}
+}
+
+func (r *Registrar) dialTLS(ctx context.Context, rt route, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	target := addr
+	if rt.m.doh {
+		ips, err := dohResolve(ctx, rt.d, host)
+		if err != nil {
+			return nil, err
+		}
+		target = net.JoinHostPort(ips[0], port)
+	}
+	raw, err := rt.d.Dial(ctx, "tcp", target)
+	if err != nil {
+		return nil, err
+	}
+	var c net.Conn = raw
+	if rt.m.frag {
+		c = &fragConn{Conn: raw, at: 3, delay: 15 * time.Millisecond}
+	}
+	name := host
+	if rt.m.sni != "" {
+		name = rt.m.sni
+	}
+	tc := tls.Client(c, &tls.Config{
+		ServerName: name,
+		NextProtos: []string{"http/1.1"},
+		MinVersion: tls.VersionTLS12,
+	})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return tc, nil
+}
+
+// fragConn режет первую запись (ClientHello) на два TCP-сегмента: простой DPI,
+// который смотрит только на первый пакет, SNI не увидит.
+type fragConn struct {
+	net.Conn
+	at    int
+	delay time.Duration
+	done  bool
+}
+
+func (c *fragConn) Write(b []byte) (int, error) {
+	if c.done || len(b) <= c.at {
+		return c.Conn.Write(b)
+	}
+	c.done = true
+	n1, err := c.Conn.Write(b[:c.at])
+	if err != nil {
+		return n1, err
+	}
+	time.Sleep(c.delay)
+	n2, err := c.Conn.Write(b[c.at:])
+	return n1 + n2, err
+}
+
+// dohResolve узнаёт IP через DoH по IP-адресам серверов (системный DNS не нужен).
+func dohResolve(ctx context.Context, d NamedDialer, host string) ([]string, error) {
+	urls := []string{
+		"https://1.1.1.1/dns-query?name=" + host + "&type=A",
+		"https://8.8.8.8/resolve?name=" + host + "&type=A",
+	}
+	var lastErr error
+	for _, u := range urls {
+		ips, err := dohQuery(ctx, d, u)
+		if err == nil && len(ips) > 0 {
+			return ips, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("пустой ответ")
+	}
+	return nil, fmt.Errorf("DoH не помог: %w", lastErr)
+}
+
+func dohQuery(ctx context.Context, d NamedDialer, u string) ([]string, error) {
+	tr := &http.Transport{
+		DialContext:         d.Dial,
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: 5 * time.Second,
+	}
+	cl := &http.Client{Transport: tr, Timeout: 6 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/dns-json")
+	resp, err := cl.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Answer []struct {
+			Type int    `json:"type"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, err
+	}
+	var ips []string
+	for _, a := range out.Answer {
+		if a.Type == 1 && net.ParseIP(a.Data) != nil {
+			ips = append(ips, a.Data)
+		}
+	}
+	return ips, nil
+}
+
+// attemptWG — регистрация обычного (WireGuard) устройства WARP: как делает wgcf.
+func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client, base string) (*Account, error) {
+	k, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]any{
+		"key":           base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()),
+		"install_id":    "",
+		"fcm_token":     "",
+		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		"model":         "Android",
+		"serial_number": randHex(8),
+		"locale":        "en_US",
+		"key_type":      "curve25519",
+		"tunnel_type":   "wireguard",
+	}
+	var reg regResp
+	if err := r.do(ctx, cl, base, "POST", "/reg", "", body, &reg); err != nil {
+		return nil, err
+	}
+	rr := reg.norm()
+	if rr.ID == "" || rr.Token == "" || len(rr.Config.Peers) == 0 {
+		return nil, &protoError{"в ответе API нет данных о сервере WireGuard"}
+	}
+	cfg := rr.Config
+	host := hostOnly(cfg.Peers[0].Endpoint.V4)
+	if host == "" {
+		host = hostOnly(cfg.Peers[0].Endpoint.Host)
+	}
+	if host == "" {
+		host = "162.159.192.1"
+	}
+	return &Account{
+		Kind:          "wg",
+		ID:            rr.ID,
+		Token:         rr.Token,
+		PrivateKey:    base64.StdEncoding.EncodeToString(k.Bytes()),
+		PeerPublicKey: cfg.Peers[0].PublicKey,
+		EndpointV4:    net.JoinHostPort(host, "2408"),
+		AddrV4:        cfg.Interface.Addresses.V4,
+		AddrV6:        cfg.Interface.Addresses.V6,
+		ClientID:      cfg.ClientID,
+		Jc:            4, Jmin: 40, Jmax: 70,
+		Created: time.Now().UTC(),
+	}, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/register_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+const fakeReg = `{"id":"abc","token":"tok","config":{"peers":[{"public_key":"PK","endpoint":{"v4":"162.159.198.1:443","v6":"[2606:4700:103::1]:443","host":"engage.cloudflareclient.com:443"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110::2"}}}}`
+
+func TestRegisterRetriesAcrossRoutes(t *testing.T) {
+	var posts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == "POST" && req.URL.Path == "/reg":
+			if atomic.AddInt32(&posts, 1) == 1 {
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "slow down", http.StatusTooManyRequests)
+				return
+			}
+			w.Write([]byte(fakeReg))
+		case req.Method == "PATCH" && req.URL.Path == "/reg/abc":
+			if req.Header.Get("Authorization") != "Bearer tok" {
+				http.Error(w, "no", http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(fakeReg))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer srv.Close()
+
+	good := (&net.Dialer{Timeout: time.Second}).DialContext
+	bad := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return nil, errors.New("сеть недоступна")
+	}
+	r := NewRegistrar()
+	r.BaseURL = srv.URL
+	r.Methods = []string{"direct"}
+	r.Dialers = []NamedDialer{{Name: "wifi", Dial: bad}, {Name: "cell", Dial: good}}
+	r.Stagger = 10 * time.Millisecond
+	r.Backoff = 10 * time.Millisecond
+	r.Timeout = 2 * time.Second
+
+	var logs []string
+	r.Log = func(s string) { logs = append(logs, s) }
+
+	acc, err := r.Register(context.Background())
+	if err != nil {
+		t.Fatalf("регистрация не удалась: %v (лог: %v)", err, logs)
+	}
+	if acc.ID != "abc" || acc.Token != "tok" || acc.EndpointV4 != "162.159.198.1:443" || acc.PrivateKey == "" {
+		t.Fatalf("неверный аккаунт: %+v", acc)
+	}
+	if n := atomic.LoadInt32(&posts); n != 2 {
+		t.Fatalf("ждали 2 POST (429, потом успех), получили %d", n)
+	}
+}
+
+func TestRegisterReportsBlocked(t *testing.T) {
+	bad := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return nil, errors.New("connection reset")
+	}
+	r := NewRegistrar()
+	r.BaseURL = "http://127.0.0.1:1"
+	r.Methods = []string{"direct"}
+	r.Dialers = []NamedDialer{{Name: "wifi", Dial: bad}}
+	r.Attempts = 2
+	r.Stagger = time.Millisecond
+	r.Backoff = time.Millisecond
+	_, err := r.Register(context.Background())
+	var re *RegError
+	if !errors.As(err, &re) || re.Kind != KindBlocked {
+		t.Fatalf("ждали ошибку вида blocked, получили %v", err)
+	}
+}
+
+func TestClassifyKinds(t *testing.T) {
+	dnsErr := errors.New("dial tcp: lookup api.cloudflareclient.com on [::1]:53: connection refused")
+	if k := classify([]error{dnsErr}).Kind; k != KindDNS {
+		t.Fatalf("ждали dns, получили %s", k)
+	}
+	if k := classify([]error{errors.New("connection reset by peer")}).Kind; k != KindBlocked {
+		t.Fatalf("ждали blocked, получили %s", k)
+	}
+	if k := classify([]error{&protoError{"мусор"}}).Kind; k != KindAPI {
+		t.Fatalf("ждали api, получили %s", k)
+	}
+	re := classify([]error{dnsErr, &httpError{Status: 429, RetryAfter: 3 * time.Second}})
+	if re.Kind != KindRateLimited || re.RetryAfter != 3*time.Second {
+		t.Fatalf("429 должен перекрывать остальное: %+v", re)
+	}
+}
+
+func TestAccountExportImportAndStorage(t *testing.T) {
+	a := &Account{ID: "id1", Token: "tok1", PrivateKey: "AAAA", EndpointV4: "1.2.3.4:443", Created: time.Unix(1700000000, 0).UTC()}
+	got, err := ImportAccount(a.Export())
+	if err != nil || got.ID != "id1" || got.Token != "tok1" || got.EndpointV4 != "1.2.3.4:443" {
+		t.Fatalf("круг экспорт-импорт: %+v %v", got, err)
+	}
+	if _, err := ImportAccount("мусор"); err == nil {
+		t.Fatal("мусор должен отвергаться")
+	}
+	if _, err := ImportAccount("hydra1:!!!"); err == nil {
+		t.Fatal("повреждённая строка должна отвергаться")
+	}
+
+	p := filepath.Join(t.TempDir(), "account.json")
+	if acc, err := LoadAccount(p); acc != nil || err != nil {
+		t.Fatalf("без файла ждали (nil, nil), получили %v %v", acc, err)
+	}
+	if err := a.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	back, err := LoadAccount(p)
+	if err != nil || back == nil || back.ID != "id1" {
+		t.Fatalf("загрузка: %+v %v", back, err)
+	}
+}
+
+func TestEnsureAccountUsesStored(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "account.json")
+	if err := (&Account{ID: "x", Token: "y", PrivateKey: "z"}).Save(p); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistrar()
+	r.Dialers = []NamedDialer{{Name: "none", Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return nil, errors.New("сеть не должна использоваться")
+	}}}
+	got, err := EnsureAccount(context.Background(), p, r)
+	if err != nil || got.ID != "x" {
+		t.Fatalf("ждали сохранённый аккаунт, получили %+v %v", got, err)
+	}
+}
+
+func TestFragConnSplitsFirstWrite(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	fc := &fragConn{Conn: c1, at: 3}
+	go func() {
+		fc.Write([]byte("abcdef"))
+		fc.Write([]byte("xyz"))
+	}()
+	buf := make([]byte, 16)
+	var parts []string
+	for i := 0; i < 3; i++ {
+		n, err := c2.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, string(buf[:n]))
+	}
+	if parts[0] != "abc" || parts[1] != "def" || parts[2] != "xyz" {
+		t.Fatalf("части: %v", parts)
+	}
+}
+HYDRA_EOF
+
+putv settings.gradle.kts <<'HYDRA_EOF'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "Hydra"
+include(":app")
+HYDRA_EOF
+
+putv "$GODIR/strategies.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+)
+
+const defaultMasqueSNI = "consumer-masque.cloudflareclient.com"
+
+func hostOnly(ep string) string {
+	h, _, err := net.SplitHostPort(ep)
+	if err != nil {
+		return strings.Trim(ep, "[]")
+	}
+	return strings.Trim(h, "[]")
+}
+
+func atoiDefault(s string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+	return def
+}
+
+type fakeVariant struct {
+	alias string
+	sni   string
+	ttl   int
+	count int
+	size  int // размер каждого фейкового пакета, байт
+}
+
+// Фейковые QUIC-пакеты перед рукопожатием (см. UDPRelay). По журналам Zarp:
+// «google ×3» (3 пакета по 1200 байт) — основная стратегия, «VK ×6» (по 1357 байт) — запасная.
+var fakeVariants = []fakeVariant{
+	{"g3", "www.google.com", 5, 3, 1200},
+	{"vk5x6", "vk.com", 5, 6, 1357},
+	{"g6", "www.google.com", 5, 6, 1200},
+	{"vk4x6", "vk.com", 4, 6, 1357},
+	{"vk6x6", "vk.com", 6, 6, 1357},
+	{"ya5x6", "ya.ru", 5, 6, 1357},
+	{"plain", "", 0, 0, 0},
+}
+
+// MasqueStrategies — способы подключиться к WARP по MASQUE: адрес сервера ×
+// фейковые пакеты × имя в TLS (SNI) × HTTP/3 (UDP) или HTTP/2 (TCP, если режут QUIC).
+// Порядок — «самое вероятное первым»; дальше его уточняет память по сетям.
+// Разные группы адресов нужны ещё и чтобы уйти от нежелательного дата-центра:
+// у разных префиксов Cloudflare маршруты бывают разные.
+func MasqueStrategies(acc *Account) []Strategy {
+	var eps []string
+	seen := map[string]bool{}
+	add := func(h string) {
+		h = strings.TrimSpace(h)
+		if h == "" || net.ParseIP(h) == nil || seen[h] {
+			return
+		}
+		seen[h] = true
+		eps = append(eps, h)
+	}
+	add("162.159.198.2")
+	if acc != nil {
+		add(hostOnly(acc.EndpointV4))
+	}
+	// Только настоящие серверы MASQUE. Адреса WireGuard (162.159.192/193/195.x,
+	// 188.114.96/97.x) отвечают на QUIC, но на рукопожатии получают TLS handshake failure.
+	for _, h := range []string{
+		"162.159.198.1",
+		"2606:4700:103::2", "2606:4700:103::1",
+	} {
+		add(h)
+	}
+
+	mk := func(proto, ep, alias, sni string, fv *fakeVariant) Strategy {
+		hostPort := ep
+		if _, _, err := net.SplitHostPort(ep); err != nil {
+			hostPort = net.JoinHostPort(ep, "443")
+		}
+		p := map[string]string{
+			"endpoint": hostPort,
+			"sni":      sni,
+			"h2":       "0",
+		}
+		if proto == "h2" {
+			p["h2"] = "1"
+		}
+		if fv != nil && fv.count > 0 {
+			p["fake"] = fv.sni
+			p["fttl"] = strconv.Itoa(fv.ttl)
+			p["fcount"] = strconv.Itoa(fv.count)
+			p["fsize"] = strconv.Itoa(fv.size)
+		}
+		return Strategy{ID: fmt.Sprintf("%s/%s/%s", proto, ep, alias), Transport: "masque", Params: p}
+	}
+
+	var out []Strategy
+	for i := range fakeVariants {
+		fv := &fakeVariants[i]
+		for _, ep := range eps {
+			out = append(out, mk("h3", ep, fv.alias, defaultMasqueSNI, fv))
+		}
+	}
+	// другое имя в TLS — только с самыми удачными фейками
+	for _, alt := range []struct{ alias, name string }{
+		{"speed", "speed.cloudflare.com"},
+		{"www", "www.cloudflare.com"},
+	} {
+		for _, ep := range eps {
+			out = append(out, mk("h3", ep, fakeVariants[0].alias+"+"+alt.alias, alt.name, &fakeVariants[0]))
+		}
+	}
+	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
+	for _, port := range []string{"500", "1701", "4500"} {
+		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
+			for i := 0; i < 2; i++ {
+				fv := &fakeVariants[i]
+				out = append(out, mk("h3", net.JoinHostPort(ep, port), fv.alias, defaultMasqueSNI, fv))
+			}
+		}
+	}
+	for _, ep := range eps {
+		out = append(out, mk("h2", ep, "std", defaultMasqueSNI, nil))
+	}
+	return out
+}
+
+func describeStrategy(s Strategy) string {
+	if s.Transport == "wg" {
+		out := "WireGuard → " + s.Params["endpoint"]
+		if sg := s.Params["sig"]; sg != "" {
+			out += ", сигнатура " + sg
+		}
+		if jc := s.Params["jc"]; jc != "" {
+			out += fmt.Sprintf(", мусор %s × %s–%s байт", jc, s.Params["jmin"], s.Params["jmax"])
+		}
+		return out
+	}
+	proto := "HTTP/3 (QUIC)"
+	if s.Params["h2"] == "1" {
+		proto = "HTTP/2 (TCP)"
+	}
+	out := fmt.Sprintf("%s → %s, SNI %s", proto, s.Params["endpoint"], s.Params["sni"])
+	if f := s.Params["fake"]; f != "" {
+		out += fmt.Sprintf(", фейки %s ×%s TTL %s", f, s.Params["fcount"], s.Params["fttl"])
+	}
+	return out
+}
+HYDRA_EOF
+
+putv "$GODIR/strategies_test.go" <<'HYDRA_EOF'
+package hydra
+
+import "testing"
+
+func TestMasqueStrategies(t *testing.T) {
+	acc := &Account{EndpointV4: "162.159.198.3:0"}
+	ss := MasqueStrategies(acc)
+	if len(ss) < 30 {
+		t.Fatalf("мало стратегий: %d", len(ss))
+	}
+	first := ss[0]
+	if first.ID != "h3/162.159.198.2/g3" || first.Params["fake"] != "www.google.com" ||
+		first.Params["fcount"] != "3" || first.Params["fsize"] != "1200" {
+		t.Fatalf("первой должна идти основная стратегия Zarp «google ×3»: %+v", first)
+	}
+	sawPort500 := false
+	for _, s := range ss {
+		if s.Params["endpoint"] == "162.159.198.2:500" {
+			sawPort500 = true
+		}
+	}
+	if !sawPort500 {
+		t.Fatal("нет стратегий с портом 500")
+	}
+	if ss[1].Params["endpoint"] != "162.159.198.3:443" {
+		t.Fatalf("вторым должен идти адрес из аккаунта: %+v", ss[1])
+	}
+	ids := map[string]bool{}
+	sawH2, sawPlain, sawV6 := false, false, false
+	for _, s := range ss {
+		if ids[s.ID] {
+			t.Fatalf("повтор ID %s", s.ID)
+		}
+		ids[s.ID] = true
+		if s.Params["h2"] == "1" {
+			sawH2 = true
+		}
+		if s.Params["fake"] == "" && s.Params["h2"] == "0" {
+			sawPlain = true
+		}
+		if hostOnly(s.Params["endpoint"]) == "2606:4700:103::2" {
+			sawV6 = true
+		}
+	}
+	if !sawH2 || !sawPlain || !sawV6 {
+		t.Fatalf("не хватает видов стратегий: h2=%v plain=%v v6=%v", sawH2, sawPlain, sawV6)
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/transport.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"net"
+	"time"
+)
+
+// Strategy — одна конкретная схема подключения (транспорт + параметры).
+// ID должен быть стабильным: по нему Память Гидры копит статистику.
+type Strategy struct {
+	ID        string
+	Transport string
+	Params    map[string]string
+}
+
+// Quality — результат одной пробы туннеля.
+type Quality struct {
+	RTT  time.Duration
+	Loss float64 // 0..1
+}
+
+// Tunnel — живое соединение. Время жизни туннеля НЕ привязано к ctx из Dial:
+// ctx ограничивает только установку соединения.
+type Tunnel interface {
+	Probe(ctx context.Context) (Quality, error)
+	// DialContext открывает TCP-соединение к addr через туннель (для SOCKS-входа).
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	Done() <-chan struct{} // закрывается, когда туннель умер
+	Close() error
+}
+
+// Transport — бэкенд (WARP/MASQUE, AmneziaWG, позже свой сервер).
+type Transport interface {
+	Name() string
+	Strategies() []Strategy
+	Dial(ctx context.Context, s Strategy) (Tunnel, error)
+}
+HYDRA_EOF
+
+putv "$GODIR/udprelay.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"net"
+	"sync"
+	"syscall"
+)
+
+// UDPRelay — локальный «переходник» для QUIC. Клиент MASQUE шлёт датаграммы на
+// 127.0.0.1, а переходник сам общается с сервером Cloudflare: перед первым
+// настоящим пакетом он отправляет фейки с малым TTL (как у Zarp), и только
+// потом пропускает рукопожатие. Так обходим DPI, не трогая код клиента MASQUE.
+
+// FakeSpec описывает фейковые пакеты: Payloads шлются по очереди с TTL.
+type FakeSpec struct {
+	Payloads [][]byte
+	TTL      int // 0 — отправлять с обычным TTL
+	// PerInit — «мусор» перед каждым рукопожатием WireGuard (сообщение типа 1).
+	PerInit func() [][]byte
+}
+
+type UDPRelay struct {
+	local  *net.UDPConn
+	remote *net.UDPAddr
+	fake   FakeSpec
+
+	mu    sync.Mutex
+	peers map[string]*net.UDPConn
+	once  sync.Once
+}
+
+func StartUDPRelay(remote *net.UDPAddr, fake FakeSpec) (*UDPRelay, error) {
+	local, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		return nil, err
+	}
+	r := &UDPRelay{local: local, remote: remote, fake: fake, peers: map[string]*net.UDPConn{}}
+	go r.loop()
+	return r, nil
+}
+
+func (r *UDPRelay) Addr() *net.UDPAddr { return r.local.LocalAddr().(*net.UDPAddr) }
+
+func (r *UDPRelay) Close() {
+	r.once.Do(func() {
+		r.local.Close()
+		r.mu.Lock()
+		for _, c := range r.peers {
+			c.Close()
+		}
+		r.mu.Unlock()
+	})
+}
+
+func (r *UDPRelay) loop() {
+	buf := make([]byte, 65535)
+	for {
+		n, from, err := r.local.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		if up := r.peer(from); up != nil {
+			if r.fake.PerInit != nil && IsWGInit(buf[:n]) {
+				for _, j := range r.fake.PerInit() {
+					up.Write(j)
+				}
+			}
+			up.Write(buf[:n])
+		}
+	}
+}
+
+// peer возвращает «свой» сокет к серверу для данного клиента (создаёт и
+// отправляет фейки при первом обращении).
+func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
+	key := from.String()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.peers[key]; ok {
+		return c
+	}
+	c, err := net.DialUDP("udp", nil, r.remote)
+	if err != nil {
+		Logf("   ✘ не удалось открыть сокет к %s: %v", r.remote, err)
+		return nil
+	}
+	r.sendFakes(c)
+	r.peers[key] = c
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, err := c.Read(buf)
+			if err != nil {
+				return
+			}
+			r.local.WriteToUDP(buf[:n], from)
+		}
+	}()
+	return c
+}
+
+func (r *UDPRelay) sendFakes(c *net.UDPConn) {
+	if len(r.fake.Payloads) == 0 {
+		return
+	}
+	if r.fake.TTL > 0 {
+		if err := setTTL(c, r.fake.TTL); err != nil {
+			Logf("   ⚠ не удалось выставить TTL=%d (%v) — фейки не отправляю", r.fake.TTL, err)
+			return
+		}
+	}
+	total := 0
+	for _, p := range r.fake.Payloads {
+		if _, err := c.Write(p); err == nil {
+			total += len(p)
+		}
+	}
+	if r.fake.TTL > 0 {
+		setTTL(c, 64)
+	}
+	Logf("   фейковых пакетов: %d, %d байт, TTL=%d → %s", len(r.fake.Payloads), total, r.fake.TTL, r.remote)
+}
+
+func setTTL(c *net.UDPConn, ttl int) error {
+	rc, err := c.SyscallConn()
+	if err != nil {
+		return err
+	}
+	v6 := c.RemoteAddr().(*net.UDPAddr).IP.To4() == nil
+	var serr error
+	err = rc.Control(func(fd uintptr) {
+		if v6 {
+			serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_UNICAST_HOPS, ttl)
+		} else {
+			serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TTL, ttl)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return serr
+}
+HYDRA_EOF
+
+putv "$GODIR/udprelay_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"net"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestUDPRelayForwardsAndSendsFakesFirst(t *testing.T) {
+	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	got := make(chan string, 16)
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			n, a, err := srv.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			got <- string(buf[:n])
+			srv.WriteToUDP([]byte("pong"), a)
+		}
+	}()
+
+	r, err := StartUDPRelay(srv.LocalAddr().(*net.UDPAddr), FakeSpec{
+		Payloads: [][]byte{[]byte("FAKE-A"), []byte("FAKE-B")},
+		TTL:      5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	c, err := net.DialUDP("udp", nil, r.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte("REAL-1"))
+
+	for _, want := range []string{"FAKE-A", "FAKE-B", "REAL-1"} {
+		select {
+		case p := <-got:
+			if p != want {
+				t.Fatalf("порядок пакетов: ждали %q, пришло %q", want, p)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("не дождались %q", want)
+		}
+	}
+
+	// ответ сервера доходит до клиента
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 64)
+	n, err := c.Read(buf)
+	if err != nil || string(buf[:n]) != "pong" {
+		t.Fatalf("ответ сервера не дошёл: %q %v", buf[:n], err)
+	}
+
+	// второй пакет идёт уже без новых фейков
+	c.Write([]byte("REAL-2"))
+	select {
+	case p := <-got:
+		if p != "REAL-2" {
+			t.Fatalf("после первого пакета фейков быть не должно, пришло %q", p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("REAL-2 не дошёл")
+	}
+}
+
+func TestJournal(t *testing.T) {
+	JournalClear()
+	Logf("привет %d", 1)
+	Logf("второй")
+	txt := JournalText(0)
+	if !(len(txt) > 0) || JournalText(1) == txt {
+		t.Fatalf("журнал: %q", txt)
+	}
+	JournalClear()
+	if JournalText(0) != "" {
+		t.Fatal("журнал не очистился")
+	}
+}
+
+func TestJournalWriterFiltersNoise(t *testing.T) {
+	JournalClear()
+	w := JournalWriter{}
+	w.Write([]byte("dropping proxied packet (96 bytes) that can't be proxied: connect-ip: datagram Hop Limit too small: 1\n"))
+	w.Write([]byte("Connected to MASQUE server\n"))
+	txt := JournalText(0)
+	if !strings.Contains(txt, "Connected to MASQUE server") || strings.Contains(txt, "Hop Limit") {
+		t.Fatalf("журнал: %q", txt)
+	}
+}
+
+func TestUDPRelayJunkBeforeEveryWGInit(t *testing.T) {
+	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	got := make(chan int, 32)
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			n, _, err := srv.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			got <- n
+		}
+	}()
+	r, err := StartUDPRelay(srv.LocalAddr().(*net.UDPAddr), FakeSpec{
+		PerInit: func() [][]byte { return [][]byte{make([]byte, 41), make([]byte, 42)} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	c, _ := net.DialUDP("udp", nil, r.Addr())
+	defer c.Close()
+
+	init := append([]byte{1, 0, 0, 0}, make([]byte, 144)...)
+	for round := 0; round < 2; round++ {
+		c.Write(init)
+		for _, want := range []int{41, 42, 148} {
+			select {
+			case n := <-got:
+				if n != want {
+					t.Fatalf("раунд %d: ждали пакет %d байт, пришло %d", round, want, n)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("раунд %d: не дождались пакета %d байт", round, want)
+			}
+		}
+	}
+	c.Write(make([]byte, 20)) // не рукопожатие — без «мусора»
+	select {
+	case n := <-got:
+		if n != 20 {
+			t.Fatalf("после обычного пакета «мусора» быть не должно, пришло %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("обычный пакет не дошёл")
+	}
+}
+HYDRA_EOF
+
+putv "$GODIR/wg.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+)
+
+// WireGuard-транспорт: для обычных конфигураций WARP (как у wgcf) и для своих.
+// Адреса WireGuard-серверов Cloudflare (162.159.192/193/195.x, 188.114.96-99.x)
+// относятся к другим префиксам, чем MASQUE (162.159.198.x), и многие провайдеры
+// маршрутизируют их в другие дата-центры (например, FRA вместо DME).
+
+// IsWGInit: это начало рукопожатия WireGuard (сообщение типа 1, 148 байт)?
+func IsWGInit(p []byte) bool {
+	return len(p) == 148 && p[0] == 1 && p[1] == 0 && p[2] == 0 && p[3] == 0
+}
+
+// GenJunk — «мусорные» пакеты случайной длины, которые отправляются перед
+// рукопожатием (как Jc/Jmin/Jmax в AmneziaWG). Настоящий сервер WireGuard их
+// просто отбрасывает, а оборудование провайдера теряет сигнатуру WireGuard.
+func GenJunk(count, minLen, maxLen int) [][]byte {
+	if count <= 0 {
+		return nil
+	}
+	if minLen < 1 {
+		minLen = 40
+	}
+	if maxLen < minLen {
+		maxLen = minLen + 30
+	}
+	out := make([][]byte, count)
+	for i := range out {
+		r := make([]byte, 1)
+		rand.Read(r)
+		n := minLen + int(r[0])%(maxLen-minLen+1)
+		b := make([]byte, n)
+		rand.Read(b)
+		if b[0] >= 1 && b[0] <= 4 { // не похоже на сообщения WireGuard
+			b[0] = 0xA5
+		}
+		out[i] = b
+	}
+	return out
+}
+
+func b64ToHex(s string) (string, error) {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if err != nil || len(b) != 32 {
+		return "", errors.New("ключ WireGuard должен быть 32 байта в base64")
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// WGUAPI строит конфигурацию в формате UAPI wireguard-go; endpoint — адрес
+// локального переходника.
+func WGUAPI(acc *Account, endpoint string) (string, error) {
+	priv, err := b64ToHex(acc.PrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("PrivateKey: %w", err)
+	}
+	pub, err := b64ToHex(acc.PeerPublicKey)
+	if err != nil {
+		return "", fmt.Errorf("PublicKey: %w", err)
+	}
+	return "private_key=" + priv + "\npublic_key=" + pub + "\nendpoint=" + endpoint +
+		"\npersistent_keepalive_interval=25\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n", nil
+}
+
+func withMask(a string, bits int) string {
+	if strings.Contains(a, "/") {
+		return a
+	}
+	return fmt.Sprintf("%s/%d", a, bits)
+}
+
+// WGConfig — обычный файл .conf: его можно вставить в любое приложение WireGuard/AmneziaWG.
+func (a *Account) WGConfig() string {
+	var addrs []string
+	if a.AddrV4 != "" {
+		addrs = append(addrs, withMask(a.AddrV4, 32))
+	}
+	if a.AddrV6 != "" {
+		addrs = append(addrs, withMask(a.AddrV6, 128))
+	}
+	var sb strings.Builder
+	sb.WriteString("[Interface]\n")
+	fmt.Fprintf(&sb, "PrivateKey = %s\n", a.PrivateKey)
+	fmt.Fprintf(&sb, "Address = %s\nDNS = 1.1.1.1, 1.0.0.1\nMTU = 1280\n", strings.Join(addrs, ", "))
+	if a.Jc > 0 {
+		fmt.Fprintf(&sb, "Jc = %d\nJmin = %d\nJmax = %d\nS1 = 0\nS2 = 0\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n", a.Jc, a.Jmin, a.Jmax)
+	}
+	sb.WriteString("\n[Peer]\n")
+	fmt.Fprintf(&sb, "PublicKey = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = %s\nPersistentKeepalive = 25\n", a.PeerPublicKey, a.EndpointV4)
+	return sb.String()
+}
+
+// ParseWGConfig разбирает .conf (WireGuard или AmneziaWG). Из обфускации
+// AmneziaWG поддерживаются «мусорные» пакеты Jc/Jmin/Jmax; изменение формата
+// пакетов (S1/S2/H1–H4) требует отдельной библиотеки и отвергается.
+func ParseWGConfig(text string) (*Account, error) {
+	acc := &Account{Kind: "wg", Custom: true, ID: "custom"}
+	section := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.IndexAny(line, "#;"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			section = strings.ToLower(strings.Trim(line, "[]"))
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.ToLower(strings.TrimSpace(k))
+		v = strings.TrimSpace(v)
+		switch section {
+		case "interface":
+			switch k {
+			case "privatekey":
+				acc.PrivateKey = v
+			case "address":
+				for _, a := range strings.Split(v, ",") {
+					a = strings.TrimSpace(a)
+					ip := strings.Split(a, "/")[0]
+					if p := net.ParseIP(ip); p != nil {
+						if p.To4() != nil && acc.AddrV4 == "" {
+							acc.AddrV4 = ip
+						} else if p.To4() == nil && acc.AddrV6 == "" {
+							acc.AddrV6 = ip
+						}
+					}
+				}
+			case "jc":
+				acc.Jc, _ = strconv.Atoi(v)
+			case "jmin":
+				acc.Jmin, _ = strconv.Atoi(v)
+			case "jmax":
+				acc.Jmax, _ = strconv.Atoi(v)
+			case "s1", "s2":
+				if n, _ := strconv.Atoi(v); n != 0 {
+					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (S1/S2) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
+				}
+			case "h1", "h2", "h3", "h4":
+				if n, _ := strconv.Atoi(v); n != 0 && strconv.Itoa(n) != string(k[1]) {
+					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (H1–H4) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
+				}
+			}
+		case "peer":
+			switch k {
+			case "publickey":
+				acc.PeerPublicKey = v
+			case "endpoint":
+				acc.EndpointV4 = v
+			}
+		}
+	}
+	if _, err := b64ToHex(acc.PrivateKey); err != nil {
+		return nil, errors.New("в [Interface] нет корректного PrivateKey")
+	}
+	if _, err := b64ToHex(acc.PeerPublicKey); err != nil {
+		return nil, errors.New("в [Peer] нет корректного PublicKey")
+	}
+	if _, _, err := net.SplitHostPort(acc.EndpointV4); err != nil {
+		return nil, errors.New("в [Peer] нет корректного Endpoint (хост:порт)")
+	}
+	if acc.AddrV4 == "" {
+		acc.AddrV4 = "172.16.0.2"
+	}
+	return acc, nil
+}
+
+// BuildQUICLike — пакет, похожий на заголовок QUIC Initial (108 байт), как первый
+// пакет Варвары в её захвате: длинный заголовок, версия 1, DCID 8 байт, длина 90.
+func BuildQUICLike() []byte {
+	b := make([]byte, 108)
+	rand.Read(b)
+	b[0] = 0xC0
+	b[1], b[2], b[3], b[4] = 0, 0, 0, 1
+	b[5] = 8
+	b[14], b[15] = 0, 0
+	b[16], b[17] = 0x40, 90
+	return b
+}
+
+// BuildSTUNLike — пакет, похожий на запрос STUN Binding (20 байт, magic cookie 2112A442).
+func BuildSTUNLike() []byte {
+	b := make([]byte, 20)
+	rand.Read(b)
+	b[0], b[1], b[2], b[3] = 0, 1, 0, 0
+	b[4], b[5], b[6], b[7] = 0x21, 0x12, 0xA4, 0x42
+	return b
+}
+
+// WGPrefix — «пролог» перед каждым рукопожатием WireGuard. По захвату Варвары:
+// сначала пакет, похожий на QUIC (или STUN), затем несколько пакетов случайной
+// длины, затем настоящее рукопожатие. Сервер Cloudflare всё лишнее отбрасывает.
+func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
+	var out [][]byte
+	switch sig {
+	case "quic":
+		out = append(out, BuildQUICLike())
+	case "stun":
+		out = append(out, BuildSTUNLike())
+	}
+	if sig != "" {
+		out = append(out, GenJunk(4, 80, 120)...)
+	}
+	return append(out, GenJunk(jc, jmin, jmax)...)
+}
+
+// Подсети WireGuard-серверов Cloudflare (по данным Варвары). Разные подсети
+// по-разному маршрутизируются провайдерами: на одном Wi-Fi 162.159.192.x ведёт в HEL,
+// а 188.114.x — во FRA, тогда как MASQUE (162.159.198.x) — в DME.
+var wgSubnets = []string{
+	"162.159.192", "188.114.97", "188.114.96", "162.159.193", "162.159.195",
+	"188.114.98", "188.114.99", "8.34.70", "8.34.146", "8.35.211",
+	"8.39.125", "8.39.204", "8.39.214", "8.47.69", "8.6.112",
+}
+
+// WGStrategies — способы подключиться по WireGuard: адрес × порт × пролог.
+func WGStrategies(acc *Account) []Strategy {
+	if acc == nil || acc.Kind != "wg" {
+		return nil
+	}
+	mk := func(ep, sig string, jc, jmin, jmax int, alias string) Strategy {
+		p := map[string]string{"endpoint": ep}
+		if sig != "" {
+			p["sig"] = sig
+		}
+		if jc > 0 {
+			p["jc"] = strconv.Itoa(jc)
+			p["jmin"] = strconv.Itoa(jmin)
+			p["jmax"] = strconv.Itoa(jmax)
+		}
+		return Strategy{ID: fmt.Sprintf("wg/%s/%s", ep, alias), Transport: "wg", Params: p}
+	}
+	var out []Strategy
+	if acc.Custom {
+		// своя конфигурация: сначала ровно как написано, потом тот же адрес с прологом или без него
+		out = append(out, mk(acc.EndpointV4, "", acc.Jc, acc.Jmin, acc.Jmax, "cfg"))
+		if acc.Jc == 0 {
+			out = append(out, mk(acc.EndpointV4, "quic", 3, 41, 78, "q3"))
+		} else {
+			out = append(out, mk(acc.EndpointV4, "", 0, 0, 0, "plain"))
+		}
+		return out
+	}
+	hosts := []string{}
+	seen := map[string]bool{}
+	add := func(h string) {
+		if h != "" && net.ParseIP(h) != nil && !seen[h] {
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	// 1) адрес из аккаунта и проверенный у Варвары 162.159.192.3 — с разными прологами
+	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3"}
+	for _, h := range first {
+		add(h)
+	}
+	for _, h := range hosts {
+		ep := net.JoinHostPort(h, "2408")
+		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
+		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
+		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
+		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
+	}
+	// 2) по одному адресу из каждой подсети (разные подсети — разные дата-центры)
+	for _, host := range []int{3, 1} {
+		for _, sub := range wgSubnets {
+			h := fmt.Sprintf("%s.%d", sub, host)
+			if seen[h] {
+				continue
+			}
+			seen[h] = true
+			out = append(out, mk(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
+		}
+	}
+	// 3) другие порты: некоторые провайдеры режут именно 2408
+	for _, port := range []string{"500", "4500", "1701"} {
+		out = append(out, mk(net.JoinHostPort("162.159.192.3", port), "quic", 3, 41, 78, "q3"))
+	}
+	return out
+}
+
+// Interleave перемешивает два списка стратегий пачками по chunk: так запасной
+// протокол начинает пробоваться сразу, а не после десятков попыток основного.
+func Interleave(a, b []Strategy, chunk int) []Strategy {
+	if chunk < 1 {
+		chunk = 3
+	}
+	var out []Strategy
+	for len(a) > 0 || len(b) > 0 {
+		n := chunk
+		if n > len(a) {
+			n = len(a)
+		}
+		out = append(out, a[:n]...)
+		a = a[n:]
+		n = chunk
+		if n > len(b) {
+			n = len(b)
+		}
+		out = append(out, b[:n]...)
+		b = b[n:]
+	}
+	return out
+}
+HYDRA_EOF
+
+putv "$GODIR/wg_runner.go" <<'HYDRA_EOF'
+//go:build usque
+
+package hydra
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"strings"
+	"sync"
+
+	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
+	"golang.zx2c4.com/wireguard/tun"
+)
+
+// Транспорт WireGuard на wireguard-go. «Сетевая карта» (tun.Device) — в памяти:
+// пакеты берутся из PacketDevice движка и туда же возвращаются, поэтому
+// проверки дата-центра и TCP работают точно так же, как для MASQUE.
+
+type memTun struct {
+	dev    PacketDevice
+	mtu    int
+	events chan tun.Event
+	once   sync.Once
+}
+
+func (m *memTun) File() *os.File { return nil }
+
+func (m *memTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	n, err := m.dev.ReadPacket(bufs[0][offset:])
+	if err != nil {
+		return 0, err
+	}
+	sizes[0] = n
+	return 1, nil
+}
+
+func (m *memTun) Write(bufs [][]byte, offset int) (int, error) {
+	for i, b := range bufs {
+		if err := m.dev.WritePacket(b[offset:]); err != nil {
+			return i, err
+		}
+	}
+	return len(bufs), nil
+}
+
+func (m *memTun) MTU() (int, error)        { return m.mtu, nil }
+func (m *memTun) Name() (string, error)    { return "hydra0", nil }
+func (m *memTun) Events() <-chan tun.Event { return m.events }
+func (m *memTun) BatchSize() int           { return 1 }
+func (m *memTun) Close() error {
+	m.once.Do(func() { close(m.events) })
+	return nil
+}
+
+// NewWGRunner создаёт Runner, который держит туннель WireGuard по конфигурации acc.
+func NewWGRunner(acc *Account) (Runner, error) {
+	if acc == nil || acc.Kind != "wg" {
+		return nil, errors.New("нет конфигурации WireGuard")
+	}
+	if _, err := WGUAPI(acc, "127.0.0.1:1"); err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		remote, err := net.ResolveUDPAddr("udp", s.Params["endpoint"])
+		if err != nil {
+			return fmt.Errorf("адрес %s: %w", s.Params["endpoint"], err)
+		}
+		// быстрая проверка маршрута
+		if c, derr := net.DialUDP("udp", nil, remote); derr != nil {
+			Logf("   ✘ нет маршрута до %s: %v", remote, derr)
+			return fmt.Errorf("нет маршрута до %s", remote)
+		} else {
+			c.Close()
+		}
+
+		var fk FakeSpec
+		sig := s.Params["sig"]
+		jc := atoiDefault(s.Params["jc"], 0)
+		jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
+		if sig != "" || jc > 0 {
+			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
+			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)
+		}
+		relay, err := StartUDPRelay(remote, fk)
+		if err != nil {
+			return err
+		}
+		defer relay.Close()
+
+		uapi, err := WGUAPI(acc, relay.Addr().String())
+		if err != nil {
+			return err
+		}
+		mt := &memTun{dev: dev, mtu: 1280, events: make(chan tun.Event, 4)}
+		logger := &device.Logger{
+			Verbosef: func(format string, args ...any) {
+				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") {
+					Logf("   wg: %s", l)
+				}
+			},
+			Errorf: func(format string, args ...any) {
+				Logf("   wg ✘ %s", fmt.Sprintf(format, args...))
+			},
+		}
+		d := device.NewDevice(mt, conn.NewDefaultBind(), logger)
+		defer d.Close()
+		if err := d.IpcSet(uapi); err != nil {
+			return err
+		}
+		if err := d.Up(); err != nil {
+			return err
+		}
+		Logf("   WireGuard запущен, жду рукопожатие…")
+		<-ctx.Done()
+		return ctx.Err()
+	}, nil
+}
+HYDRA_EOF
+
+putv "$GODIR/wg_test.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
+
+func testKey(b byte) string {
+	k := make([]byte, 32)
+	for i := range k {
+		k[i] = b
+	}
+	return base64.StdEncoding.EncodeToString(k)
+}
+
+func TestWGConfigRoundTrip(t *testing.T) {
+	a := &Account{Kind: "wg", PrivateKey: testKey(1), PeerPublicKey: testKey(2), EndpointV4: "162.159.192.1:2408",
+		AddrV4: "172.16.0.2", AddrV6: "2606:4700:110:8a1c::2", Jc: 4, Jmin: 40, Jmax: 70}
+	txt := a.WGConfig()
+	for _, want := range []string{"[Interface]", "PrivateKey = " + a.PrivateKey, "172.16.0.2/32", "Jc = 4", "Endpoint = 162.159.192.1:2408"} {
+		if !strings.Contains(txt, want) {
+			t.Fatalf("в .conf нет %q:\n%s", want, txt)
+		}
+	}
+	b, err := ParseWGConfig(txt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.PrivateKey != a.PrivateKey || b.PeerPublicKey != a.PeerPublicKey || b.EndpointV4 != a.EndpointV4 ||
+		b.AddrV4 != "172.16.0.2" || b.AddrV6 != "2606:4700:110:8a1c::2" || b.Jc != 4 || b.Jmax != 70 || !b.Custom {
+		t.Fatalf("после разбора: %+v", b)
+	}
+}
+
+func TestParseWGConfigRejectsBadInput(t *testing.T) {
+	good := "[Interface]\nPrivateKey = " + testKey(1) + "\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = " + testKey(2) + "\nEndpoint = 1.2.3.4:51820\n"
+	if _, err := ParseWGConfig(good); err != nil {
+		t.Fatalf("корректный конфиг отвергнут: %v", err)
+	}
+	if _, err := ParseWGConfig(strings.Replace(good, "Endpoint = 1.2.3.4:51820", "Endpoint = nowhere", 1)); err == nil {
+		t.Fatal("плохой Endpoint должен отвергаться")
+	}
+	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "S1 = 15\n[Peer]", 1)); err == nil {
+		t.Fatal("S1 != 0 (изменённый формат пакетов) должен отвергаться")
+	}
+	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nJc = 3\nJmin = 20\nJmax = 40\n[Peer]", 1)); err != nil {
+		t.Fatalf("стандартные H1–H4 и Jc/Jmin/Jmax должны приниматься: %v", err)
+	}
+	if _, err := ParseWGConfig("мусор"); err == nil {
+		t.Fatal("мусор должен отвергаться")
+	}
+}
+
+func TestWGUAPIAndJunk(t *testing.T) {
+	a := &Account{PrivateKey: testKey(1), PeerPublicKey: testKey(2)}
+	u, err := WGUAPI(a, "127.0.0.1:5555")
+	if err != nil || !strings.Contains(u, "endpoint=127.0.0.1:5555") || !strings.Contains(u, strings.Repeat("01", 32)) {
+		t.Fatalf("UAPI: %q %v", u, err)
+	}
+	j := GenJunk(4, 40, 70)
+	if len(j) != 4 {
+		t.Fatalf("нужно 4 пакета, получили %d", len(j))
+	}
+	for _, p := range j {
+		if len(p) < 40 || len(p) > 70 || (p[0] >= 1 && p[0] <= 4) {
+			t.Fatalf("плохой «мусорный» пакет: %d байт, первый байт %d", len(p), p[0])
+		}
+	}
+	if !IsWGInit(append([]byte{1, 0, 0, 0}, make([]byte, 144)...)) || IsWGInit(make([]byte, 148)) {
+		t.Fatal("IsWGInit определяет рукопожатие неверно")
+	}
+}
+
+func TestWGStrategies(t *testing.T) {
+	a := &Account{Kind: "wg", EndpointV4: "162.159.192.1:2408"}
+	ss := WGStrategies(a)
+	if len(ss) < 30 || ss[0].Params["sig"] != "quic" || ss[0].Params["jc"] != "3" || ss[0].Transport != "wg" {
+		t.Fatalf("стратегии: %d, первая %+v", len(ss), ss[0])
+	}
+	saw188, saw8 := false, false
+	for _, s := range ss {
+		h := hostOnly(s.Params["endpoint"])
+		if strings.HasPrefix(h, "188.114.") {
+			saw188 = true
+		}
+		if strings.HasPrefix(h, "8.34.") || strings.HasPrefix(h, "8.39.") {
+			saw8 = true
+		}
+	}
+	if !saw188 || !saw8 {
+		t.Fatalf("не хватает подсетей: 188.114=%v 8.x=%v", saw188, saw8)
+	}
+	own := &Account{Kind: "wg", Custom: true, EndpointV4: "vpn.example.com:51820"}
+	os := WGStrategies(own)
+	if len(os) != 2 || os[0].Params["endpoint"] != "vpn.example.com:51820" {
+		t.Fatalf("свой конфиг: %+v", os)
+	}
+}
+
+func TestWGPrefixLooksLikeVarvara(t *testing.T) {
+	q := BuildQUICLike()
+	if len(q) != 108 || q[0] != 0xC0 || q[4] != 1 || q[5] != 8 || q[16] != 0x40 || q[17] != 90 {
+		t.Fatalf("QUIC-подобный пакет: %x", q[:20])
+	}
+	pre := WGPrefix("quic", 3, 41, 78)
+	if len(pre) != 1+4+3 || len(pre[0]) != 108 {
+		t.Fatalf("пролог: %d пакетов, первый %d байт", len(pre), len(pre[0]))
+	}
+	if len(WGPrefix("", 0, 0, 0)) != 0 {
+		t.Fatal("без сигнатуры и мусора пролога быть не должно")
+	}
+	st := BuildSTUNLike()
+	if len(st) != 20 || st[4] != 0x21 || st[7] != 0x42 {
+		t.Fatalf("STUN-подобный пакет: %x", st)
+	}
+}
+
+func TestInterleave(t *testing.T) {
+	a := []Strategy{{ID: "a1"}, {ID: "a2"}, {ID: "a3"}, {ID: "a4"}}
+	b := []Strategy{{ID: "b1"}, {ID: "b2"}}
+	var ids []string
+	for _, s := range Interleave(a, b, 2) {
+		ids = append(ids, s.ID)
+	}
+	if strings.Join(ids, ",") != "a1,a2,b1,b2,a3,a4" {
+		t.Fatalf("порядок: %v", ids)
+	}
+}
 HYDRA_EOF
 
 echo "$NEW" > "$STAMP"
