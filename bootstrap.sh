@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=13
+NEW=14
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -25,6 +25,7 @@ putb() {
 }
 # убрать лишний файл из прошлой версии (манифест лежал не там)
 rm -f app/src/main/java/AndroidManifest.xml
+rm -f app/src/main/java/app/hydra/SettingsScreen.kt
 
 GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
 
@@ -325,6 +326,27 @@ class AccountController(
         }
     }
 
+    private var healTries = 0
+    private var nextHealAt = 0L
+
+    /**
+     * Самовосстановление регистрации: вызывается раз в несколько секунд. Если аккаунта нет —
+     * пробует снова с нарастающей паузой (15 с … 5 мин), чередуя обычную сеть и мобильную.
+     */
+    fun heal() {
+        if (working) return
+        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; return }
+        val now = System.currentTimeMillis()
+        if (now < nextHealAt) return
+        healTries++
+        nextHealAt = now + minOf(300_000L, 15_000L shl minOf(healTries - 1, 5))
+        when {
+            id.isNotEmpty() -> registerWg()
+            healTries % 2 == 0 -> registerViaCellular()
+            else -> register()
+        }
+    }
+
     /** «Сбросить ключи безопасности»: удаляет оба аккаунта и регистрирует заново. */
     fun resetKeys() {
         try { mobile.Mobile.deleteAccount(dir) } catch (t: Throwable) { }
@@ -410,25 +432,24 @@ HYDRA_EOF
 putv app/src/main/java/app/hydra/AdvancedScreens.kt <<'HYDRA_EOF'
 package app.hydra
 
-import androidx.compose.foundation.clickable
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -436,23 +457,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 
-/** «Дополнительно»: список как в 1.1.1.1. */
+/** «Дополнительно»: все настройки в одном меню, как в 1.1.1.1. */
 @Composable
-fun AdvancedScreen(onBack: () -> Unit, onConn: () -> Unit, onMore: () -> Unit) {
-    SubPage(stringResource(R.string.menu_advanced), onBack) {
-        Spacer(Modifier.height(16.dp))
-        RowDivider()
-        SettingRow(stringResource(R.string.conn_params), onClick = onConn)
-        SettingRow(stringResource(R.string.adv_more), stringResource(R.string.adv_more_sub), onClick = onMore)
-    }
-}
-
-/** «Параметры подключения»: приложения, маршруты, DNS, протокол, SNI, конечная точка, сбросы. */
-@Composable
-fun ConnScreen(
+fun AdvancedScreen(
     prefs: Prefs,
     account: AccountController,
     vpn: VpnController,
@@ -460,32 +471,77 @@ fun ConnScreen(
     onApps: () -> Unit,
     onRoutes: () -> Unit,
     onDns: () -> Unit,
-    onResetAll: () -> Unit
+    onResetAll: () -> Unit,
+    onLanguageChanged: () -> Unit
 ) {
+    val ctx = LocalContext.current
     var sni by remember { mutableStateOf(prefs.customSni) }
     var ep by remember { mutableStateOf(prefs.customEndpoint) }
     var proto by remember { mutableStateOf(prefs.protocol) }
-    var dlg by remember { mutableStateOf("") } // sni | ep | proto | keys | all
+    var channel by remember { mutableStateOf(prefs.channel) }
+    var lang by remember { mutableStateOf(prefs.lang) }
+    var block by remember { mutableStateOf(prefs.blockedColos) }
+    var allow by remember { mutableStateOf(prefs.allowColos) }
+    var fallback by remember { mutableStateOf(prefs.fallbackAny) }
+    var auto by remember { mutableStateOf(prefs.autoStart) }
+    var dlg by remember { mutableStateOf("") }
+    var showLicenses by remember { mutableStateOf(false) }
 
-    val protoName = stringResource(
-        when (proto) {
-            "masque" -> R.string.proto_masque_chip
-            "wg" -> R.string.proto_wg_chip
-            else -> R.string.proto_auto
+    val openVpnSettings: () -> Unit = {
+        try { ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } catch (t: Throwable) { }
+    }
+    val openBattery: () -> Unit = {
+        try {
+            ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)))
+        } catch (t: Throwable) {
+            try { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (t2: Throwable) { }
         }
-    )
-    val dflt = stringResource(R.string.value_default)
+    }
+    val openAutostart: () -> Unit = {
+        try {
+            ctx.startActivity(
+                Intent().setComponent(
+                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                )
+            )
+        } catch (t: Throwable) {
+            try {
+                ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
+            } catch (t2: Throwable) { }
+        }
+    }
 
-    SubPage(stringResource(R.string.conn_params), onBack) {
-        Spacer(Modifier.height(16.dp))
+    val dflt = stringResource(R.string.value_default)
+    val none = stringResource(R.string.value_none)
+    val protoOpts = listOf(
+        "auto" to stringResource(R.string.proto_auto),
+        "masque" to stringResource(R.string.proto_masque_chip),
+        "wg" to stringResource(R.string.proto_wg_chip)
+    )
+    val channelOpts = listOf(
+        "auto" to stringResource(R.string.channel_auto),
+        "cell" to stringResource(R.string.channel_cell)
+    )
+    val langOpts = listOf(
+        "system" to stringResource(R.string.lang_system),
+        "en" to stringResource(R.string.lang_en),
+        "ru" to stringResource(R.string.lang_ru)
+    )
+    val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
+
+    SubPage(stringResource(R.string.menu_advanced), onBack) {
+        SectionLabel(stringResource(R.string.adv_sec_apps))
         RowDivider()
         SettingRow(stringResource(R.string.conn_apps), onClick = onApps)
         SettingRow(stringResource(R.string.conn_routes), onClick = onRoutes)
         SettingRow(stringResource(R.string.conn_dns), onClick = onDns)
-        SettingRow(stringResource(R.string.conn_proto), value = protoName, onClick = { dlg = "proto" })
-        NoteText(stringResource(R.string.proto_hint))
-        SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
-        SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+
+        SectionLabel(stringResource(R.string.adv_sec_conn))
+        RowDivider()
+        SettingRow(stringResource(R.string.conn_proto), subtitle = stringResource(R.string.proto_hint),
+            value = protoOpts.firstOrNull { it.first == proto }?.second, onClick = { dlg = "proto" })
+        SettingRow(stringResource(R.string.channel_title), subtitle = stringResource(R.string.channel_hint),
+            value = channelOpts.firstOrNull { it.first == channel }?.second, onClick = { dlg = "channel" })
         SettingRow(
             stringResource(R.string.conn_sni), stringResource(R.string.conn_sni_sub),
             value = if (sni.isEmpty()) dflt else sni, onClick = { dlg = "sni" }
@@ -494,10 +550,58 @@ fun ConnScreen(
             stringResource(R.string.conn_endpoint), stringResource(R.string.conn_endpoint_sub),
             value = if (ep.isEmpty()) dflt else ep, onClick = { dlg = "ep" }
         )
+
+        SectionLabel(stringResource(R.string.colo_title))
+        RowDivider()
+        SettingRow(stringResource(R.string.colo_block), value = block.ifEmpty { none }, onClick = { dlg = "block" })
+        SettingRow(stringResource(R.string.colo_allow), value = allow.ifEmpty { none }, onClick = { dlg = "allow" })
+        SettingSwitchRow(stringResource(R.string.fallback_any), stringResource(R.string.fallback_hint), fallback) {
+            fallback = it
+            prefs.fallbackAny = it
+            vpn.restartIfActive()
+        }
+        SettingRow(stringResource(R.string.colo_reset), onClick = {
+            block = prefs.defaultBlockedColos()
+            prefs.blockedColos = block
+            allow = ""
+            prefs.allowColos = ""
+            vpn.restartIfActive()
+        })
+        NoteText(stringResource(R.string.colo_hint))
+
+        SectionLabel(stringResource(R.string.persist_title))
+        RowDivider()
+        SettingSwitchRow(stringResource(R.string.settings_autostart), stringResource(R.string.persist_hint), auto) {
+            auto = it
+            prefs.autoStart = it
+        }
+        SettingRow(stringResource(R.string.btn_always_on), onClick = openVpnSettings)
+        SettingRow(stringResource(R.string.btn_battery), onClick = openBattery)
+        SettingRow(stringResource(R.string.btn_autostart_xiaomi), onClick = openAutostart)
+        NoteText(stringResource(R.string.kill_info))
+
+        SectionLabel(stringResource(R.string.adv_sec_other))
+        RowDivider()
+        SettingRow(stringResource(R.string.settings_language),
+            value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
+        SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
+        SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+        SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
+            onClick = { showLicenses = !showLicenses })
+        if (showLicenses) {
+            NoteText(stringResource(R.string.about_text))
+            NoteText(stringResource(R.string.licenses_text))
+        }
         Spacer(Modifier.height(24.dp))
     }
 
     when (dlg) {
+        "proto" -> ChoiceDialog(stringResource(R.string.conn_proto), protoOpts, proto,
+            onPick = { proto = it; prefs.protocol = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
+        "channel" -> ChoiceDialog(stringResource(R.string.channel_title), channelOpts, channel,
+            onPick = { channel = it; prefs.channel = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
+        "lang" -> ChoiceDialog(stringResource(R.string.settings_language), langOpts, lang,
+            onPick = { lang = it; prefs.lang = it; dlg = ""; onLanguageChanged() }, onDismiss = { dlg = "" })
         "sni" -> TextDialog(
             stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
             onDismiss = { dlg = "" },
@@ -510,43 +614,22 @@ fun ConnScreen(
             onApply = { ep = it; prefs.customEndpoint = it; dlg = ""; vpn.restartIfActive() },
             onReset = { ep = ""; prefs.customEndpoint = ""; dlg = ""; vpn.restartIfActive() }
         )
-        "proto" -> AlertDialog(
-            onDismissRequest = { dlg = "" },
-            title = { Text(stringResource(R.string.conn_proto)) },
-            text = {
-                Column {
-                    listOf(
-                        "auto" to R.string.proto_auto,
-                        "masque" to R.string.proto_masque_chip,
-                        "wg" to R.string.proto_wg_chip
-                    ).forEach { (code, res) ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable {
-                                proto = code
-                                prefs.protocol = code
-                                dlg = ""
-                                vpn.restartIfActive()
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = proto == code, onClick = null)
-                            Spacer(Modifier.width(12.dp))
-                            Text(stringResource(res), modifier = Modifier.padding(vertical = 12.dp))
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { dlg = "" }) { Text(stringResource(R.string.btn_cancel)) } }
+        "block" -> TextDialog(
+            stringResource(R.string.colo_block), block, "DME",
+            onDismiss = { dlg = "" },
+            onApply = { block = it.uppercase(); prefs.blockedColos = block; dlg = ""; vpn.restartIfActive() },
+            onReset = { block = ""; prefs.blockedColos = ""; dlg = ""; vpn.restartIfActive() }
+        )
+        "allow" -> TextDialog(
+            stringResource(R.string.colo_allow), allow, "HEL, FRA, AMS",
+            onDismiss = { dlg = "" },
+            onApply = { allow = it.uppercase(); prefs.allowColos = allow; dlg = ""; vpn.restartIfActive() },
+            onReset = { allow = ""; prefs.allowColos = ""; dlg = ""; vpn.restartIfActive() }
         )
         "keys" -> ConfirmDialog(
             stringResource(R.string.conn_reset_keys), stringResource(R.string.conn_reset_keys_q),
             onDismiss = { dlg = "" },
-            onOk = {
-                dlg = ""
-                vpn.stop()
-                account.resetKeys()
-            }
+            onOk = { dlg = ""; vpn.stop(); account.resetKeys() }
         )
         "all" -> ConfirmDialog(
             stringResource(R.string.conn_reset_all), stringResource(R.string.conn_reset_all_q),
@@ -1479,9 +1562,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -1489,7 +1574,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val TitleBlue = Color(0xFF3949D8)
+private val TitleBlue = Color(0xFF3F5BFF)
 
 /** Главный экран: как у 1.1.1.1 — название, большой ползунок, статус. Меню (три полоски) — справа сверху. */
 @Composable
@@ -1567,15 +1652,29 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.weight(1.1f))
+        Spacer(Modifier.weight(0.8f))
+        // «WARP» крупными огненно-красными буквами, под ним синим «CLAUDE» поменьше
         Text(
-            "WARP CLAUDE",
+            "WARP",
+            style = TextStyle(
+                brush = Brush.linearGradient(
+                    listOf(Color(0xFFFF3B2F), Color(0xFFFF7A33), Color(0xFFE5301F), Color(0xFFFF5A3C))
+                ),
+                fontSize = 86.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-2).sp,
+                textAlign = TextAlign.Center
+            )
+        )
+        Text(
+            "CLAUDE",
             color = TitleBlue,
-            fontSize = 40.sp,
+            fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
+            letterSpacing = 10.sp,
             textAlign = TextAlign.Center
         )
-        Spacer(Modifier.weight(0.9f))
+        Spacer(Modifier.weight(0.7f))
 
         BigToggle(on = up, busy = busy, onClick = onTap)
 
@@ -1589,6 +1688,24 @@ fun HomeScreen(
             color = Color.White,
             textAlign = TextAlign.Center
         )
+        // регистрация: идёт ли она сейчас или устройство ещё не зарегистрировано
+        if (account.working || !hasAccount) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "● " + stringResource(if (account.working) R.string.reg_working else R.string.reg_none),
+                style = MaterialTheme.typography.bodyMedium,
+                color = NeonAmber,
+                textAlign = TextAlign.Center
+            )
+            if (!account.working && account.failKind.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.reg_retry),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
         if (up && vpn.colo.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text(
@@ -2262,6 +2379,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -2309,7 +2427,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Dest { Home, Advanced, Conn, Dns, Routes, Apps, More, Diag, Errors, Journal }
+enum class Dest { Home, Advanced, Dns, Routes, Apps, Diag, Errors, Journal }
 
 @Composable
 fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
@@ -2333,22 +2451,25 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
         }
         account.ensureAll()
     }
+    // самовосстановление регистрации: если аккаунта нет, пробуем снова (то по Wi-Fi, то через мобильную сеть)
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(5000)
+            account.heal()
+        }
+    }
 
     Box(Modifier.fillMaxSize().statusBarsPadding()) {
         when (stack.last()) {
             Dest.Home -> HomeScreen(prefs, account, vpn, onAdvanced = { go(Dest.Advanced) }, onDiag = { go(Dest.Diag) })
-            Dest.Advanced -> AdvancedScreen(onBack = { back() }, onConn = { go(Dest.Conn) }, onMore = { go(Dest.More) })
-            Dest.Conn -> ConnScreen(
+            Dest.Advanced -> AdvancedScreen(
                 prefs, account, vpn, onBack = { back() },
                 onApps = { go(Dest.Apps) }, onRoutes = { go(Dest.Routes) }, onDns = { go(Dest.Dns) },
-                onResetAll = onLanguageChanged
+                onResetAll = onLanguageChanged, onLanguageChanged = onLanguageChanged
             )
             Dest.Dns -> DnsScreen(prefs, vpn, onBack = { back() })
             Dest.Routes -> RoutesScreen(prefs, vpn, onBack = { back() })
             Dest.Apps -> SubPage(stringResource(R.string.conn_apps), onBack = { back() }, scroll = false) { AppsScreen(prefs) }
-            Dest.More -> SubPage(stringResource(R.string.adv_more), onBack = { back() }, scroll = false) {
-                SettingsScreen(prefs, account, onLanguageChanged)
-            }
             Dest.Diag -> DiagnosticsScreen(
                 prefs, account, vpn, onBack = { back() },
                 onErrors = { go(Dest.Errors) }, onJournal = { go(Dest.Journal) }
@@ -2455,513 +2576,6 @@ class Prefs(ctx: Context) {
 }
 HYDRA_EOF
 
-putv app/src/main/java/app/hydra/SettingsScreen.kt <<'HYDRA_EOF'
-package app.hydra
-
-import android.content.ComponentName
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.unit.dp
-
-@Composable
-fun SettingsScreen(prefs: Prefs, account: AccountController, onLanguageChanged: () -> Unit) {
-    val clipboard = LocalClipboardManager.current
-    var lang by remember { mutableStateOf(prefs.lang) }
-    var channel by remember { mutableStateOf(prefs.channel) }
-    var block by remember { mutableStateOf(prefs.blockedColos) }
-    var allow by remember { mutableStateOf(prefs.allowColos) }
-    var fallback by remember { mutableStateOf(prefs.fallbackAny) }
-    var auto by remember { mutableStateOf(prefs.autoStart) }
-    var proto by remember { mutableStateOf(prefs.protocol) }
-    var editing by remember { mutableStateOf(false) }
-    var conf by remember { mutableStateOf("") }
-    val ctx = LocalContext.current
-    val openVpnSettings: () -> Unit = {
-        try { ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } catch (t: Throwable) { }
-    }
-    val openBattery: () -> Unit = {
-        try {
-            ctx.startActivity(
-                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName))
-            )
-        } catch (t: Throwable) {
-            try { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } catch (t2: Throwable) { }
-        }
-    }
-    val openAutostart: () -> Unit = {
-        try {
-            ctx.startActivity(
-                Intent().setComponent(
-                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
-                )
-            )
-        } catch (t: Throwable) {
-            try {
-                ctx.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName))
-                )
-            } catch (t2: Throwable) { }
-        }
-    }
-    var note by remember { mutableStateOf("") }
-    var wgNote by remember { mutableStateOf("") }
-    var showLicenses by remember { mutableStateOf(false) }
-
-    val copiedMsg = stringResource(R.string.account_copied)
-    val nothingMsg = stringResource(R.string.account_nothing)
-    val importedMsg = stringResource(R.string.account_imported)
-    val wgCopiedMsg = stringResource(R.string.wg_copied)
-    val wgNothingMsg = stringResource(R.string.wg_nothing)
-    val wgImportedMsg = stringResource(R.string.wg_imported)
-    val scheme = MaterialTheme.colorScheme
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-
-        // Язык
-        HCard(accent = NeonCyan) {
-            SectionTitle(stringResource(R.string.settings_language), NeonCyan)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    "system" to R.string.lang_system,
-                    "en" to R.string.lang_en,
-                    "ru" to R.string.lang_ru
-                ).forEach { (code, res) ->
-                    FilterChip(
-                        selected = lang == code,
-                        onClick = {
-                            if (lang != code) {
-                                lang = code
-                                prefs.lang = code
-                                onLanguageChanged()
-                            }
-                        },
-                        label = { Text(stringResource(res)) }
-                    )
-                }
-            }
-        }
-
-        // Канал связи
-        HCard(accent = NeonPink) {
-            SectionTitle(stringResource(R.string.channel_title), NeonPink)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto" to R.string.channel_auto, "cell" to R.string.channel_cell).forEach { (code, res) ->
-                    FilterChip(
-                        selected = channel == code,
-                        onClick = {
-                            channel = code
-                            prefs.channel = code
-                        },
-                        label = { Text(stringResource(res)) }
-                    )
-                }
-            }
-            Text(
-                stringResource(R.string.channel_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-        }
-
-        // Протокол
-        HCard(accent = NeonCyan) {
-            SectionTitle(stringResource(R.string.proto_title), NeonCyan)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    "auto" to R.string.proto_auto,
-                    "masque" to R.string.proto_masque_chip,
-                    "wg" to R.string.proto_wg_chip
-                ).forEach { (code, res) ->
-                    FilterChip(
-                        selected = proto == code,
-                        onClick = {
-                            proto = code
-                            prefs.protocol = code
-                        },
-                        label = { Text(stringResource(res)) }
-                    )
-                }
-            }
-            Text(
-                stringResource(R.string.proto_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-        }
-
-        // Дата-центры Cloudflare
-        HCard(accent = NeonViolet) {
-            SectionTitle(stringResource(R.string.colo_title), NeonViolet)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = block,
-                onValueChange = {
-                    block = it.uppercase()
-                    prefs.blockedColos = block
-                },
-                label = { Text(stringResource(R.string.colo_block)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = allow,
-                onValueChange = {
-                    allow = it.uppercase()
-                    prefs.allowColos = allow
-                },
-                label = { Text(stringResource(R.string.colo_allow)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                stringResource(R.string.colo_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-            SwitchRow(stringResource(R.string.fallback_any), fallback) {
-                fallback = it
-                prefs.fallbackAny = it
-            }
-            Text(
-                stringResource(R.string.fallback_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant
-            )
-            TextButton(onClick = {
-                block = prefs.defaultBlockedColos()
-                prefs.blockedColos = block
-                allow = ""
-                prefs.allowColos = ""
-            }) { Text(stringResource(R.string.colo_reset)) }
-        }
-
-        // Аккаунт WARP
-        HCard(accent = NeonGreen) {
-            SectionTitle(stringResource(R.string.account_title), NeonGreen)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (account.id.isEmpty()) {
-                    stringResource(R.string.step_account_none)
-                } else {
-                    stringResource(R.string.step_account_ok, account.id.take(8))
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(Modifier.height(10.dp))
-            Button(
-                onClick = { account.register() },
-                enabled = !account.busy && account.id.isEmpty(),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                if (account.busy) {
-                    CircularProgressIndicator(
-                        Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = scheme.onPrimary
-                    )
-                } else {
-                    Text(stringResource(R.string.action_register))
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { account.registerViaCellular() },
-                enabled = !account.busy && account.id.isEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(stringResource(R.string.action_register_cell)) }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val s = account.export()
-                        if (s.isEmpty()) {
-                            note = nothingMsg
-                        } else {
-                            clipboard.setText(AnnotatedString(s))
-                            note = copiedMsg
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.account_copy)) }
-                OutlinedButton(
-                    onClick = {
-                        val text = clipboard.getText()?.text.orEmpty()
-                        val err = account.importFrom(text)
-                        note = if (err.isEmpty()) importedMsg else err
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.account_paste)) }
-            }
-            Text(
-                stringResource(R.string.account_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-            if (note.isNotEmpty()) {
-                Text(
-                    note,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.primary,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-            if (account.failKind.isNotEmpty()) {
-                Text(
-                    failText(account.failKind),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.error,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-                Text(
-                    stringResource(R.string.journal_see),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Конфигурации WARP (WireGuard): создать как wgcf или импортировать свою
-        HCard(accent = NeonAmber) {
-            SectionTitle(stringResource(R.string.wg_title), NeonAmber)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (account.wgId.isEmpty()) {
-                    stringResource(R.string.wg_none)
-                } else {
-                    stringResource(R.string.wg_ok, account.wgId.take(8))
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                stringResource(R.string.wg_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-            )
-            Button(
-                onClick = { account.registerWg() },
-                enabled = !account.wgBusy && account.wgId.isEmpty(),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                if (account.wgBusy) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = scheme.onPrimary)
-                } else {
-                    Text(stringResource(R.string.wg_create))
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val s = account.exportWg()
-                        if (s.isEmpty()) {
-                            wgNote = wgNothingMsg
-                        } else {
-                            clipboard.setText(AnnotatedString(s))
-                            wgNote = wgCopiedMsg
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.wg_copy)) }
-                OutlinedButton(
-                    onClick = {
-                        val text = clipboard.getText()?.text.orEmpty()
-                        val err = account.importWg(text)
-                        wgNote = if (err.isEmpty()) wgImportedMsg else err
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(R.string.wg_import)) }
-            }
-            OutlinedButton(
-                onClick = {
-                    if (editing) {
-                        editing = false
-                    } else {
-                        conf = account.exportWg().ifEmpty { WG_TEMPLATE }
-                        editing = true
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(stringResource(if (editing) R.string.wg_cancel else R.string.wg_edit)) }
-            if (editing) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = conf,
-                    onValueChange = { conf = it },
-                    minLines = 8,
-                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        val err = account.importWg(conf)
-                        if (err.isEmpty()) {
-                            editing = false
-                            wgNote = wgImportedMsg
-                        } else {
-                            wgNote = err
-                        }
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) { Text(stringResource(R.string.wg_save)) }
-            }
-            if (account.wgId.isNotEmpty()) {
-                TextButton(onClick = { account.deleteWg(); wgNote = "" }) {
-                    Text(stringResource(R.string.wg_delete))
-                }
-            }
-            if (wgNote.isNotEmpty()) {
-                Text(
-                    wgNote,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.primary,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-            if (account.wgFailKind.isNotEmpty()) {
-                Text(
-                    failText(account.wgFailKind),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.error,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-                Text(
-                    stringResource(R.string.journal_see),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Подключение
-        HCard(accent = NeonOrange) {
-            SectionTitle(stringResource(R.string.persist_title), NeonOrange)
-            SwitchRow(stringResource(R.string.settings_autostart), auto) {
-                auto = it
-                prefs.autoStart = it
-            }
-            Text(
-                stringResource(R.string.persist_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-            )
-            OutlinedButton(onClick = openVpnSettings, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.btn_always_on))
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(onClick = openBattery, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.btn_battery))
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(onClick = openAutostart, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.btn_autostart_xiaomi))
-            }
-            Text(
-                stringResource(R.string.kill_info),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        // О программе
-        HCard(accent = NeonPink) {
-            SectionTitle(stringResource(R.string.about_title), NeonPink)
-            Spacer(Modifier.height(4.dp))
-            Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodyMedium)
-            val engine = remember { try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" } }
-            Text(
-                stringResource(R.string.engine_label, engine),
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-            TextButton(onClick = { showLicenses = !showLicenses }) {
-                Text(stringResource(R.string.licenses_title))
-            }
-            if (showLicenses) {
-                Text(
-                    stringResource(R.string.licenses_text),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-}
-
-private const val WG_TEMPLATE = """[Interface]
-PrivateKey = 
-Address = 172.16.0.2/32
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = 
-AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = 162.159.192.3:2408
-PersistentKeepalive = 25
-"""
-HYDRA_EOF
-
 putv app/src/main/java/app/hydra/Theme.kt <<'HYDRA_EOF'
 package app.hydra
 
@@ -3048,6 +2662,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -3055,6 +2670,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -3326,6 +2942,37 @@ fun ConfirmDialog(title: String, text: String, onDismiss: () -> Unit, onOk: () -
         title = { Text(title) },
         text = { Text(text) },
         confirmButton = { TextButton(onClick = onOk) { Text(stringResource(R.string.btn_ok)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) } }
+    )
+}
+
+/** Диалог выбора одного из вариантов (код, подпись). */
+@Composable
+fun ChoiceDialog(
+    title: String,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { (code, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(code) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == code, onClick = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(label, modifier = Modifier.padding(vertical = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) } }
     )
 }
@@ -5990,6 +5637,13 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="chk_masque">Сервер MASQUE (TCP 443)</string>
     <string name="chk_v6">IPv6</string>
     <string name="chk_web">Интернет (google.com)</string>
+    <string name="reg_working">Идёт регистрация устройства…</string>
+    <string name="reg_none">Устройство не зарегистрировано</string>
+    <string name="reg_retry">Повторю регистрацию сам: то по Wi-Fi, то через мобильную сеть</string>
+    <string name="value_none">нет</string>
+    <string name="adv_sec_apps">Приложения и сеть</string>
+    <string name="adv_sec_conn">Подключение</string>
+    <string name="adv_sec_other">Прочее</string>
 </resources>
 HYDRA_EOF
 
@@ -6240,6 +5894,13 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="chk_masque">MASQUE server (TCP 443)</string>
     <string name="chk_v6">IPv6</string>
     <string name="chk_web">Internet (google.com)</string>
+    <string name="reg_working">Registering the device…</string>
+    <string name="reg_none">Device is not registered</string>
+    <string name="reg_retry">I will retry on my own: via Wi-Fi, then via mobile network</string>
+    <string name="value_none">none</string>
+    <string name="adv_sec_apps">Apps and network</string>
+    <string name="adv_sec_conn">Connection</string>
+    <string name="adv_sec_other">Other</string>
 </resources>
 HYDRA_EOF
 
@@ -6637,6 +6298,7 @@ type EngineConfig struct {
 	BadProbes    int           // сколько проб подряд без ответа = туннель умер
 	TCPCheck     bool          // проверять реальную передачу TCP
 	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
+	NetAlive     func() bool   // есть ли вообще интернет мимо туннеля (nil — не проверять)
 	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
 }
 
@@ -6890,6 +6552,7 @@ type outcome struct {
 	netChanged  bool
 	coloBlocked string
 	reason      string
+	offline     bool // интернета нет совсем: стратегию не винить, ждать сеть
 }
 
 func policyText(p *ColoPolicy) string {
@@ -6904,7 +6567,9 @@ func policyText(p *ColoPolicy) string {
 }
 
 func (e *Engine) fail(nk string, s Strategy, msg string) outcome {
-	e.cfg.Mem.Record(nk, s.ID, false, 0)
+	if !e.blame(nk, s.ID) {
+		return outcome{reason: "нет интернета", offline: true}
+	}
 	e.emit("failed", s.ID, msg)
 	return outcome{reason: msg}
 }
@@ -6936,6 +6601,8 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	timeout := e.cfg.UpTimeout
 	if e.cfg.Mem.Worked(nk, s.ID) {
 		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+	} else if e.cfg.Mem.Doomed(nk, s.ID) {
+		timeout = timeout * 2 / 3 // не раз подводила: не тратим на неё время
 	}
 	start := time.Now()
 	var colo string
@@ -7029,7 +6696,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 				msg = err.Error()
 			}
 			Logf("✘ %s", msg)
-			e.cfg.Mem.Record(nk, s.ID, false, 0)
+			e.blame(nk, s.ID)
 			return outcome{wasUp: true, reason: msg}
 		case <-tk.C:
 			if e.cfg.NetKey() != nk {
@@ -7045,7 +6712,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 				bad++
 				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
 				if bad >= e.cfg.BadProbes {
-					e.cfg.Mem.Record(nk, s.ID, false, 0)
+					e.blame(nk, s.ID)
 					e.emit("degraded", s.ID, "туннель перестал отвечать")
 					Logf("✘ туннель перестал отвечать — меняю стратегию")
 					return outcome{wasUp: true, reason: "туннель перестал отвечать"}
@@ -7095,8 +6762,11 @@ func (e *Engine) Run(ctx context.Context) error {
 			blocked = map[string]time.Time{}
 			e.soft = false
 			skip = ""
+			if n := e.cfg.Mem.Prune(nk); n > 0 {
+				Logf("🧹 убрал %d придуманных способов, которые в этой сети не работают", n)
+			}
 		}
-		cands := e.cfg.Mem.Rank(nk, e.cfg.Strategies)
+		cands := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
 		ran, skipped := 0, 0
 		lastReason := ""
 		sawBlocked := false
@@ -7120,6 +6790,13 @@ func (e *Engine) Run(ctx context.Context) error {
 				break
 			}
 			lastReason = r.reason
+			if r.offline {
+				e.setStatus(Status{State: "reconnecting", Message: "нет интернета — жду сеть"})
+				e.waitOnline(ctx)
+				skip = ""
+				restart = true
+				break
+			}
 			if r.coloBlocked != "" {
 				sawBlocked = true
 				if ep != "" {
@@ -7153,6 +6830,9 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 		skip = ""
+		if ran > 0 && !sawBlocked {
+			e.learn(nk) // все способы подвели — придумываем новые на основе лучших
+		}
 		msg := lastReason
 		switch {
 		case ran == 0 && skipped > 0:
@@ -7760,6 +7440,138 @@ func (JournalWriter) Write(p []byte) (int, error) {
 }
 HYDRA_EOF
 
+putv "$GODIR/learn.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"strconv"
+	"time"
+)
+
+// Самообучение: когда все известные способы подвели, Гидра придумывает новые — мутирует лучшие
+// (TTL и число фейковых пакетов, их размер, SNI, адрес), запоминает и выбрасывает те, что не работают.
+
+var fakeSNIPool = []string{"www.google.com", "vk.com", "ya.ru", "yandex.ru", "mail.ru", "www.microsoft.com", "cloudflare.com", "dzen.ru"}
+var fakeSizePool = []int{64, 100, 128, 200, 256, 400, 600, 900, 1200}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// allStrategies — встроенные стратегии плюс придуманные для этой сети.
+func (e *Engine) allStrategies(nk string) []Strategy {
+	out := append([]Strategy(nil), e.cfg.Strategies...)
+	return append(out, e.cfg.Mem.Generated(nk)...)
+}
+
+// GenerateVariants возвращает до n новых вариантов MASQUE/QUIC на основе лучших известных в сети.
+func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand) []Strategy {
+	var parents []Strategy
+	for _, s := range mem.Rank(nk, all) {
+		if s.Transport != "masque" || s.Params["h2"] == "1" || s.Params["fake"] == "" {
+			continue
+		}
+		parents = append(parents, s)
+		if len(parents) >= 4 {
+			break
+		}
+	}
+	if len(parents) == 0 {
+		return nil
+	}
+	var eps []string
+	seenEP := map[string]bool{}
+	for _, s := range all {
+		if ep := s.Params["endpoint"]; s.Transport == "masque" && ep != "" && !seenEP[ep] {
+			seenEP[ep] = true
+			eps = append(eps, ep)
+		}
+	}
+	have := map[string]bool{}
+	for _, s := range all {
+		have[s.ID] = true
+	}
+	var out []Strategy
+	for tries := 0; tries < n*8 && len(out) < n; tries++ {
+		p := parents[rnd.Intn(len(parents))]
+		q := map[string]string{}
+		for k, v := range p.Params {
+			q[k] = v
+		}
+		ttl := clampInt(atoiDefault(q["fttl"], 5)+rnd.Intn(5)-2, 2, 12)
+		cnt := clampInt(atoiDefault(q["fcount"], 4)+rnd.Intn(5)-2, 1, 10)
+		size := atoiDefault(q["fsize"], 1200)
+		if rnd.Intn(10) < 3 {
+			size = fakeSizePool[rnd.Intn(len(fakeSizePool))]
+		}
+		if rnd.Intn(10) < 3 {
+			q["fake"] = fakeSNIPool[rnd.Intn(len(fakeSNIPool))]
+		}
+		if len(eps) > 1 && rnd.Intn(4) == 0 {
+			q["endpoint"] = eps[rnd.Intn(len(eps))]
+		}
+		q["fttl"] = strconv.Itoa(ttl)
+		q["fcount"] = strconv.Itoa(cnt)
+		q["fsize"] = strconv.Itoa(size)
+		id := fmt.Sprintf("h3/%s/g:%s:%dx%ds%d", q["endpoint"], q["fake"], ttl, cnt, size)
+		if have[id] {
+			continue
+		}
+		have[id] = true
+		out = append(out, Strategy{ID: id, Transport: "masque", Params: q})
+	}
+	return out
+}
+
+// learn придумывает и запоминает новые способы для этой сети.
+func (e *Engine) learn(nk string) {
+	if e.cfg.Mem == nil {
+		return
+	}
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd)
+	if len(gen) == 0 {
+		return
+	}
+	e.cfg.Mem.AddGenerated(nk, gen)
+	Logf("🧬 все известные способы не сработали — придумал %d новых вариантов обхода для сети %s", len(gen), nk)
+}
+
+// blame записывает провал стратегии, но только если интернет вообще есть: иначе виновата сеть, а не стратегия.
+func (e *Engine) blame(nk, id string) bool {
+	if e.cfg.NetAlive != nil && !e.cfg.NetAlive() {
+		Logf("   ⚠ интернета нет совсем — стратегию не виню")
+		return false
+	}
+	e.cfg.Mem.Record(nk, id, false, 0)
+	return true
+}
+
+// waitOnline ждёт, пока интернет снова появится (проверка раз в 3 с или по сигналу о смене сети).
+func (e *Engine) waitOnline(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.cfg.NetChanged:
+		case <-time.After(3 * time.Second):
+		}
+		if e.cfg.NetAlive == nil || e.cfg.NetAlive() {
+			return
+		}
+	}
+}
+HYDRA_EOF
+
 putv "$GODIR/masque_runner.go" <<'HYDRA_EOF'
 //go:build usque
 
@@ -7920,6 +7732,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -7938,6 +7751,8 @@ type Memory struct {
 	path    string
 	pending bool // отложенное сохранение уже запланировано
 	Nets map[string]map[string]*stat `json:"nets"`
+	// Gen — стратегии, которые Гидра придумала сама, по сетям.
+	Gen map[string][]Strategy `json:"gen"`
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -8008,17 +7823,121 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 		s.OK /= 2
 		s.Fail /= 2
 	}
-	// Сохраняем сразу после результата (с паузой, чтобы не писать на каждый чих):
-	// если систему убьёт процесс, накопленный опыт не пропадёт.
-	if m.path != "" && !m.pending {
-		m.pending = true
-		time.AfterFunc(2*time.Second, func() {
-			m.mu.Lock()
-			m.pending = false
-			m.mu.Unlock()
-			_ = m.Save()
-		})
+	m.saveSoonLocked()
+}
+
+// saveSoonLocked планирует сохранение через 2 с (вызывать под m.mu): если систему убьёт процесс,
+// накопленный опыт не пропадёт, а на диск пишем не на каждый чих.
+func (m *Memory) saveSoonLocked() {
+	if m.path == "" || m.pending {
+		return
 	}
+	m.pending = true
+	time.AfterFunc(2*time.Second, func() {
+		m.mu.Lock()
+		m.pending = false
+		m.mu.Unlock()
+		_ = m.Save()
+	})
+}
+
+const maxGenerated = 24
+
+// Generated — придуманные Гидрой стратегии для этой сети.
+func (m *Memory) Generated(net string) []Strategy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Strategy(nil), m.Gen[net]...)
+}
+
+// AddGenerated запоминает новые стратегии; при переполнении выбрасывает самые старые, не имевшие побед.
+func (m *Memory) AddGenerated(net string, list []Strategy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Gen == nil {
+		m.Gen = map[string][]Strategy{}
+	}
+	have := map[string]bool{}
+	for _, s := range m.Gen[net] {
+		have[s.ID] = true
+	}
+	for _, s := range list {
+		if !have[s.ID] {
+			m.Gen[net] = append(m.Gen[net], s)
+			have[s.ID] = true
+		}
+	}
+	over := len(m.Gen[net]) - maxGenerated
+	if over > 0 {
+		var kept []Strategy
+		for _, s := range m.Gen[net] {
+			st := m.Nets[net][s.ID]
+			if over > 0 && (st == nil || st.OK == 0) {
+				over--
+				delete(m.Nets[net], s.ID)
+				continue
+			}
+			kept = append(kept, s)
+		}
+		m.Gen[net] = kept
+	}
+	m.saveSoonLocked()
+}
+
+// Prune удаляет придуманные стратегии, которые в этой сети не работают. Возвращает, сколько удалено.
+func (m *Memory) Prune(net string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	removed := 0
+	var kept []Strategy
+	for _, s := range m.Gen[net] {
+		st := m.Nets[net][s.ID]
+		dead := st != nil && ((st.OK == 0 && st.Fail >= 3) ||
+			(st.Fail >= 8 && float64(st.OK)/float64(st.OK+st.Fail) < 0.15))
+		if dead {
+			delete(m.Nets[net], s.ID)
+			removed++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if removed > 0 {
+		m.Gen[net] = kept
+		m.saveSoonLocked()
+	}
+	return removed
+}
+
+// Doomed: стратегия в этой сети уже не раз подводила и ни разу не работала.
+func (m *Memory) Doomed(net, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	return st != nil && st.OK == 0 && st.Fail >= 3
+}
+
+// priorLocked — оценка стратегии для сети без истории: опыт в других сетях того же класса
+// (все "wifi:*" или все "cell:*") с пониженным доверием. Вызывать под m.mu.
+func (m *Memory) priorLocked(net, id string) float64 {
+	class := net
+	if i := strings.Index(net, ":"); i > 0 {
+		class = net[:i]
+	}
+	ok, fail := 0, 0
+	for k, ns := range m.Nets {
+		if k == net || !strings.HasPrefix(k, class+":") {
+			continue
+		}
+		if st := ns[id]; st != nil {
+			ok += st.OK
+			fail += st.Fail
+		}
+	}
+	if ok+fail == 0 {
+		return 0.5
+	}
+	rate := float64(ok+1) / float64(ok+fail+2)
+	return 0.5 + (rate-0.5)*0.6
 }
 
 // Worked: стратегия уже хотя бы раз подключалась в этой сети.
@@ -8038,7 +7957,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
 		if st == nil {
-			return 0.5
+			return m.priorLocked(net, s.ID)
 		}
 		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
 		pen := math.Min(st.EWMAms/5000, 0.3)
@@ -8243,6 +8162,37 @@ func ImportWireguardConfig(dir, text string) string {
 
 // DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
 func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }
+HYDRA_EOF
+
+putv "$GODIR/mobile/netalive.go" <<'HYDRA_EOF'
+package mobile
+
+import (
+	"net"
+	"time"
+)
+
+// realNetAlive: есть ли интернет мимо туннеля (приложение исключено из VPN, поэтому проверка честная).
+// Достаточно, чтобы ответил любой из нескольких известных адресов.
+func realNetAlive() bool {
+	targets := []string{"1.1.1.1:443", "8.8.8.8:443", "77.88.8.8:443", "9.9.9.9:443"}
+	ch := make(chan bool, len(targets))
+	for _, t := range targets {
+		go func(t string) {
+			c, err := net.DialTimeout("tcp", t, 2500*time.Millisecond)
+			if err == nil {
+				c.Close()
+			}
+			ch <- err == nil
+		}(t)
+	}
+	for range targets {
+		if <-ch {
+			return true
+		}
+	}
+	return false
+}
 HYDRA_EOF
 
 putv "$GODIR/mobile/policy.go" <<'HYDRA_EOF'
@@ -8470,6 +8420,7 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.NetChanged = netEvents
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == ""
+	cfg.NetAlive = realNetAlive
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
 	ctx, cancel := context.WithCancel(context.Background())
