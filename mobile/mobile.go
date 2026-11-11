@@ -15,7 +15,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {

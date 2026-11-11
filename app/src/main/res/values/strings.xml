@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hydra</string>
+    <string name="app_name">WARP CLAUDE</string>
 
     <string name="tab_home">Home</string>
     <string name="tab_split">Apps</string>
@@ -249,4 +249,6 @@
     <string name="diag_full_running">Checking, this takes a few seconds…</string>
     <string name="diag_sys">System state and memory</string>
     <string name="diag_sys_sub">Networks, battery, Android modes, DNS, operator, strategy memory</string>
+    <string name="diag_test_failover">Test hot standby</string>
+    <string name="diag_test_failover_sub">Simulates a primary tunnel failure: see the result in the journal (🧪)</string>
 </resources>

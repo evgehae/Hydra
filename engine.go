@@ -83,6 +83,8 @@ type Engine struct {
 	upSince                    time.Time
 	lastFail                   string
 	lastFailAt                 time.Time
+	probesTotal, probesLost    int
+	testFail                   chan struct{}
 
 	mu      sync.Mutex
 	status  Status
@@ -121,6 +123,7 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		tunDead: make(chan struct{}),
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
+		testFail: make(chan struct{}, 1),
 	}
 }
 
@@ -670,6 +673,29 @@ func (e *Engine) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func (e *Engine) noteProbe(ok bool) {
+	e.mu.Lock()
+	e.probesTotal++
+	if !ok {
+		e.probesLost++
+	}
+	e.mu.Unlock()
+}
+
+func (e *Engine) probeStats() (total, lost int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.probesTotal, e.probesLost
+}
+
+// TestFailover просит движок имитировать отказ основного туннеля, чтобы проверить горячий резерв.
+func (e *Engine) TestFailover() {
+	select {
+	case e.testFail <- struct{}{}:
+	default:
+	}
+}
+
 func (e *Engine) noteConnect() {
 	e.mu.Lock()
 	e.nConnect++
@@ -701,6 +727,9 @@ func (e *Engine) Stats() string {
 	s += "подключений: " + itoa(e.nConnect) + ", мгновенных переходов на резерв: " + itoa(e.nFailover) + ", потерь без резерва: " + itoa(e.nLost) + "\n"
 	if !e.upSince.IsZero() {
 		s += "с последнего подключения: " + time.Since(e.upSince).Round(time.Second).String() + "\n"
+	}
+	if e.probesTotal > 0 {
+		s += "проб: " + itoa(e.probesTotal) + ", потеряно: " + itoa(e.probesLost) + "\n"
 	}
 	if e.lastFail != "" {
 		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"

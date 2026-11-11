@@ -109,13 +109,18 @@ func StartTunnel(dir string, tunFd int) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	vpnEngine, vpnCancel = e, cancel
 	go func() {
+		defer func() {
+			if r := recover(); r != nil { // паника движка не должна ронять приложение: служба поднимет его заново
+				hydra.Logf("💥 паника движка: %v", r)
+			}
+			mem.Save()
+			vpnMu.Lock()
+			if vpnEngine == e {
+				vpnEngine, vpnCancel = nil, nil
+			}
+			vpnMu.Unlock()
+		}()
 		e.Run(ctx)
-		mem.Save()
-		vpnMu.Lock()
-		if vpnEngine == e {
-			vpnEngine, vpnCancel = nil, nil
-		}
-		vpnMu.Unlock()
 	}()
 	return ""
 }
@@ -163,4 +168,14 @@ func Diagnostics() string {
 		out += m.Summary(nk, 15)
 	}
 	return out
+}
+
+// TestFailover имитирует отказ основного туннеля, чтобы проверить переход на горячий резерв.
+func TestFailover() {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e != nil {
+		e.TestFailover()
+	}
 }

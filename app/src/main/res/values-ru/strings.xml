@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hydra</string>
+    <string name="app_name">WARP CLAUDE</string>
 
     <string name="tab_home">Главная</string>
     <string name="tab_split">Приложения</string>
@@ -249,4 +249,6 @@
     <string name="diag_full_running">Проверяю, это займёт несколько секунд…</string>
     <string name="diag_sys">Состояние системы и памяти</string>
     <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
+    <string name="diag_test_failover">Проверить горячий резерв</string>
+    <string name="diag_test_failover_sub">Имитирует отказ основного туннеля: смотрите результат в журнале (🧪)</string>
 </resources>

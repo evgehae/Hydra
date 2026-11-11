@@ -120,6 +120,11 @@ fun DiagnosticsScreen(
                 }
             }
         )
+        SettingRow(
+            stringResource(R.string.diag_test_failover),
+            stringResource(R.string.diag_test_failover_sub),
+            onClick = { try { mobile.Mobile.testFailover() } catch (t: Throwable) { } }
+        )
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
         SettingRow(

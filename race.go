@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -47,7 +48,15 @@ func (e *Engine) startAttempt(ctx context.Context, s Strategy, active bool) *att
 	}
 	Logf("▶ стратегия %s", s.ID)
 	Logf("   %s", describeStrategy(s))
-	go func() { a.errc <- e.cfg.Runner(actx, a.dev, s) }()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil { // сбой клиента туннеля не должен ронять приложение
+				Logf("💥 паника в клиенте туннеля %s: %v", s.ID, r)
+				a.errc <- fmt.Errorf("паника: %v", r)
+			}
+		}()
+		a.errc <- e.cfg.Runner(actx, a.dev, s)
+	}()
 	return a
 }
 
@@ -318,6 +327,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	bad, sbBad, ticks := 0, 0, 0
 	nextSb := time.Now().Add(3 * time.Second)
 	lastLearn := time.Time{}
+	lastBeat := time.Now()
 
 	// мгновенный переход на резерв; false — резерва нет
 	failover := func(reason string) bool {
@@ -358,6 +368,16 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			newSkip = ""
 			restart = true
 			return
+		case <-e.testFail:
+			Logf("🧪 тест: имитирую отказ основного туннеля %s", p.s.ID)
+			if sb == nil {
+				Logf("🧪 резерва сейчас нет — переключаться некуда (резерв поднимается в течение минуты после подключения)")
+				continue
+			}
+			t0 := time.Now()
+			if failover("тест переключения") {
+				Logf("🧪 переключение выполнено за %d мс", time.Since(t0).Milliseconds())
+			}
 		case v := <-res:
 			live--
 			if v.ok {
@@ -392,13 +412,24 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			}
 			ticks++
 			r, c, err := p.dev.probe(p.ctx, e.cfg.ProbeEvery)
+			e.noteProbe(err == nil)
+			if err != nil && p.ctx.Err() == nil {
+				// единичная потеря UDP — ещё не отказ: сразу повторяем пробу
+				r, c, err = p.dev.probe(p.ctx, 1500*time.Millisecond)
+				e.noteProbe(err == nil)
+			}
 			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
 				_, err = p.dev.tcpProbe(p.ctx, e.cfg.TCPTimeout)
 			}
+			limit := e.cfg.BadProbes
+			if sb != nil && limit > 2 {
+				limit = 2 // резерв готов — переходим на него быстрее
+			}
 			if err != nil {
 				bad++
-				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
-				if bad >= e.cfg.BadProbes {
+				Logf("   проба без ответа (%d из %d, в туннель ушло %d пакетов, пришло %d): %v", bad, limit,
+					atomic.LoadInt32(&p.dev.sent), atomic.LoadInt32(&p.dev.recv), err)
+				if bad >= limit {
 					e.blame(nk, p.s.ID)
 					e.emit("degraded", p.s.ID, "туннель перестал отвечать")
 					Logf("✘ туннель перестал отвечать")
@@ -444,6 +475,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if sb != nil {
 				if _, _, perr := sb.dev.probe(sb.ctx, 1500*time.Millisecond); perr != nil {
 					sbBad++
+					Logf("   резерв %s не ответил на пробу (%d из %d)", sb.s.ID, sbBad, e.cfg.BadProbes)
 					if sbBad >= e.cfg.BadProbes {
 						Logf("   резерв %s не отвечает — убираю", sb.s.ID)
 						sb.cancel()
@@ -453,6 +485,16 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				} else {
 					sbBad = 0
 				}
+			}
+			if time.Since(lastBeat) > 10*time.Minute {
+				lastBeat = time.Now()
+				sbName := "нет"
+				if sb != nil {
+					sbName = sb.s.ID
+				}
+				total, lost := e.probeStats()
+				Logf("💓 в порядке: основной %s, дата-центр %s, пинг %d мс, резерв: %s, проб потеряно %d из %d",
+					p.s.ID, colo, r.Milliseconds(), sbName, lost, total)
 			}
 			// новый резерв или проверка другой стратегии «на лету»
 			if sb == nil && live == 0 && time.Now().After(nextSb) {

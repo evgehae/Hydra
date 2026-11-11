@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.ParcelFileDescriptor
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
@@ -40,6 +41,16 @@ class HydraVpnService : VpnService() {
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var cellCallback: ConnectivityManager.NetworkCallback? = null
     private var forceCell = false
+
+    /** TUN живёт в службе: при перезапуске ядра интерфейс не пропадает, и трафик не уходит мимо VPN. */
+    private var tunPfd: ParcelFileDescriptor? = null
+    private var restartFails = 0
+    private var nextRestartAt = 0L
+
+    private fun closeTun() {
+        try { tunPfd?.close() } catch (t: Throwable) { }
+        tunPfd = null
+    }
 
     private fun jlog(s: String) { try { mobile.Mobile.logLine(s) } catch (t: Throwable) { } }
 
@@ -77,7 +88,7 @@ class HydraVpnService : VpnService() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CHANNEL)
-            .setContentTitle("Hydra")
+            .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pi)
@@ -116,8 +127,12 @@ class HydraVpnService : VpnService() {
                     else -> getString(R.string.notif_connecting)
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
-                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected) {
-                    Log.w(TAG, "ядро остановилось — поднимаю заново")
+                if (raw.startsWith("up")) restartFails = 0
+                val now = System.currentTimeMillis()
+                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt) {
+                    restartFails++
+                    nextRestartAt = now + minOf(60_000L, 3_000L shl minOf(restartFails, 5))
+                    jlog("служба: ядро остановлено — поднимаю заново (попытка $restartFails)")
                     startVpn()
                 }
             } catch (t: Throwable) {
@@ -132,6 +147,8 @@ class HydraVpnService : VpnService() {
         val running = try { !mobile.Mobile.engineStatus().startsWith("off") } catch (t: Throwable) { false }
         if (running) return
 
+        handler.removeCallbacks(statusUpdater)
+        handler.postDelayed(statusUpdater, 3000)
         val prefs = Prefs(this)
         forceCell = prefs.channel == "cell"
         try {
@@ -192,8 +209,8 @@ class HydraVpnService : VpnService() {
         val v4 = try { mobile.Mobile.accountAddr4(dir) } catch (t: Throwable) { "" }
         val v6 = try { mobile.Mobile.accountAddr6(dir) } catch (t: Throwable) { "" }
         if (v4.isEmpty()) {
-            Log.e(TAG, "нет аккаунта WARP")
-            stopVpn()
+            // аккаунта ещё нет (приложение само пробует зарегистрироваться): ждём и повторяем, VPN не бросаем
+            jlog("служба: нет аккаунта WARP — повторю позже")
             return
         }
 
@@ -270,20 +287,29 @@ class HydraVpnService : VpnService() {
             }
         }
 
-        val pfd = try { b.establish() } catch (e: Exception) { null }
+        val pfd = tunPfd ?: (try { b.establish() } catch (e: Exception) { null })
         if (pfd == null) {
             Log.e(TAG, "не удалось создать TUN")
+            jlog("служба: не удалось создать TUN (нет разрешения VPN?) — остановка")
             stopVpn()
             return
         }
+        tunPfd = pfd
+        // ядру отдаём копию дескриптора: когда оно закроет её, сам интерфейс остаётся у службы
+        val coreFd = try { ParcelFileDescriptor.dup(pfd.fileDescriptor) } catch (e: Exception) { null }
+        if (coreFd == null) {
+            jlog("служба: не удалось продублировать TUN — пересоздаю")
+            closeTun()
+            return
+        }
         val err = try {
-            mobile.Mobile.startTunnel(dir, pfd.detachFd().toLong())
+            mobile.Mobile.startTunnel(dir, coreFd.detachFd().toLong())
         } catch (t: Throwable) {
             t.message ?: "ошибка ядра"
         }
         if (err.isNotEmpty()) {
             Log.e(TAG, err)
-            stopVpn()
+            jlog("служба: ядро не запустилось: $err — повторю")
             return
         }
         watchNetwork()
@@ -378,6 +404,7 @@ class HydraVpnService : VpnService() {
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }
         handler.removeCallbacksAndMessages(null)
         try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        closeTun()
         stopSelf()
     }
 
@@ -394,6 +421,7 @@ class HydraVpnService : VpnService() {
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }
         try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        closeTun()
         super.onDestroy()
     }
 }
