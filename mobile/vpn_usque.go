@@ -156,14 +156,15 @@ func EngineStatus() string {
 // Diagnostics — сводка движка и памяти стратегий для отчёта.
 func Diagnostics() string {
 	out := ""
-	if e := vpnEngine; e != nil {
-		out += e.Stats()
-	} else {
-		out += "движок не запущен\n"
-	}
 	polMu.Lock()
 	nk := netKey
 	polMu.Unlock()
+	if e := vpnEngine; e != nil {
+		out += e.Stats()
+		out += e.PoolSummary(nk)
+	} else {
+		out += "движок не запущен\n"
+	}
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
 	}

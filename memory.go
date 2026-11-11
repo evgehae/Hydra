@@ -16,6 +16,7 @@ type stat struct {
 	Fail   int       `json:"fail"`
 	EWMAms float64   `json:"ewma_ms"`
 	LastOK time.Time `json:"last_ok"`
+	LastFail time.Time `json:"last_fail"`
 }
 
 // Memory — «память Гидры»: что работало в какой сети.
@@ -92,6 +93,7 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 		}
 	} else {
 		s.Fail++
+		s.LastFail = time.Now()
 	}
 	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
 		s.OK /= 2
@@ -187,7 +189,19 @@ func (m *Memory) Doomed(net, id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.Nets[net][id]
-	return st != nil && st.OK == 0 && st.Fail >= 3
+	// карантин на 12 часов после последнего сбоя: потом стратегии дают второй шанс (DPI меняется)
+	return st != nil && st.OK == 0 && st.Fail >= 3 && time.Since(st.LastFail) < 12*time.Hour
+}
+
+// Stat — опыт стратегии в этой сети.
+func (m *Memory) Stat(net, id string) (ok, fail int, lastOK, lastFail time.Time, found bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	if st == nil {
+		return 0, 0, time.Time{}, time.Time{}, false
+	}
+	return st.OK, st.Fail, st.LastOK, st.LastFail, true
 }
 
 // priorLocked — оценка стратегии для сети без истории: опыт в других сетях того же класса

@@ -1,8 +1,10 @@
 package hydra
 
 import (
+	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -17,6 +19,12 @@ type FakeSpec struct {
 	TTL      int // 0 — отправлять с обычным TTL
 	// PerInit — «мусор» перед каждым рукопожатием WireGuard (сообщение типа 1).
 	PerInit func() [][]byte
+	// UseReserved: в каждом сообщении WireGuard байты 1–3 заменяются на Reserved (как у клиентов WARP,
+	// они берутся из client_id аккаунта); от сервера эти байты обнуляются обратно.
+	UseReserved bool
+	Reserved    [3]byte
+	// CountWG: считать сообщения WireGuard по типам (для диагностики).
+	CountWG bool
 }
 
 type UDPRelay struct {
@@ -27,6 +35,22 @@ type UDPRelay struct {
 	mu    sync.Mutex
 	peers map[string]*net.UDPConn
 	once  sync.Once
+
+	out, in [6]int32 // сообщения WireGuard по типам: 1 init, 2 ответ, 3 cookie, 4 данные, 5 прочее
+}
+
+func wgType(p []byte) int {
+	if len(p) >= 4 && p[0] >= 1 && p[0] <= 4 && p[1] == 0 && p[2] == 0 && p[3] == 0 {
+		return int(p[0])
+	}
+	return 5
+}
+
+// Stats — сколько сообщений WireGuard прошло через переходник (для отчёта).
+func (r *UDPRelay) Stats() string {
+	g := func(a *[6]int32, i int) int32 { return atomic.LoadInt32(&a[i]) }
+	return fmt.Sprintf("к серверу: рукопожатий %d, данных %d; от сервера: ответов %d, данных %d, cookie %d, прочих %d",
+		g(&r.out, 1), g(&r.out, 4), g(&r.in, 2), g(&r.in, 4), g(&r.in, 3), g(&r.in, 5))
 }
 
 func StartUDPRelay(remote *net.UDPAddr, fake FakeSpec) (*UDPRelay, error) {
@@ -60,12 +84,19 @@ func (r *UDPRelay) loop() {
 			return
 		}
 		if up := r.peer(from); up != nil {
-			if r.fake.PerInit != nil && IsWGInit(buf[:n]) {
+			pkt := buf[:n]
+			if r.fake.PerInit != nil && IsWGInit(pkt) {
 				for _, j := range r.fake.PerInit() {
 					up.Write(j)
 				}
 			}
-			up.Write(buf[:n])
+			if r.fake.CountWG {
+				atomic.AddInt32(&r.out[wgType(pkt)], 1)
+			}
+			if r.fake.UseReserved && wgType(pkt) != 5 {
+				copy(pkt[1:4], r.fake.Reserved[:])
+			}
+			up.Write(pkt)
 		}
 	}
 }
@@ -93,7 +124,14 @@ func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
 			if err != nil {
 				return
 			}
-			r.local.WriteToUDP(buf[:n], from)
+			pkt := buf[:n]
+			if r.fake.UseReserved && len(pkt) >= 4 && pkt[0] >= 1 && pkt[0] <= 4 {
+				pkt[1], pkt[2], pkt[3] = 0, 0, 0
+			}
+			if r.fake.CountWG {
+				atomic.AddInt32(&r.in[wgType(pkt)], 1)
+			}
+			r.local.WriteToUDP(pkt, from)
 		}
 	}()
 	return c

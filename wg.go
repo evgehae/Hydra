@@ -245,6 +245,13 @@ func WGStrategies(acc *Account) []Strategy {
 		}
 		return Strategy{ID: fmt.Sprintf("wg/%s/%s", ep, alias), Transport: "wg", Params: p}
 	}
+	// близнец стратегии с reserved-байтами из client_id (так подключаются клиенты WARP)
+	rsv := acc.ClientID != "" && !acc.Custom
+	mkr := func(ep, sig string, jc, jmin, jmax int, alias string) Strategy {
+		s := mk(ep, sig, jc, jmin, jmax, alias+"r")
+		s.Params["rsv"] = "1"
+		return s
+	}
 	var out []Strategy
 	if acc.Custom {
 		// своя конфигурация: сначала ровно как написано, потом тот же адрес с прологом или без него
@@ -272,9 +279,15 @@ func WGStrategies(acc *Account) []Strategy {
 	for _, h := range hosts {
 		ep := net.JoinHostPort(h, "2408")
 		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
+		if rsv {
+			out = append(out, mkr(ep, "quic", 3, 41, 78, "q3"))
+		}
 		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
 		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
 		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
+		if rsv {
+			out = append(out, mkr(ep, "", 0, 0, 0, "plain"))
+		}
 	}
 	// 2) по одному адресу из каждой подсети (разные подсети — разные дата-центры)
 	for _, host := range []int{3, 1} {
@@ -285,6 +298,9 @@ func WGStrategies(acc *Account) []Strategy {
 			}
 			seen[h] = true
 			out = append(out, mk(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
+			if rsv {
+				out = append(out, mkr(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
+			}
 		}
 	}
 	// 3) другие порты: некоторые провайдеры режут именно 2408

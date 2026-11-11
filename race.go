@@ -3,6 +3,7 @@ package hydra
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -28,6 +29,7 @@ type attempt struct {
 	start  time.Time
 	colo   string
 	rtt    time.Duration
+	tester bool // короткая фоновая проверка, а не резерв
 }
 
 type verdict struct {
@@ -110,6 +112,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 			hint = " — из туннеля не пришло ни одного пакета: похоже, QUIC к этому адресу режется"
 		}
 		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с (в туннель ушло пакетов: " + itoa(sent) + ", пришло из туннеля: " + itoa(recv) + ")" + hint
+		if x := a.dev.extra(); x != "" {
+			msg += " [" + x + "]"
+		}
 		Logf("   ✘ %s: %s", s.ID, msg)
 		return false, e.fail(nk, s, msg)
 	}
@@ -328,6 +333,21 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	nextSb := time.Now().Add(3 * time.Second)
 	lastLearn := time.Time{}
 	lastBeat := time.Now()
+	testing := 0
+	testedAt := map[string]time.Time{}
+	lastTest := time.Now().Add(-time.Hour)
+	lastGen := time.Time{}
+	lastPrune := time.Now()
+	launchTester := func(s Strategy) {
+		a := e.startAttempt(ctx, s, false)
+		a.tester = true
+		all = append(all, a)
+		testing++
+		go func() {
+			ok, o := e.verify(nk, a)
+			res <- verdict{a, ok, o}
+		}()
+	}
 
 	// мгновенный переход на резерв; false — резерва нет
 	failover := func(reason string) bool {
@@ -379,6 +399,20 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				Logf("🧪 переключение выполнено за %d мс", time.Since(t0).Milliseconds())
 			}
 		case v := <-res:
+			if v.a.tester {
+				testing--
+				v.a.cancel()
+				if v.ok {
+					Logf("🔬 %s: работает (дата-центр %s, %d мс)", v.a.s.ID, v.a.colo, v.a.rtt.Milliseconds())
+				} else if v.o.reason != "остановка" {
+					Logf("🔬 %s: не работает — %s", v.a.s.ID, v.o.reason)
+					if v.o.coloBlocked != "" {
+						noteFail(v)
+					}
+				}
+				Logf("🔬 %s", strings.TrimSpace(e.PoolSummary(nk)))
+				continue
+			}
 			live--
 			if v.ok {
 				if sb == nil {
@@ -495,6 +529,41 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				total, lost := e.probeStats()
 				Logf("💓 в порядке: основной %s, дата-центр %s, пинг %d мс, резерв: %s, проб потеряно %d из %d",
 					p.s.ID, colo, r.Milliseconds(), sbName, lost, total)
+				Logf("💓 %s", strings.TrimSpace(e.PoolSummary(nk)))
+			}
+			if time.Since(lastPrune) > 10*time.Minute {
+				lastPrune = time.Now()
+				if n := e.cfg.Mem.Prune(nk); n > 0 {
+					Logf("🧹 убрал %d придуманных способов, которые не работают", n)
+				}
+			}
+			// обслуживание пула: фоновая проверка запасных стратегий и пополнение нехватки
+			if testing == 0 && bad == 0 && time.Since(p.start) > 20*time.Second {
+				every := testSlow
+				if e.hasDeficit(nk) {
+					every = testFast
+				}
+				if time.Since(lastTest) >= every {
+					excl := map[string]bool{p.s.ID: true}
+					if sb != nil {
+						excl[sb.s.ID] = true
+					}
+					if s, why, ok := e.pickTest(nk, excl, blocked, testedAt); ok {
+						lastTest = time.Now()
+						testedAt[s.ID] = lastTest
+						Logf("🔬 проверяю запасную стратегию (%s): %s", why, s.ID)
+						launchTester(s)
+					} else if time.Since(lastGen) > 5*time.Minute {
+						lastGen = time.Now()
+						h, _, _ := e.poolCounts(nk)
+						for _, f := range poolFams {
+							if h[f] < poolTargets[f] {
+								e.grow(nk)
+								break
+							}
+						}
+					}
+				}
 			}
 			// новый резерв или проверка другой стратегии «на лету»
 			if sb == nil && live == 0 && time.Now().After(nextSb) {

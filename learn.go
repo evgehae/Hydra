@@ -50,12 +50,15 @@ func family(s Strategy) string {
 
 // GenerateVariants возвращает до n новых вариантов на основе лучших известных в этой сети:
 // QUIC с фейковыми пакетами (h3), HTTP/2 (h2) и WireGuard с «мусорным» прологом (wg).
-func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand) []Strategy {
+func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand, needOK bool) []Strategy {
 	parents := map[string][]Strategy{}
 	for _, s := range mem.Rank(nk, all) {
 		f := family(s)
 		if f == "" || len(parents[f]) >= 3 {
 			continue
+		}
+		if needOK && !mem.Worked(nk, s.ID) {
+			continue // для пополнения пула берём «родителями» только то, что уже работало
 		}
 		parents[f] = append(parents[f], s)
 	}
@@ -122,7 +125,11 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
-			id = fmt.Sprintf("wg/%s/g:%d-%d-%d", q["endpoint"], jc, jmin, jmax)
+			sfx := ""
+			if q["rsv"] == "1" {
+				sfx = "r"
+			}
+			id = fmt.Sprintf("wg/%s/g:%d-%d-%d%s", q["endpoint"], jc, jmin, jmax, sfx)
 		}
 		if id == "" || have[id] {
 			continue
@@ -139,7 +146,7 @@ func (e *Engine) learn(nk string) {
 		return
 	}
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd)
+	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd, false)
 	if len(gen) == 0 {
 		return
 	}
@@ -170,4 +177,18 @@ func (e *Engine) waitOnline(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// grow пополняет пул: придумывает новые варианты на основе стратегий, которые уже работали.
+func (e *Engine) grow(nk string) {
+	if e.cfg.Mem == nil {
+		return
+	}
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd, true)
+	if len(gen) == 0 {
+		return
+	}
+	e.cfg.Mem.AddGenerated(nk, gen)
+	Logf("🧬 пополняю пул: придумал %d новых вариантов на основе работающих", len(gen))
 }

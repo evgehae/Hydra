@@ -192,6 +192,17 @@ type attemptDev struct {
 	sent    int32         // сколько пакетов клиент туннеля забрал у нас (пробы и трафик)
 	recv    int32         // сколько пакетов клиент туннеля отдал нам
 	wake    chan struct{} // будит ReadPacket, когда карта становится активной
+	stats   atomic.Value  // func() string: дополнительные счётчики клиента туннеля (например WireGuard)
+}
+
+// SetStats принимает от клиента туннеля функцию с его счётчиками для диагностики.
+func (d *attemptDev) SetStats(f func() string) { d.stats.Store(f) }
+
+func (d *attemptDev) extra() string {
+	if f, ok := d.stats.Load().(func() string); ok {
+		return f()
+	}
+	return ""
 }
 
 func newAttemptDev(e *Engine, done <-chan struct{}, active bool) *attemptDev {
