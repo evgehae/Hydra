@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=15
+NEW=16
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -175,6 +175,15 @@ putv app/src/main/AndroidManifest.xml <<'HYDRA_EOF'
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
 HYDRA_EOF
@@ -1331,29 +1340,61 @@ fun journalErrors(): List<String> = try {
     mobile.Mobile.getJournal(0).lines().filter { it.contains("✘") || it.contains("⚠") || it.contains("⛔") || it.contains("ошибк", true) }
 } catch (t: Throwable) { emptyList() }
 
-/** Текст отчёта для разработчика: версия, устройство, состояние, проверки, журнал. Ключи и токены не включаются. */
+/** Полный отчёт: система, настройки, состояние движка и память, проверки, журнал. Ключи и токены не включаются. */
 fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, account: AccountController, checks: List<DiagCheck>): String {
     val sb = StringBuilder()
     sb.append("Hydra report ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())).append('\n')
-    sb.append("device: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
-        .append(", Android ").append(android.os.Build.VERSION.RELEASE).append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n")
     sb.append("core: ").append(try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" }).append('\n')
+    sb.append("\n--- состояние ---\n")
     sb.append("state: ").append(vpn.state).append(", strategy: ").append(vpn.strategy).append(", colo: ").append(vpn.colo)
         .append(", rtt: ").append(vpn.rttMs).append(" ms, rx/tx: ").append(fmtBytes(vpn.rxBytes)).append(" / ").append(fmtBytes(vpn.txBytes)).append('\n')
     if (vpn.message.isNotEmpty()) sb.append("message: ").append(vpn.message).append('\n')
-    sb.append("network: ").append(networkType(ctx)).append('\n')
     sb.append("account: masque=").append(account.id.take(8)).append(" wg=").append(account.wgId.take(8)).append('\n')
     sb.append("settings: protocol=").append(prefs.protocol).append(", channel=").append(prefs.channel)
         .append(", blockedColos=").append(prefs.blockedColos).append(", allowColos=").append(prefs.allowColos)
-        .append(", fallbackAny=").append(prefs.fallbackAny).append(", customSni=").append(prefs.customSni)
-        .append(", customEndpoint=").append(prefs.customEndpoint).append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off").append('\n')
+        .append(", fallbackAny=").append(prefs.fallbackAny).append(", parallel=").append(prefs.parallel)
+        .append(", autostart=").append(prefs.autoStart)
+        .append(", customSni=").append(prefs.customSni).append(", customEndpoint=").append(prefs.customEndpoint)
+        .append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off")
+        .append(", excludedRoutes=").append(prefs.excludedRoutes.split(',').size)
+        .append(", splitOnlySelected=").append(prefs.splitOnlySelected).append(", splitApps=").append(prefs.splitApps.size).append('\n')
+    sb.append("\n--- движок и память ---\n")
+    sb.append(try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "н/д\n" })
+    sb.append("\n--- система ---\n")
+    sb.append(try { systemReport(ctx) } catch (t: Throwable) { "н/д\n" })
     if (checks.isNotEmpty()) {
-        sb.append("\n--- checks ---\n")
+        sb.append("\n--- проверки (мимо VPN) ---\n")
         checks.forEach { sb.append(if (it.ok) "OK   " else "FAIL ").append(it.name).append(": ").append(it.detail).append('\n') }
     }
-    sb.append("\n--- journal ---\n")
-    sb.append(try { mobile.Mobile.getJournal(600) } catch (t: Throwable) { "" })
+    sb.append("\n--- журнал ---\n")
+    sb.append(try { mobile.Mobile.getJournal(1500) } catch (t: Throwable) { "" })
     return sb.toString()
+}
+
+/** Отправляет отчёт файлом .txt (так его принимают мессенджеры и почта); если не вышло — текстом. */
+fun shareReport(ctx: android.content.Context, text: String) {
+    try {
+        val dir = java.io.File(ctx.cacheDir, "reports")
+        dir.mkdirs()
+        dir.listFiles()?.forEach { if (it.name.startsWith("hydra-report")) it.delete() }
+        val name = "hydra-report-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
+        val f = java.io.File(dir, name)
+        f.writeText(text)
+        val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+        val i = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, name)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        i.clipData = android.content.ClipData.newRawUri(name, uri)
+        ctx.startActivity(android.content.Intent.createChooser(i, null).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+    } catch (t: Throwable) {
+        try {
+            val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text.takeLast(200_000))
+            ctx.startActivity(android.content.Intent.createChooser(i, null))
+        } catch (t2: Throwable) { }
+    }
 }
 HYDRA_EOF
 
@@ -1362,6 +1403,7 @@ package app.hydra
 
 import android.content.Intent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -1404,6 +1446,8 @@ fun DiagnosticsScreen(
     var quick by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     var showResult by remember { mutableStateOf(false) }
+    var showQuick by remember { mutableStateOf(false) }
+    var showSys by remember { mutableStateOf(false) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -1449,7 +1493,16 @@ fun DiagnosticsScreen(
             onClick = {
                 if (!quick) {
                     quick = true
-                    scope.launch { base = runDiagnostics(); quick = false }
+                    scope.launch {
+                        val r = runDiagnostics()
+                        base = r
+                        quick = false
+                        try {
+                            mobile.Mobile.logLine("🔎 быстрая проверка (мимо VPN): DNS " + (if (r.dnsOk) "ок ${r.dnsMs} мс" else "сбой") +
+                                ", HTTPS " + (if (r.httpsOk) "ок ${r.httpsMs} мс" else "сбой") + ", дата-центр " + r.colo + ", IP " + r.ip)
+                        } catch (t: Throwable) { }
+                        showQuick = true
+                    }
                 }
             }
         )
@@ -1471,12 +1524,15 @@ fun DiagnosticsScreen(
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
         SettingRow(
+            stringResource(R.string.diag_sys),
+            stringResource(R.string.diag_sys_sub),
+            onClick = { showSys = true }
+        )
+        SettingRow(
             stringResource(R.string.diag_share),
             stringResource(R.string.diag_share_sub),
             onClick = {
-                val text = buildReport(ctx, prefs, vpn, account, checks)
-                val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+                shareReport(ctx, buildReport(ctx, prefs, vpn, account, checks))
             }
         )
         SettingRow(
@@ -1513,13 +1569,51 @@ fun DiagnosticsScreen(
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     showResult = false
-                    val text = buildReport(ctx, prefs, vpn, account, checks)
-                    val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                    try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+                    shareReport(ctx, buildReport(ctx, prefs, vpn, account, checks))
                 }) { Text(stringResource(R.string.diag_share)) }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showResult = false }) { Text(stringResource(R.string.btn_ok)) }
+            }
+        )
+    }
+    if (showQuick) {
+        val r = base
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showQuick = false },
+            title = { Text(stringResource(R.string.diag_quick)) },
+            text = {
+                Column {
+                    if (r != null) {
+                        Text((if (r.dnsOk) "✔ " else "✘ ") + stringResource(R.string.chk_dns) + ": " + (if (r.dnsOk) "${r.dnsMs} ms" else stringResource(R.string.diag_fail)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text((if (r.httpsOk) "✔ " else "✘ ") + stringResource(R.string.chk_https) + ": " + (if (r.httpsOk) "${r.httpsMs} ms" else stringResource(R.string.diag_fail)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text(stringResource(R.string.diag_dc) + ": " + (if (r.colo.isEmpty()) "—" else coloLabel(r.colo)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text(stringResource(R.string.diag_ip) + ": " + (if (r.ip.isEmpty()) "—" else r.ip), modifier = Modifier.padding(vertical = 3.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showQuick = false }) { Text(stringResource(R.string.btn_ok)) }
+            }
+        )
+    }
+    if (showSys) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showSys = false },
+            title = { Text(stringResource(R.string.diag_sys)) },
+            text = {
+                SelectionContainer {
+                    Text(
+                        (try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "" }) + "\n" + systemReport(ctx),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showSys = false }) { Text(stringResource(R.string.btn_ok)) }
             }
         )
     }
@@ -2069,7 +2163,22 @@ class HydraVpnService : VpnService() {
     private var cellCallback: ConnectivityManager.NetworkCallback? = null
     private var forceCell = false
 
+    private fun jlog(s: String) { try { mobile.Mobile.logLine(s) } catch (t: Throwable) { } }
+
+    private fun describeNet(n: Network): String = try {
+        val c = cm().getNetworkCapabilities(n)
+        val t = when {
+            c == null -> "?"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "сотовая"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "другая"
+        }
+        t + (if (c?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) ", проверена" else ", не проверена")
+    } catch (t: Throwable) { "?" }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        jlog("служба: команда " + (intent?.action ?: "перезапуск системой / запуск"))
         goForeground(getString(R.string.notif_connecting))
         val prefs = Prefs(this)
         if (intent?.action == ACTION_STOP) {
@@ -2153,6 +2262,7 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
             mobile.Mobile.setParallel(if (prefs.parallel) 3L else 1L)
+            jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=${prefs.parallel}, свой DNS=${if (prefs.customDnsOn) prefs.customDns else "нет"}")
             mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
@@ -2368,8 +2478,8 @@ class HydraVpnService : VpnService() {
                     try { mobile.Mobile.setNetKey(currentNetKey()) } catch (t: Throwable) { }
                 }, 300)
             }
-            override fun onAvailable(network: Network) = push()
-            override fun onLost(network: Network) = push()
+            override fun onAvailable(network: Network) { jlog("📶 сеть появилась: " + describeNet(network)); push() }
+            override fun onLost(network: Network) { jlog("📶 сеть пропала"); push() }
         }
         netCallback = cb
         try {
@@ -2380,6 +2490,7 @@ class HydraVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        jlog("служба: остановка")
         Prefs(this).wantConnected = false
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (t: Throwable) { }
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
@@ -2393,11 +2504,13 @@ class HydraVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        jlog("система отозвала VPN (включён другой VPN или VPN выключен в настройках)")
         stopVpn()
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        jlog("служба: уничтожена")
         handler.removeCallbacksAndMessages(null)
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
@@ -2646,6 +2759,97 @@ class Prefs(ctx: Context) {
 
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
+}
+HYDRA_EOF
+
+putv app/src/main/java/app/hydra/SystemInfo.kt <<'HYDRA_EOF'
+package app.hydra
+
+import android.app.ActivityManager
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
+import android.os.PowerManager
+import android.os.SystemClock
+import android.provider.Settings
+import android.telephony.TelephonyManager
+import androidx.core.app.NotificationManagerCompat
+import java.util.Locale
+import java.util.TimeZone
+
+private fun safe(f: () -> String): String = try { f() } catch (t: Throwable) { "н/д" }
+
+/** Всё, что в системе влияет на работу VPN: сети, батарея, режимы Android, DNS, оператор. */
+fun systemReport(ctx: Context): String {
+    val sb = StringBuilder()
+    fun line(k: String, v: String) { sb.append(k).append(": ").append(v).append('\n') }
+
+    line("приложение", safe { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?" })
+    line("устройство", "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), ${Build.HARDWARE}")
+    line("система", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), патч ${Build.VERSION.SECURITY_PATCH}, сборка ${Build.DISPLAY}")
+    line("язык / часовой пояс", Locale.getDefault().toString() + " / " + TimeZone.getDefault().id)
+    line("время на телефоне", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(java.util.Date()))
+    line("телефон включён", (SystemClock.elapsedRealtime() / 60000).toString() + " мин")
+
+    // питание и фон: частая причина того, что систему «убивает» VPN
+    line("экономия батареи Android", safe { (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode.toString() })
+    line("режим Doze", safe { (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isDeviceIdleMode.toString() })
+    line("вне оптимизации батареи", safe { (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName).toString() })
+    line("фон ограничен системой", safe { (ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isBackgroundRestricted.toString() })
+    line("группа ожидания (10 активно … 45 ограничено)", safe { (ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager).appStandbyBucket.toString() })
+    line("уведомления разрешены", safe { NotificationManagerCompat.from(ctx).areNotificationsEnabled().toString() })
+    val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    line("экономия трафика (1 выкл, 2 исключение, 3 вкл)", safe { cm.restrictBackgroundStatus.toString() })
+    line("постоянный VPN (приложение)", safe { Settings.Secure.getString(ctx.contentResolver, "always_on_vpn_app") ?: "нет" })
+    line("блокировка без VPN", safe { Settings.Secure.getInt(ctx.contentResolver, "always_on_vpn_lockdown", 0).toString() })
+    line("частный DNS Android", safe {
+        (Settings.Global.getString(ctx.contentResolver, "private_dns_mode") ?: "н/д") + " " +
+            (Settings.Global.getString(ctx.contentResolver, "private_dns_specifier") ?: "")
+    })
+    line("режим «в самолёте»", safe { Settings.Global.getInt(ctx.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0).toString() })
+
+    // оператор
+    safe {
+        val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        line("оператор сети", "${tm.networkOperatorName} (${tm.networkOperator}), SIM ${tm.simOperator}, роуминг ${tm.isNetworkRoaming}")
+        ""
+    }
+
+    // сети
+    val active = safe { cm.activeNetwork.toString() }
+    sb.append("\nсети (активная: ").append(active).append("):\n")
+    try {
+        for (n in cm.allNetworks) {
+            val c = cm.getNetworkCapabilities(n)
+            val lp = cm.getLinkProperties(n)
+            val tr = listOf(
+                NetworkCapabilities.TRANSPORT_WIFI to "Wi-Fi",
+                NetworkCapabilities.TRANSPORT_CELLULAR to "сотовая",
+                NetworkCapabilities.TRANSPORT_VPN to "VPN",
+                NetworkCapabilities.TRANSPORT_ETHERNET to "Ethernet"
+            ).filter { c?.hasTransport(it.first) == true }.joinToString("+") { it.second }
+            val caps = listOf(
+                NetworkCapabilities.NET_CAPABILITY_INTERNET to "интернет",
+                NetworkCapabilities.NET_CAPABILITY_VALIDATED to "проверена",
+                NetworkCapabilities.NET_CAPABILITY_NOT_METERED to "безлимит",
+                NetworkCapabilities.NET_CAPABILITY_NOT_VPN to "не VPN"
+            ).filter { c?.hasCapability(it.first) == true }.joinToString(",") { it.second }
+            sb.append(" - ").append(n.toString()).append(' ').append(tr.ifEmpty { "?" }).append(" [").append(caps).append("]")
+            sb.append(" вниз ").append(c?.linkDownstreamBandwidthKbps ?: 0).append(" кбит/с")
+            sb.append(" if=").append(lp?.interfaceName ?: "?")
+            sb.append(" адреса=").append(lp?.linkAddresses?.joinToString(",") { it.address.hostAddress ?: "" } ?: "")
+            sb.append(" шлюз=").append(lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress ?: "")
+            sb.append(" DNS=").append(lp?.dnsServers?.joinToString(",") { it.hostAddress ?: "" } ?: "")
+            if (Build.VERSION.SDK_INT >= 29) sb.append(" MTU=").append(lp?.mtu ?: 0)
+            if (lp?.isPrivateDnsActive == true) sb.append(" частный DNS=").append(lp?.privateDnsServerName ?: "авто")
+            sb.append('\n')
+        }
+    } catch (t: Throwable) {
+        sb.append("  не удалось прочитать: ").append(t.message).append('\n')
+    }
+    return sb.toString()
 }
 HYDRA_EOF
 
@@ -5250,6 +5454,8 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="adv_parallel">Параллельный режим и горячий резерв</string>
     <string name="adv_parallel_sub">Несколько путей одновременно, мгновенный переход на резерв при сбое. Отключите, если что-то работает странно.</string>
     <string name="diag_full_running">Проверяю, это займёт несколько секунд…</string>
+    <string name="diag_sys">Состояние системы и памяти</string>
+    <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
 </resources>
 HYDRA_EOF
 
@@ -5510,6 +5716,8 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="adv_parallel">Parallel mode and hot standby</string>
     <string name="adv_parallel_sub">Several paths at once, instant switch to the standby on failure. Turn off if something misbehaves.</string>
     <string name="diag_full_running">Checking, this takes a few seconds…</string>
+    <string name="diag_sys">System state and memory</string>
+    <string name="diag_sys_sub">Networks, battery, Android modes, DNS, operator, strategy memory</string>
 </resources>
 HYDRA_EOF
 
@@ -5522,6 +5730,13 @@ putv app/src/main/res/values/themes.xml <<'HYDRA_EOF'
         <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
+HYDRA_EOF
+
+putv app/src/main/res/xml/file_paths.xml <<'HYDRA_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="reports" path="reports/" />
+</paths>
 HYDRA_EOF
 
 putv build.gradle.kts <<'HYDRA_EOF'
@@ -5944,6 +6159,12 @@ type Engine struct {
 	once    sync.Once
 	soft    bool
 
+	// статистика работы (под mu)
+	nConnect, nFailover, nLost int
+	upSince                    time.Time
+	lastFail                   string
+	lastFailAt                 time.Time
+
 	mu      sync.Mutex
 	status  Status
 	waiters map[uint16]chan string
@@ -6046,6 +6267,8 @@ type attemptDev struct {
 	tcpSeq  uint32
 	tcpAck  chan struct{}
 	active  int32         // 1 — через эту карту идёт трафик приложений
+	sent    int32         // сколько пакетов клиент туннеля забрал у нас (пробы и трафик)
+	recv    int32         // сколько пакетов клиент туннеля отдал нам
 	wake    chan struct{} // будит ReadPacket, когда карта становится активной
 }
 
@@ -6089,8 +6312,10 @@ func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
 		case <-d.e.tunDead:
 			return 0, io.EOF
 		case p := <-d.probeQ:
+			atomic.AddInt32(&d.sent, 1)
 			return copy(buf, p), nil
 		case p := <-outc:
+			atomic.AddInt32(&d.sent, 1)
 			return copy(buf, p), nil
 		case <-d.wake:
 		}
@@ -6103,6 +6328,7 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 		return io.ErrClosedPipe
 	default:
 	}
+	atomic.AddInt32(&d.recv, 1)
 	if id, colo, ok := ParseColoReply(pkt, d.port); ok {
 		d.e.deliver(id, colo)
 		return nil
@@ -6401,6 +6627,10 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.Close()
 	go e.readTun()
+	select { // стартовый сигнал о смене сети (его присылает Android при запуске) не нужен
+	case <-e.cfg.NetChanged:
+	default:
+	}
 	Logf("Гидра запущена: стратегий %d, запрещённые дата-центры: %s", len(e.cfg.Strategies), policyText(e.cfg.Policy))
 
 	backoff := time.Second
@@ -6519,6 +6749,44 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func (e *Engine) noteConnect() {
+	e.mu.Lock()
+	e.nConnect++
+	e.upSince = time.Now()
+	e.mu.Unlock()
+}
+
+func (e *Engine) noteLoss(reason string, failover bool) {
+	e.mu.Lock()
+	if failover {
+		e.nFailover++
+	} else {
+		e.nLost++
+	}
+	e.lastFail = reason
+	e.lastFailAt = time.Now()
+	e.mu.Unlock()
+}
+
+// Stats — сводка работы движка для диагностики.
+func (e *Engine) Stats() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	mode := "по очереди"
+	if e.cfg.Parallel > 1 {
+		mode = "параллельный (гонка + горячий резерв)"
+	}
+	s := "режим: " + mode + "\n"
+	s += "подключений: " + itoa(e.nConnect) + ", мгновенных переходов на резерв: " + itoa(e.nFailover) + ", потерь без резерва: " + itoa(e.nLost) + "\n"
+	if !e.upSince.IsZero() {
+		s += "с последнего подключения: " + time.Since(e.upSince).Round(time.Second).String() + "\n"
+	}
+	if e.lastFail != "" {
+		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"
+	}
+	return s
 }
 HYDRA_EOF
 
@@ -7439,6 +7707,7 @@ package hydra
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -7678,6 +7947,39 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 		return rate - pen + bonus
 	}
 	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
+	return out
+}
+
+// Summary — читаемая сводка памяти для диагностики: лучшие стратегии в этой сети и счётчики.
+func (m *Memory) Summary(net string, n int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ns := m.Nets[net]
+	type row struct {
+		id string
+		st *stat
+	}
+	rows := make([]row, 0, len(ns))
+	for id, st := range ns {
+		rows = append(rows, row{id, st})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].st.OK != rows[j].st.OK {
+			return rows[i].st.OK > rows[j].st.OK
+		}
+		return rows[i].st.Fail < rows[j].st.Fail
+	})
+	out := fmt.Sprintf("память: сетей %d; в этой сети (%s) стратегий с опытом %d, придуманных %d\n", len(m.Nets), net, len(ns), len(m.Gen[net]))
+	for i, r := range rows {
+		if i >= n {
+			break
+		}
+		last := "—"
+		if !r.st.LastOK.IsZero() {
+			last = r.st.LastOK.Format("01-02 15:04")
+		}
+		out += fmt.Sprintf("  %s: успехов %d, сбоев %d, ~%.0f мс, последний успех %s\n", r.id, r.st.OK, r.st.Fail, r.st.EWMAms, last)
+	}
 	return out
 }
 HYDRA_EOF
@@ -8065,6 +8367,7 @@ import (
 var (
 	vpnMu     sync.Mutex
 	vpnEngine *hydra.Engine
+	vpnMem    *hydra.Memory
 	vpnCancel context.CancelFunc
 )
 
@@ -8137,6 +8440,7 @@ func StartTunnel(dir string, tunFd int) string {
 		return "в аккаунте нет IPv4-адреса"
 	}
 	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
+	vpnMem = mem
 
 	cfg := hydra.DefaultEngineConfig()
 	cfg.LocalIP = ip
@@ -8192,6 +8496,23 @@ func EngineStatus() string {
 	rx, tx := e.Traffic()
 	return fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d", st.State, st.Strategy, st.Colo,
 		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"), rx, tx)
+}
+
+// Diagnostics — сводка движка и памяти стратегий для отчёта.
+func Diagnostics() string {
+	out := ""
+	if e := vpnEngine; e != nil {
+		out += e.Stats()
+	} else {
+		out += "движок не запущен\n"
+	}
+	polMu.Lock()
+	nk := netKey
+	polMu.Unlock()
+	if m := vpnMem; m != nil {
+		out += m.Summary(nk, 15)
+	}
+	return out
 }
 HYDRA_EOF
 
@@ -9203,6 +9524,7 @@ package hydra
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 )
 
@@ -9288,13 +9610,19 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 		}
 	}
 	if !up {
+		sent, recv := int(atomic.LoadInt32(&a.dev.sent)), int(atomic.LoadInt32(&a.dev.recv))
 		hint := ""
-		if s.Transport == "wg" {
-			hint = " — похоже, провайдер режет WireGuard (UDP) к этому адресу"
-		} else if s.Params["h2"] != "1" {
-			hint = " — похоже, провайдер режет QUIC к этому адресу"
+		switch {
+		case recv > 0:
+			hint = " — пакеты из туннеля приходят, но проба без ответа: сервер принял туннель, но не пропускает трафик"
+		case s.Transport == "wg":
+			hint = " — WireGuard: рукопожатие могло пройти, но данные из туннеля не возвращаются"
+		case s.Params["h2"] == "1":
+			hint = " — из туннеля не пришло ни одного пакета (HTTP/2 к этому адресу)"
+		default:
+			hint = " — из туннеля не пришло ни одного пакета: похоже, QUIC к этому адресу режется"
 		}
-		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с" + hint
+		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с (в туннель ушло пакетов: " + itoa(sent) + ", пришло из туннеля: " + itoa(recv) + ")" + hint
 		Logf("   ✘ %s: %s", s.ID, msg)
 		return false, e.fail(nk, s, msg)
 	}
@@ -9348,34 +9676,41 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// pickStandby выбирает стратегию для резерва: лучшая по памяти, по возможности с другим адресом, чем у основной.
+// pickStandby выбирает стратегию для резерва: лучшая по памяти того же транспорта, что и основная,
+// по возможности с другим адресом; другие транспорты — только если своих кандидатов не осталось.
 func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]time.Time, tried map[string]time.Time) (Strategy, bool) {
 	pep := hostOnly(primary.Params["endpoint"])
 	ranked := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
-	var fb Strategy
-	haveFB := false
-	for _, s := range ranked {
-		if s.ID == primary.ID {
-			continue
+	pass := func(sameTransport bool) (Strategy, bool) {
+		var fb Strategy
+		haveFB := false
+		for _, s := range ranked {
+			if s.ID == primary.ID || (s.Transport == primary.Transport) != sameTransport {
+				continue
+			}
+			if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
+				continue
+			}
+			ep := s.Params["endpoint"]
+			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+				continue
+			}
+			if e.cfg.Mem.Doomed(nk, s.ID) {
+				continue
+			}
+			if hostOnly(ep) != pep {
+				return s, true
+			}
+			if !haveFB {
+				fb, haveFB = s, true
+			}
 		}
-		if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
-			continue
-		}
-		ep := s.Params["endpoint"]
-		if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
-			continue
-		}
-		if e.cfg.Mem.Doomed(nk, s.ID) {
-			continue
-		}
-		if hostOnly(ep) != pep {
-			return s, true
-		}
-		if !haveFB {
-			fb, haveFB = s, true
-		}
+		return fb, haveFB
 	}
-	return fb, haveFB
+	if s, ok := pass(true); ok {
+		return s, true
+	}
+	return pass(false)
 }
 
 // raceRound — один «раунд» параллельного режима: гонка, затем работа с горячим резервом,
@@ -9498,6 +9833,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	e.setStatus(Status{State: "up", Strategy: p.s.ID, Colo: colo, RTT: p.rtt, Message: msg})
 	e.emit("connected", p.s.ID, colo)
 	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(p.start).Seconds(), p.s.ID, colo, p.rtt.Milliseconds())
+	e.noteConnect()
 
 	var sb *attempt
 	tried := map[string]time.Time{}
@@ -9521,10 +9857,12 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		e.setStatus(Status{State: "up", Strategy: p.s.ID, Colo: colo, RTT: p.rtt, Message: msg})
 		e.emit("connected", p.s.ID, colo)
 		Logf("⚡ резерв принял нагрузку без разрыва: %s → %s (%s)", old.s.ID, p.s.ID, reason)
+		e.noteLoss(reason, true)
 		nextSb = time.Now().Add(5 * time.Second)
 		return true
 	}
 	lose := func(reason string) {
+		e.noteLoss(reason, false)
 		e.setStatus(Status{State: "reconnecting", Message: reason})
 		newSkip = p.s.ID
 		restart = true
@@ -11543,7 +11881,7 @@ func NewWGRunner(acc *Account) (Runner, error) {
 		mt := &memTun{dev: dev, mtu: 1280, events: make(chan tun.Event, 4)}
 		logger := &device.Logger{
 			Verbosef: func(format string, args ...any) {
-				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") {
+				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") && !strings.Contains(l, "Routine:") {
 					Logf("   wg: %s", l)
 				}
 			},
