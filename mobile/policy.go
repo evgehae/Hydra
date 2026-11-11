@@ -14,6 +14,7 @@ var (
 	polSoft  = false
 	polProto = "auto"
 	netKey   = "default"
+	polPar   = 3  // сколько стратегий пробовать одновременно (0/1 — по очереди)
 	polSNI   = "" // свой SNI для туннеля MASQUE ("" — по умолчанию)
 	polEP    = "" // свой адрес сервера "IP" или "IP:порт" ("" — не задан)
 	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
@@ -101,3 +102,20 @@ func currentCustom() (sni, ep string) {
 	defer polMu.Unlock()
 	return polSNI, polEP
 }
+
+// SetParallel включает параллельную гонку стратегий и горячий резерв: n — сколько стратегий
+// пробовать одновременно (0 или 1 — по очереди, как раньше).
+func SetParallel(n int) {
+	polMu.Lock()
+	polPar = n
+	polMu.Unlock()
+}
+
+func currentParallel() int {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polPar
+}
+
+// LogLine дописывает строку в журнал Гидры (для результатов диагностики из приложения).
+func LogLine(s string) { hydra.Logf("%s", s) }

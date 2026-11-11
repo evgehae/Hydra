@@ -124,6 +124,7 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
+            mobile.Mobile.setParallel(if (prefs.parallel) 3L else 1L)
             mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
@@ -189,9 +190,14 @@ class HydraVpnService : VpnService() {
         // свой DNS (внутри туннеля) или по умолчанию Cloudflare
         var dnsAdded = 0
         if (prefs.customDnsOn) {
-            for (d in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
-                if (!d.matches(Regex("[0-9a-fA-F:.]+"))) continue
-                try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
+            for (raw in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                // принимаем IP, имя хоста, tls://host и https://host/path: имя превращаем в IP-адреса
+                val host = raw.substringAfter("://").substringBefore("/").substringBefore(":")
+                val ips = if (host.matches(Regex("[0-9a-fA-F:.]+"))) listOf(raw.substringAfter("://").substringBefore("/"))
+                          else resolveHost(host)
+                for (d in ips.take(2)) {
+                    try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
+                }
             }
         }
         if (dnsAdded == 0) {
@@ -267,6 +273,19 @@ class HydraVpnService : VpnService() {
         watchNetwork()
         handler.removeCallbacks(statusUpdater)
         handler.postDelayed(statusUpdater, 3000)
+    }
+
+    /** Имя хоста в IP-адреса (в отдельном потоке с таймаутом: на главном потоке сеть запрещена). */
+    private fun resolveHost(host: String): List<String> {
+        var res: List<String> = emptyList()
+        val t = Thread {
+            res = try {
+                java.net.InetAddress.getAllByName(host).mapNotNull { it.hostAddress }.filter { !it.contains("%") }
+            } catch (e: Exception) { emptyList() }
+        }
+        t.start()
+        t.join(4000)
+        return res
     }
 
     /** Оператор сотовой сети (MCC+MNC, без разрешений): у разных операторов разный DPI. */

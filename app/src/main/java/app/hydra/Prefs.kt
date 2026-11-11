@@ -79,6 +79,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("excl_routes", null) ?: DEFAULT_ROUTES
         set(v) { sp.edit().putString("excl_routes", v).apply() }
 
+    /** Параллельная гонка стратегий и горячий резерв. */
+    var parallel: Boolean
+        get() = sp.getBoolean("parallel", true)
+        set(v) { sp.edit().putBoolean("parallel", v).apply() }
+
     fun resetAll() { sp.edit().clear().apply() }
 
     companion object {

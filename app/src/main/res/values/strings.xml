@@ -196,8 +196,8 @@
     <string name="dns_use">Use custom DNS</string>
     <string name="dns_server">DNS server</string>
     <string name="dns_default">Cloudflare 1.1.1.1</string>
-    <string name="dns_hint">IPs separated by commas, e.g. 8.8.8.8</string>
-    <string name="dns_soon">Only IP addresses are supported for now (DNS over WARP). DoH and DoT by hostname will come later.</string>
+    <string name="dns_hint">IP or hostname, e.g. 8.8.8.8 or dns.google</string>
+    <string name="dns_soon">A hostname is resolved to IP addresses on connect and works as plain DNS inside the tunnel. Real DoH/DoT is not supported yet.</string>
     <string name="routes_list">Excluded IP addresses and subnets</string>
     <string name="routes_note">These subnets go directly, bypassing the VPN. Works on Android 13 and newer.</string>
     <string name="routes_add">Add excluded route</string>
@@ -244,4 +244,7 @@
     <string name="adv_sec_apps">Apps and network</string>
     <string name="adv_sec_conn">Connection</string>
     <string name="adv_sec_other">Other</string>
+    <string name="adv_parallel">Parallel mode and hot standby</string>
+    <string name="adv_parallel_sub">Several paths at once, instant switch to the standby on failure. Turn off if something misbehaves.</string>
+    <string name="diag_full_running">Checking, this takes a few seconds…</string>
 </resources>

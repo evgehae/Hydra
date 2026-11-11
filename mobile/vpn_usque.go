@@ -101,6 +101,7 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == ""
 	cfg.NetAlive = realNetAlive
+	cfg.Parallel = currentParallel()
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
 	ctx, cancel := context.WithCancel(context.Background())

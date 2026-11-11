@@ -129,7 +129,7 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.weight(0.8f))
+        Spacer(Modifier.weight(0.45f))
         // «WARP» крупными огненно-красными буквами, под ним синим «CLAUDE» поменьше
         Text(
             "WARP",
@@ -137,7 +137,7 @@ fun HomeScreen(
                 brush = Brush.linearGradient(
                     listOf(Color(0xFFFF3B2F), Color(0xFFFF7A33), Color(0xFFE5301F), Color(0xFFFF5A3C))
                 ),
-                fontSize = 86.sp,
+                fontSize = 62.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = (-2).sp,
                 textAlign = TextAlign.Center
@@ -146,12 +146,12 @@ fun HomeScreen(
         Text(
             "CLAUDE",
             color = TitleBlue,
-            fontSize = 30.sp,
+            fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 10.sp,
+            letterSpacing = 8.sp,
             textAlign = TextAlign.Center
         )
-        Spacer(Modifier.weight(0.7f))
+        Spacer(Modifier.weight(0.40f))
 
         BigToggle(on = up, busy = busy, onClick = onTap)
 
@@ -232,7 +232,7 @@ fun HomeScreen(
                 }
             }
         }
-        Spacer(Modifier.weight(2.2f))
+        Spacer(Modifier.weight(3.2f))
     }
 }
 

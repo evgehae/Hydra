@@ -43,6 +43,7 @@ fun DiagnosticsScreen(
     var base by remember { mutableStateOf<DiagResult?>(null) }
     var quick by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
+    var showResult by remember { mutableStateOf(false) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -102,6 +103,7 @@ fun DiagnosticsScreen(
                     scope.launch {
                         checks = runFullDiagnostics(ctx)
                         running = false
+                        showResult = true
                     }
                 }
             }
@@ -126,6 +128,7 @@ fun DiagnosticsScreen(
             }
         )
 
+        if (running) NoteText(stringResource(R.string.diag_full_running))
         if (checks.isNotEmpty()) {
             SectionLabel(stringResource(R.string.diag_full))
             RowDivider()
@@ -135,6 +138,30 @@ fun DiagnosticsScreen(
             NoteText(stringResource(R.string.diag_direct_hint))
         }
         Spacer(Modifier.height(24.dp))
+    }
+    if (showResult) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showResult = false },
+            title = { Text(stringResource(R.string.diag_full)) },
+            text = {
+                Column {
+                    checks.forEach { c ->
+                        Text((if (c.ok) "✔ " else "✘ ") + c.name + ": " + c.detail, modifier = Modifier.padding(vertical = 3.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showResult = false
+                    val text = buildReport(ctx, prefs, vpn, account, checks)
+                    val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                    try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+                }) { Text(stringResource(R.string.diag_share)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showResult = false }) { Text(stringResource(R.string.btn_ok)) }
+            }
+        )
     }
 }
 

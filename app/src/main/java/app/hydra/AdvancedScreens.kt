@@ -52,6 +52,7 @@ fun AdvancedScreen(
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
+    var parallel by remember { mutableStateOf(prefs.parallel) }
     var dlg by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
 
@@ -106,6 +107,11 @@ fun AdvancedScreen(
 
         SectionLabel(stringResource(R.string.adv_sec_conn))
         RowDivider()
+        SettingSwitchRow(stringResource(R.string.adv_parallel), stringResource(R.string.adv_parallel_sub), parallel) {
+            parallel = it
+            prefs.parallel = it
+            vpn.restartIfActive()
+        }
         SettingRow(stringResource(R.string.conn_proto), subtitle = stringResource(R.string.proto_hint),
             value = protoOpts.firstOrNull { it.first == proto }?.second, onClick = { dlg = "proto" })
         SettingRow(stringResource(R.string.channel_title), subtitle = stringResource(R.string.channel_hint),

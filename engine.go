@@ -47,6 +47,7 @@ type EngineConfig struct {
 	TCPTimeout   time.Duration // ожидание SYN-ACK (по умолчанию 2 с)
 	NetAlive     func() bool   // есть ли вообще интернет мимо туннеля (nil — не проверять)
 	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
+	Parallel     int           // >1: параллельная гонка стратегий и горячий резерв; 0/1 — по очереди
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -167,23 +168,66 @@ func (e *Engine) readTun() {
 	}
 }
 
-// attemptDev — «карта» одной попытки: после отмены попытки её горутины
-// просыпаются с ошибкой и не крадут пакеты у следующей попытки.
+// attemptDev — «карта» одной попытки: после отмены попытки её горутины просыпаются с ошибкой
+// и не крадут пакеты у следующей. У каждой попытки свои порты и очередь проб, поэтому несколько
+// попыток могут работать одновременно; трафик приложений идёт только через активную.
 type attemptDev struct {
-	e    *Engine
-	done <-chan struct{}
+	e       *Engine
+	done    <-chan struct{}
+	probeQ  chan []byte
+	port    uint16
+	tcpPort uint16
+	tcpSeq  uint32
+	tcpAck  chan struct{}
+	active  int32         // 1 — через эту карту идёт трафик приложений
+	wake    chan struct{} // будит ReadPacket, когда карта становится активной
 }
 
-func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
+func newAttemptDev(e *Engine, done <-chan struct{}, active bool) *attemptDev {
+	d := &attemptDev{
+		e:       e,
+		done:    done,
+		probeQ:  make(chan []byte, 16),
+		port:    uint16(20000 + rand.Intn(20000)),
+		tcpPort: uint16(41000 + rand.Intn(20000)),
+		tcpAck:  make(chan struct{}, 1),
+		wake:    make(chan struct{}, 1),
+	}
+	if active {
+		d.active = 1
+	}
+	return d
+}
+
+// promote делает карту активной: с этого момента через неё идёт трафик приложений.
+func (d *attemptDev) promote() {
+	atomic.StoreInt32(&d.active, 1)
 	select {
-	case <-d.done:
-		return 0, io.EOF
-	case <-d.e.tunDead:
-		return 0, io.EOF
-	case p := <-d.e.probeQ:
-		return copy(buf, p), nil
-	case p := <-d.e.out:
-		return copy(buf, p), nil
+	case d.wake <- struct{}{}:
+	default:
+	}
+}
+
+// demote лишает карту трафика приложений (она остаётся пригодной для проб).
+func (d *attemptDev) demote() { atomic.StoreInt32(&d.active, 0) }
+
+func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
+	for {
+		var outc <-chan []byte
+		if atomic.LoadInt32(&d.active) == 1 {
+			outc = d.e.out
+		}
+		select {
+		case <-d.done:
+			return 0, io.EOF
+		case <-d.e.tunDead:
+			return 0, io.EOF
+		case p := <-d.probeQ:
+			return copy(buf, p), nil
+		case p := <-outc:
+			return copy(buf, p), nil
+		case <-d.wake:
+		}
 	}
 }
 
@@ -193,16 +237,19 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 		return io.ErrClosedPipe
 	default:
 	}
-	if id, colo, ok := ParseColoReply(pkt, d.e.port); ok {
+	if id, colo, ok := ParseColoReply(pkt, d.port); ok {
 		d.e.deliver(id, colo)
 		return nil
 	}
-	if ParseTCPSynAck(pkt, d.e.tcpPort, atomic.LoadUint32(&d.e.tcpSeq)+1) {
+	if ParseTCPSynAck(pkt, d.tcpPort, atomic.LoadUint32(&d.tcpSeq)+1) {
 		select {
-		case d.e.tcpAck <- struct{}{}:
+		case d.tcpAck <- struct{}{}:
 		default:
 		}
 		return nil
+	}
+	if atomic.LoadInt32(&d.active) != 1 {
+		return nil // резервный туннель трафик приложений не пропускает
 	}
 	atomic.AddUint64(&d.e.rx, uint64(len(pkt)))
 	_, err := d.e.tun.Write(pkt)
@@ -226,8 +273,9 @@ func (e *Engine) deliver(id uint16, colo string) {
 	}
 }
 
-// probe шлёт UDP-пробу (DNS id.server) и ждёт ответ: задержка и код дата-центра.
-func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duration, string, error) {
+// probe шлёт UDP-пробу (DNS id.server) через эту карту и ждёт ответ: задержка и код дата-центра.
+func (d *attemptDev) probe(ctx context.Context, timeout time.Duration) (time.Duration, string, error) {
+	e := d.e
 	id := uint16(atomic.AddUint32(&e.nextID, 1))
 	ch := make(chan string, 1)
 	e.mu.Lock()
@@ -238,13 +286,13 @@ func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duratio
 		delete(e.waiters, id)
 		e.mu.Unlock()
 	}()
-	pkt := BuildColoProbe(e.cfg.LocalIP, e.port, id)
+	pkt := BuildColoProbe(e.cfg.LocalIP, d.port, id)
 	if pkt == nil {
 		return 0, "", errors.New("нет IPv4-адреса туннеля")
 	}
 	t0 := time.Now()
 	select {
-	case e.probeQ <- pkt:
+	case d.probeQ <- pkt:
 	default:
 		return 0, "", errors.New("очередь проб переполнена")
 	}
@@ -258,31 +306,32 @@ func (e *Engine) probe(ctx context.Context, timeout time.Duration) (time.Duratio
 	}
 }
 
-// tcpProbe: SYN на 1.1.1.1:443 через туннель, ждём SYN-ACK.
-func (e *Engine) tcpProbe(ctx context.Context, timeout time.Duration) (time.Duration, error) {
+// tcpProbe: SYN на 1.1.1.1:443 через эту карту, ждём SYN-ACK.
+func (d *attemptDev) tcpProbe(ctx context.Context, timeout time.Duration) (time.Duration, error) {
+	e := d.e
 	seq := rand.Uint32()
-	atomic.StoreUint32(&e.tcpSeq, seq)
+	atomic.StoreUint32(&d.tcpSeq, seq)
 	select {
-	case <-e.tcpAck:
+	case <-d.tcpAck:
 	default:
 	}
 	id := uint16(atomic.AddUint32(&e.nextID, 1))
-	syn := BuildTCPSyn(e.cfg.LocalIP, e.tcpPort, seq, id)
+	syn := BuildTCPSyn(e.cfg.LocalIP, d.tcpPort, seq, id)
 	if syn == nil {
 		return 0, errors.New("нет IPv4-адреса туннеля")
 	}
 	t0 := time.Now()
 	select {
-	case e.probeQ <- syn:
+	case d.probeQ <- syn:
 	default:
 		return 0, errors.New("очередь проб переполнена")
 	}
 	select {
-	case <-e.tcpAck:
+	case <-d.tcpAck:
 		rtt := time.Since(t0)
-		if rst := BuildTCPRst(e.cfg.LocalIP, e.tcpPort, seq+1, id+1); rst != nil {
+		if rst := BuildTCPRst(e.cfg.LocalIP, d.tcpPort, seq+1, id+1); rst != nil {
 			select {
-			case e.probeQ <- rst:
+			case d.probeQ <- rst:
 			default:
 			}
 		}
@@ -341,7 +390,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 
 	actx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	dev := &attemptDev{e: e, done: actx.Done()}
+	dev := newAttemptDev(e, actx.Done(), true)
 	errc := make(chan error, 1)
 	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
 
@@ -371,7 +420,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 			return outcome{netChanged: true, reason: "сменилась сеть"}
 		default:
 		}
-		r, c, err := e.probe(actx, 1500*time.Millisecond)
+		r, c, err := dev.probe(actx, 1500*time.Millisecond)
 		if err == nil {
 			up, colo, rtt = true, c, r
 		} else {
@@ -402,7 +451,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 		var tcpRTT time.Duration
 		var terr error
 		for i := 0; i < 3; i++ {
-			if tcpRTT, terr = e.tcpProbe(actx, e.cfg.TCPTimeout); terr == nil {
+			if tcpRTT, terr = dev.tcpProbe(actx, e.cfg.TCPTimeout); terr == nil {
 				break
 			}
 			if ctx.Err() != nil {
@@ -451,9 +500,9 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 				return outcome{wasUp: true, netChanged: true, reason: "сменилась сеть"}
 			}
 			ticks++
-			r, c, err := e.probe(actx, e.cfg.ProbeEvery)
+			r, c, err := dev.probe(actx, e.cfg.ProbeEvery)
 			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
-				_, err = e.tcpProbe(actx, e.cfg.TCPTimeout)
+				_, err = dev.tcpProbe(actx, e.cfg.TCPTimeout)
 			}
 			if err != nil {
 				bad++
@@ -518,6 +567,10 @@ func (e *Engine) Run(ctx context.Context) error {
 		lastReason := ""
 		sawBlocked := false
 		restart := false
+		if e.cfg.Parallel > 1 {
+			ran, skipped, lastReason, sawBlocked, restart, skip = e.raceRound(ctx, nk, cands, skip, blocked)
+			cands = nil // старый последовательный перебор ниже не нужен
+		}
 		for _, s := range cands {
 			if ctx.Err() != nil {
 				break

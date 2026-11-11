@@ -81,6 +81,12 @@ suspend fun runFullDiagnostics(ctx: android.content.Context): List<DiagCheck> = 
     out += DiagCheck(ctx.getString(R.string.chk_v6), v6.first, v6.second)
     val web = tcpCheck("www.google.com", 443)
     out += DiagCheck(ctx.getString(R.string.chk_web), web.first, web.second)
+    // результаты попадают и в журнал, чтобы они были в отчёте
+    try {
+        mobile.Mobile.logLine("🔎 полная диагностика (мимо VPN):")
+        out.forEach { mobile.Mobile.logLine("   " + (if (it.ok) "✔ " else "✘ ") + it.name + ": " + it.detail) }
+        if (base.ip.isNotEmpty()) mobile.Mobile.logLine("   публичный IP: " + base.ip)
+    } catch (t: Throwable) { }
     out
 }
 

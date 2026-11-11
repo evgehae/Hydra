@@ -30,28 +30,54 @@ func (e *Engine) allStrategies(nk string) []Strategy {
 	return append(out, e.cfg.Mem.Generated(nk)...)
 }
 
-// GenerateVariants возвращает до n новых вариантов MASQUE/QUIC на основе лучших известных в сети.
+// sniPool — SNI, которые принимает сервер MASQUE Cloudflare (сертификат проверяется по ключу, а не по имени).
+var sniPool = []string{
+	"consumer-masque.cloudflareclient.com", "cdnjs.cloudflare.com", "www.cloudflare.com",
+	"one.one.one.one", "developers.cloudflare.com", "dash.cloudflare.com",
+}
+
+func family(s Strategy) string {
+	switch {
+	case s.Transport == "masque" && s.Params["h2"] == "1":
+		return "h2"
+	case s.Transport == "masque" && s.Params["fake"] != "":
+		return "h3"
+	case s.Transport == "wg" && s.Params["jc"] != "":
+		return "wg"
+	}
+	return ""
+}
+
+// GenerateVariants возвращает до n новых вариантов на основе лучших известных в этой сети:
+// QUIC с фейковыми пакетами (h3), HTTP/2 (h2) и WireGuard с «мусорным» прологом (wg).
 func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand) []Strategy {
-	var parents []Strategy
+	parents := map[string][]Strategy{}
 	for _, s := range mem.Rank(nk, all) {
-		if s.Transport != "masque" || s.Params["h2"] == "1" || s.Params["fake"] == "" {
+		f := family(s)
+		if f == "" || len(parents[f]) >= 3 {
 			continue
 		}
-		parents = append(parents, s)
-		if len(parents) >= 4 {
-			break
+		parents[f] = append(parents[f], s)
+	}
+	var fams []string
+	for _, f := range []string{"h3", "h3", "h2", "wg"} { // QUIC — вдвое чаще остальных
+		if len(parents[f]) > 0 {
+			fams = append(fams, f)
 		}
 	}
-	if len(parents) == 0 {
+	if len(fams) == 0 {
 		return nil
 	}
-	var eps []string
+	eps := map[string][]string{}
 	seenEP := map[string]bool{}
 	for _, s := range all {
-		if ep := s.Params["endpoint"]; s.Transport == "masque" && ep != "" && !seenEP[ep] {
-			seenEP[ep] = true
-			eps = append(eps, ep)
+		f := family(s)
+		ep := s.Params["endpoint"]
+		if f == "" || ep == "" || seenEP[f+ep] {
+			continue
 		}
+		seenEP[f+ep] = true
+		eps[f] = append(eps[f], ep)
 	}
 	have := map[string]bool{}
 	for _, s := range all {
@@ -59,32 +85,50 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 	}
 	var out []Strategy
 	for tries := 0; tries < n*8 && len(out) < n; tries++ {
-		p := parents[rnd.Intn(len(parents))]
+		f := fams[rnd.Intn(len(fams))]
+		ps := parents[f]
+		p := ps[rnd.Intn(len(ps))]
 		q := map[string]string{}
 		for k, v := range p.Params {
 			q[k] = v
 		}
-		ttl := clampInt(atoiDefault(q["fttl"], 5)+rnd.Intn(5)-2, 2, 12)
-		cnt := clampInt(atoiDefault(q["fcount"], 4)+rnd.Intn(5)-2, 1, 10)
-		size := atoiDefault(q["fsize"], 1200)
-		if rnd.Intn(10) < 3 {
-			size = fakeSizePool[rnd.Intn(len(fakeSizePool))]
+		if len(eps[f]) > 1 && rnd.Intn(4) == 0 {
+			q["endpoint"] = eps[f][rnd.Intn(len(eps[f]))]
 		}
-		if rnd.Intn(10) < 3 {
-			q["fake"] = fakeSNIPool[rnd.Intn(len(fakeSNIPool))]
+		var id string
+		switch f {
+		case "h3":
+			ttl := clampInt(atoiDefault(q["fttl"], 5)+rnd.Intn(5)-2, 2, 12)
+			cnt := clampInt(atoiDefault(q["fcount"], 4)+rnd.Intn(5)-2, 1, 10)
+			size := atoiDefault(q["fsize"], 1200)
+			if rnd.Intn(10) < 3 {
+				size = fakeSizePool[rnd.Intn(len(fakeSizePool))]
+			}
+			if rnd.Intn(10) < 3 {
+				q["fake"] = fakeSNIPool[rnd.Intn(len(fakeSNIPool))]
+			}
+			if rnd.Intn(4) == 0 { // настоящий SNI в QUIC Initial — то, что читает DPI
+				q["sni"] = sniPool[rnd.Intn(len(sniPool))]
+			}
+			q["fttl"] = strconv.Itoa(ttl)
+			q["fcount"] = strconv.Itoa(cnt)
+			q["fsize"] = strconv.Itoa(size)
+			id = fmt.Sprintf("h3/%s/g:%s:%s:%dx%ds%d", q["endpoint"], q["sni"], q["fake"], ttl, cnt, size)
+		case "h2":
+			q["sni"] = sniPool[rnd.Intn(len(sniPool))]
+			id = fmt.Sprintf("h2/%s/g:%s", q["endpoint"], q["sni"])
+		case "wg":
+			jc := clampInt(atoiDefault(q["jc"], 4)+rnd.Intn(5)-2, 1, 16)
+			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
+			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
+			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
+			id = fmt.Sprintf("wg/%s/g:%d-%d-%d", q["endpoint"], jc, jmin, jmax)
 		}
-		if len(eps) > 1 && rnd.Intn(4) == 0 {
-			q["endpoint"] = eps[rnd.Intn(len(eps))]
-		}
-		q["fttl"] = strconv.Itoa(ttl)
-		q["fcount"] = strconv.Itoa(cnt)
-		q["fsize"] = strconv.Itoa(size)
-		id := fmt.Sprintf("h3/%s/g:%s:%dx%ds%d", q["endpoint"], q["fake"], ttl, cnt, size)
-		if have[id] {
+		if id == "" || have[id] {
 			continue
 		}
 		have[id] = true
-		out = append(out, Strategy{ID: id, Transport: "masque", Params: q})
+		out = append(out, Strategy{ID: id, Transport: p.Transport, Params: q})
 	}
 	return out
 }
