@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=17
+NEW=18
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -6311,6 +6311,17 @@ type attemptDev struct {
 	sent    int32         // сколько пакетов клиент туннеля забрал у нас (пробы и трафик)
 	recv    int32         // сколько пакетов клиент туннеля отдал нам
 	wake    chan struct{} // будит ReadPacket, когда карта становится активной
+	stats   atomic.Value  // func() string: дополнительные счётчики клиента туннеля (например WireGuard)
+}
+
+// SetStats принимает от клиента туннеля функцию с его счётчиками для диагностики.
+func (d *attemptDev) SetStats(f func() string) { d.stats.Store(f) }
+
+func (d *attemptDev) extra() string {
+	if f, ok := d.stats.Load().(func() string); ok {
+		return f()
+	}
+	return ""
 }
 
 func newAttemptDev(e *Engine, done <-chan struct{}, active bool) *attemptDev {
@@ -7494,12 +7505,15 @@ func family(s Strategy) string {
 
 // GenerateVariants возвращает до n новых вариантов на основе лучших известных в этой сети:
 // QUIC с фейковыми пакетами (h3), HTTP/2 (h2) и WireGuard с «мусорным» прологом (wg).
-func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand) []Strategy {
+func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.Rand, needOK bool) []Strategy {
 	parents := map[string][]Strategy{}
 	for _, s := range mem.Rank(nk, all) {
 		f := family(s)
 		if f == "" || len(parents[f]) >= 3 {
 			continue
+		}
+		if needOK && !mem.Worked(nk, s.ID) {
+			continue // для пополнения пула берём «родителями» только то, что уже работало
 		}
 		parents[f] = append(parents[f], s)
 	}
@@ -7566,7 +7580,11 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
-			id = fmt.Sprintf("wg/%s/g:%d-%d-%d", q["endpoint"], jc, jmin, jmax)
+			sfx := ""
+			if q["rsv"] == "1" {
+				sfx = "r"
+			}
+			id = fmt.Sprintf("wg/%s/g:%d-%d-%d%s", q["endpoint"], jc, jmin, jmax, sfx)
 		}
 		if id == "" || have[id] {
 			continue
@@ -7583,7 +7601,7 @@ func (e *Engine) learn(nk string) {
 		return
 	}
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd)
+	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd, false)
 	if len(gen) == 0 {
 		return
 	}
@@ -7614,6 +7632,20 @@ func (e *Engine) waitOnline(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// grow пополняет пул: придумывает новые варианты на основе стратегий, которые уже работали.
+func (e *Engine) grow(nk string) {
+	if e.cfg.Mem == nil {
+		return
+	}
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd, true)
+	if len(gen) == 0 {
+		return
+	}
+	e.cfg.Mem.AddGenerated(nk, gen)
+	Logf("🧬 пополняю пул: придумал %d новых вариантов на основе работающих", len(gen))
 }
 HYDRA_EOF
 
@@ -7788,6 +7820,7 @@ type stat struct {
 	Fail   int       `json:"fail"`
 	EWMAms float64   `json:"ewma_ms"`
 	LastOK time.Time `json:"last_ok"`
+	LastFail time.Time `json:"last_fail"`
 }
 
 // Memory — «память Гидры»: что работало в какой сети.
@@ -7864,6 +7897,7 @@ func (m *Memory) Record(net, id string, ok bool, d time.Duration) {
 		}
 	} else {
 		s.Fail++
+		s.LastFail = time.Now()
 	}
 	if s.OK+s.Fail > 20 { // забываем старое: DPI меняется
 		s.OK /= 2
@@ -7959,7 +7993,19 @@ func (m *Memory) Doomed(net, id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.Nets[net][id]
-	return st != nil && st.OK == 0 && st.Fail >= 3
+	// карантин на 12 часов после последнего сбоя: потом стратегии дают второй шанс (DPI меняется)
+	return st != nil && st.OK == 0 && st.Fail >= 3 && time.Since(st.LastFail) < 12*time.Hour
+}
+
+// Stat — опыт стратегии в этой сети.
+func (m *Memory) Stat(net, id string) (ok, fail int, lastOK, lastFail time.Time, found bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.Nets[net][id]
+	if st == nil {
+		return 0, 0, time.Time{}, time.Time{}, false
+	}
+	return st.OK, st.Fail, st.LastOK, st.LastFail, true
 }
 
 // priorLocked — оценка стратегии для сети без истории: опыт в других сетях того же класса
@@ -8573,14 +8619,15 @@ func EngineStatus() string {
 // Diagnostics — сводка движка и памяти стратегий для отчёта.
 func Diagnostics() string {
 	out := ""
-	if e := vpnEngine; e != nil {
-		out += e.Stats()
-	} else {
-		out += "движок не запущен\n"
-	}
 	polMu.Lock()
 	nk := netKey
 	polMu.Unlock()
+	if e := vpnEngine; e != nil {
+		out += e.Stats()
+		out += e.PoolSummary(nk)
+	} else {
+		out += "движок не запущен\n"
+	}
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
 	}
@@ -9048,6 +9095,144 @@ func TestFailoverToStandby(t *testing.T) {
 			t.Fatalf("failover не случился, события: %v", got)
 		}
 	}
+}
+HYDRA_EOF
+
+putv "$GODIR/pool.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"fmt"
+	"time"
+)
+
+// Пул стратегий: Гидра сама следит, чтобы в запасе всегда было достаточно РАБОЧИХ стратегий каждого
+// семейства. В фоне (пока основной туннель здоров) она проверяет непроверенные и давно не
+// проверявшиеся стратегии отдельной короткой попыткой, неработающие отправляет в карантин,
+// придуманные неработающие удаляет, а нехватку пополняет новыми вариантами.
+
+var poolTargets = map[string]int{"h3": 6, "h2": 2, "wg": 2}
+var poolFams = []string{"h3", "h2", "wg"}
+
+const (
+	testRetry     = 30 * time.Minute // одну стратегию не проверять чаще
+	staleAfter    = 2 * time.Hour    // рабочая стратегия без успехов дольше этого — пора перепроверить
+	testFast      = 90 * time.Second // период проверок, пока в пуле нехватка
+	testSlow      = 20 * time.Minute // период проверок, когда пул в норме
+	quarantineFor = 12 * time.Hour
+)
+
+func poolFamily(s Strategy) string {
+	switch {
+	case s.Transport == "wg":
+		return "wg"
+	case s.Params["h2"] == "1":
+		return "h2"
+	}
+	return "h3"
+}
+
+func healthyStat(ok, fail int) bool { return ok > 0 && float64(ok)/float64(ok+fail) >= 0.4 }
+
+// poolCounts считает по семействам: рабочие, непроверенные, в карантине.
+func (e *Engine) poolCounts(nk string) (healthy, untested, dead map[string]int) {
+	healthy, untested, dead = map[string]int{}, map[string]int{}, map[string]int{}
+	for _, s := range e.allStrategies(nk) {
+		f := poolFamily(s)
+		ok, fail, _, lf, found := e.cfg.Mem.Stat(nk, s.ID)
+		switch {
+		case !found || ok+fail == 0:
+			untested[f]++
+		case healthyStat(ok, fail):
+			healthy[f]++
+		case ok == 0 && fail >= 3 && time.Since(lf) < quarantineFor:
+			dead[f]++
+		}
+	}
+	return
+}
+
+// hasDeficit: в каком-то семействе рабочих меньше цели, и есть что проверять.
+func (e *Engine) hasDeficit(nk string) bool {
+	h, u, _ := e.poolCounts(nk)
+	for _, f := range poolFams {
+		if h[f] < poolTargets[f] && u[f] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// PoolSummary — состояние пула для журнала и отчёта.
+func (e *Engine) PoolSummary(nk string) string {
+	h, u, d := e.poolCounts(nk)
+	s := "пул стратегий (рабочих/цель):"
+	for _, f := range poolFams {
+		s += fmt.Sprintf(" %s %d/%d", f, h[f], poolTargets[f])
+	}
+	s += fmt.Sprintf("; не проверено: h3 %d, h2 %d, wg %d; в карантине: h3 %d, h2 %d, wg %d; придуманных: %d\n",
+		u["h3"], u["h2"], u["wg"], d["h3"], d["h2"], d["wg"], len(e.cfg.Mem.Generated(nk)))
+	return s
+}
+
+// pickTest выбирает, что проверить в фоне: сначала непроверенные из семейства с нехваткой,
+// затем самую «давнюю» рабочую, затем стратегию, отсидевшую карантин.
+func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string]time.Time, tested map[string]time.Time) (Strategy, string, bool) {
+	healthy, untested, _ := e.poolCounts(nk)
+	all := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
+	elig := func(s Strategy) bool {
+		if exclude[s.ID] {
+			return false
+		}
+		if t, ok := tested[s.ID]; ok && time.Since(t) < testRetry {
+			return false
+		}
+		ep := s.Params["endpoint"]
+		if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+			return false
+		}
+		return !e.cfg.Mem.Doomed(nk, s.ID)
+	}
+	// 1) нехватка: пробуем непроверенные из самого обделённого семейства
+	best, bestDef := "", 0.0
+	for _, f := range []string{"wg", "h2", "h3"} {
+		t := poolTargets[f]
+		if def := float64(t-healthy[f]) / float64(t); def > bestDef && untested[f] > 0 {
+			best, bestDef = f, def
+		}
+	}
+	if best != "" {
+		for _, s := range all {
+			ok, fail, _, _, found := e.cfg.Mem.Stat(nk, s.ID)
+			if poolFamily(s) == best && elig(s) && (!found || ok+fail == 0) {
+				return s, "нехватка " + best, true
+			}
+		}
+	}
+	// 2) пул в норме: перепроверяем самую давнюю рабочую
+	var stale Strategy
+	var staleAt time.Time
+	haveStale := false
+	for _, s := range all {
+		ok, fail, lastOK, _, found := e.cfg.Mem.Stat(nk, s.ID)
+		if !found || !healthyStat(ok, fail) || !elig(s) || time.Since(lastOK) < staleAfter {
+			continue
+		}
+		if !haveStale || lastOK.Before(staleAt) {
+			stale, staleAt, haveStale = s, lastOK, true
+		}
+	}
+	if haveStale {
+		return stale, "перепроверка рабочей", true
+	}
+	// 3) вышедшие из карантина получают второй шанс
+	for _, s := range all {
+		ok, fail, _, lf, found := e.cfg.Mem.Stat(nk, s.ID)
+		if found && ok == 0 && fail >= 3 && time.Since(lf) >= quarantineFor && elig(s) {
+			return s, "после карантина", true
+		}
+	}
+	return Strategy{}, "", false
 }
 HYDRA_EOF
 
@@ -9607,6 +9792,7 @@ package hydra
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -9632,6 +9818,7 @@ type attempt struct {
 	start  time.Time
 	colo   string
 	rtt    time.Duration
+	tester bool // короткая фоновая проверка, а не резерв
 }
 
 type verdict struct {
@@ -9714,6 +9901,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 			hint = " — из туннеля не пришло ни одного пакета: похоже, QUIC к этому адресу режется"
 		}
 		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с (в туннель ушло пакетов: " + itoa(sent) + ", пришло из туннеля: " + itoa(recv) + ")" + hint
+		if x := a.dev.extra(); x != "" {
+			msg += " [" + x + "]"
+		}
 		Logf("   ✘ %s: %s", s.ID, msg)
 		return false, e.fail(nk, s, msg)
 	}
@@ -9932,6 +10122,21 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	nextSb := time.Now().Add(3 * time.Second)
 	lastLearn := time.Time{}
 	lastBeat := time.Now()
+	testing := 0
+	testedAt := map[string]time.Time{}
+	lastTest := time.Now().Add(-time.Hour)
+	lastGen := time.Time{}
+	lastPrune := time.Now()
+	launchTester := func(s Strategy) {
+		a := e.startAttempt(ctx, s, false)
+		a.tester = true
+		all = append(all, a)
+		testing++
+		go func() {
+			ok, o := e.verify(nk, a)
+			res <- verdict{a, ok, o}
+		}()
+	}
 
 	// мгновенный переход на резерв; false — резерва нет
 	failover := func(reason string) bool {
@@ -9983,6 +10188,20 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				Logf("🧪 переключение выполнено за %d мс", time.Since(t0).Milliseconds())
 			}
 		case v := <-res:
+			if v.a.tester {
+				testing--
+				v.a.cancel()
+				if v.ok {
+					Logf("🔬 %s: работает (дата-центр %s, %d мс)", v.a.s.ID, v.a.colo, v.a.rtt.Milliseconds())
+				} else if v.o.reason != "остановка" {
+					Logf("🔬 %s: не работает — %s", v.a.s.ID, v.o.reason)
+					if v.o.coloBlocked != "" {
+						noteFail(v)
+					}
+				}
+				Logf("🔬 %s", strings.TrimSpace(e.PoolSummary(nk)))
+				continue
+			}
 			live--
 			if v.ok {
 				if sb == nil {
@@ -10099,6 +10318,41 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				total, lost := e.probeStats()
 				Logf("💓 в порядке: основной %s, дата-центр %s, пинг %d мс, резерв: %s, проб потеряно %d из %d",
 					p.s.ID, colo, r.Milliseconds(), sbName, lost, total)
+				Logf("💓 %s", strings.TrimSpace(e.PoolSummary(nk)))
+			}
+			if time.Since(lastPrune) > 10*time.Minute {
+				lastPrune = time.Now()
+				if n := e.cfg.Mem.Prune(nk); n > 0 {
+					Logf("🧹 убрал %d придуманных способов, которые не работают", n)
+				}
+			}
+			// обслуживание пула: фоновая проверка запасных стратегий и пополнение нехватки
+			if testing == 0 && bad == 0 && time.Since(p.start) > 20*time.Second {
+				every := testSlow
+				if e.hasDeficit(nk) {
+					every = testFast
+				}
+				if time.Since(lastTest) >= every {
+					excl := map[string]bool{p.s.ID: true}
+					if sb != nil {
+						excl[sb.s.ID] = true
+					}
+					if s, why, ok := e.pickTest(nk, excl, blocked, testedAt); ok {
+						lastTest = time.Now()
+						testedAt[s.ID] = lastTest
+						Logf("🔬 проверяю запасную стратегию (%s): %s", why, s.ID)
+						launchTester(s)
+					} else if time.Since(lastGen) > 5*time.Minute {
+						lastGen = time.Now()
+						h, _, _ := e.poolCounts(nk)
+						for _, f := range poolFams {
+							if h[f] < poolTargets[f] {
+								e.grow(nk)
+								break
+							}
+						}
+					}
+				}
 			}
 			// новый резерв или проверка другой стратегии «на лету»
 			if sb == nil && live == 0 && time.Now().After(nextSb) {
@@ -11287,8 +11541,10 @@ putv "$GODIR/udprelay.go" <<'HYDRA_EOF'
 package hydra
 
 import (
+	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -11303,6 +11559,12 @@ type FakeSpec struct {
 	TTL      int // 0 — отправлять с обычным TTL
 	// PerInit — «мусор» перед каждым рукопожатием WireGuard (сообщение типа 1).
 	PerInit func() [][]byte
+	// UseReserved: в каждом сообщении WireGuard байты 1–3 заменяются на Reserved (как у клиентов WARP,
+	// они берутся из client_id аккаунта); от сервера эти байты обнуляются обратно.
+	UseReserved bool
+	Reserved    [3]byte
+	// CountWG: считать сообщения WireGuard по типам (для диагностики).
+	CountWG bool
 }
 
 type UDPRelay struct {
@@ -11313,6 +11575,22 @@ type UDPRelay struct {
 	mu    sync.Mutex
 	peers map[string]*net.UDPConn
 	once  sync.Once
+
+	out, in [6]int32 // сообщения WireGuard по типам: 1 init, 2 ответ, 3 cookie, 4 данные, 5 прочее
+}
+
+func wgType(p []byte) int {
+	if len(p) >= 4 && p[0] >= 1 && p[0] <= 4 && p[1] == 0 && p[2] == 0 && p[3] == 0 {
+		return int(p[0])
+	}
+	return 5
+}
+
+// Stats — сколько сообщений WireGuard прошло через переходник (для отчёта).
+func (r *UDPRelay) Stats() string {
+	g := func(a *[6]int32, i int) int32 { return atomic.LoadInt32(&a[i]) }
+	return fmt.Sprintf("к серверу: рукопожатий %d, данных %d; от сервера: ответов %d, данных %d, cookie %d, прочих %d",
+		g(&r.out, 1), g(&r.out, 4), g(&r.in, 2), g(&r.in, 4), g(&r.in, 3), g(&r.in, 5))
 }
 
 func StartUDPRelay(remote *net.UDPAddr, fake FakeSpec) (*UDPRelay, error) {
@@ -11346,12 +11624,19 @@ func (r *UDPRelay) loop() {
 			return
 		}
 		if up := r.peer(from); up != nil {
-			if r.fake.PerInit != nil && IsWGInit(buf[:n]) {
+			pkt := buf[:n]
+			if r.fake.PerInit != nil && IsWGInit(pkt) {
 				for _, j := range r.fake.PerInit() {
 					up.Write(j)
 				}
 			}
-			up.Write(buf[:n])
+			if r.fake.CountWG {
+				atomic.AddInt32(&r.out[wgType(pkt)], 1)
+			}
+			if r.fake.UseReserved && wgType(pkt) != 5 {
+				copy(pkt[1:4], r.fake.Reserved[:])
+			}
+			up.Write(pkt)
 		}
 	}
 }
@@ -11379,7 +11664,14 @@ func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
 			if err != nil {
 				return
 			}
-			r.local.WriteToUDP(buf[:n], from)
+			pkt := buf[:n]
+			if r.fake.UseReserved && len(pkt) >= 4 && pkt[0] >= 1 && pkt[0] <= 4 {
+				pkt[1], pkt[2], pkt[3] = 0, 0, 0
+			}
+			if r.fake.CountWG {
+				atomic.AddInt32(&r.in[wgType(pkt)], 1)
+			}
+			r.local.WriteToUDP(pkt, from)
 		}
 	}()
 	return c
@@ -11830,6 +12122,13 @@ func WGStrategies(acc *Account) []Strategy {
 		}
 		return Strategy{ID: fmt.Sprintf("wg/%s/%s", ep, alias), Transport: "wg", Params: p}
 	}
+	// близнец стратегии с reserved-байтами из client_id (так подключаются клиенты WARP)
+	rsv := acc.ClientID != "" && !acc.Custom
+	mkr := func(ep, sig string, jc, jmin, jmax int, alias string) Strategy {
+		s := mk(ep, sig, jc, jmin, jmax, alias+"r")
+		s.Params["rsv"] = "1"
+		return s
+	}
 	var out []Strategy
 	if acc.Custom {
 		// своя конфигурация: сначала ровно как написано, потом тот же адрес с прологом или без него
@@ -11857,9 +12156,15 @@ func WGStrategies(acc *Account) []Strategy {
 	for _, h := range hosts {
 		ep := net.JoinHostPort(h, "2408")
 		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
+		if rsv {
+			out = append(out, mkr(ep, "quic", 3, 41, 78, "q3"))
+		}
 		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
 		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
 		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
+		if rsv {
+			out = append(out, mkr(ep, "", 0, 0, 0, "plain"))
+		}
 	}
 	// 2) по одному адресу из каждой подсети (разные подсети — разные дата-центры)
 	for _, host := range []int{3, 1} {
@@ -11870,6 +12175,9 @@ func WGStrategies(acc *Account) []Strategy {
 			}
 			seen[h] = true
 			out = append(out, mk(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
+			if rsv {
+				out = append(out, mkr(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
+			}
 		}
 	}
 	// 3) другие порты: некоторые провайдеры режут именно 2408
@@ -11910,7 +12218,10 @@ putv "$GODIR/wg_runner.go" <<'HYDRA_EOF'
 package hydra
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -11932,6 +12243,88 @@ type memTun struct {
 	mtu    int
 	events chan tun.Event
 	once   sync.Once
+
+	// Подмена адреса: сервер WARP принимает от аккаунта WireGuard только пакеты с его собственным
+	// адресом. Если трафик из TUN идёт с другого адреса (адрес MASQUE-аккаунта), подменяем его
+	// на выходе и возвращаем на входе.
+	wgAddr []byte
+	mu     sync.Mutex
+	orig   []byte
+}
+
+// fixSum — инкрементальное обновление контрольной суммы (RFC 1624) при замене двух 16-битных слов.
+func fixSum(sum uint16, oldW, newW [2]uint16) uint16 {
+	s := uint32(^sum) & 0xffff
+	for i := 0; i < 2; i++ {
+		s += uint32(^oldW[i]) & 0xffff
+		s += uint32(newW[i])
+	}
+	for s>>16 != 0 {
+		s = (s & 0xffff) + (s >> 16)
+	}
+	return ^uint16(s)
+}
+
+// rewriteIPv4 заменяет адрес в IPv4-пакете (off 12 — источник, 16 — получатель) и правит контрольные суммы.
+func rewriteIPv4(p []byte, off int, na []byte) {
+	ihl := int(p[0]&0x0f) * 4
+	if ihl < 20 || len(p) < ihl || len(na) != 4 {
+		return
+	}
+	oldW := [2]uint16{binary.BigEndian.Uint16(p[off:]), binary.BigEndian.Uint16(p[off+2:])}
+	newW := [2]uint16{binary.BigEndian.Uint16(na), binary.BigEndian.Uint16(na[2:])}
+	binary.BigEndian.PutUint16(p[10:], fixSum(binary.BigEndian.Uint16(p[10:]), oldW, newW))
+	copy(p[off:off+4], na)
+	if binary.BigEndian.Uint16(p[6:])&0x1fff != 0 {
+		return // не первый фрагмент: заголовка L4 нет
+	}
+	switch p[9] {
+	case 6: // TCP
+		if len(p) >= ihl+18 {
+			o := ihl + 16
+			binary.BigEndian.PutUint16(p[o:], fixSum(binary.BigEndian.Uint16(p[o:]), oldW, newW))
+		}
+	case 17: // UDP (контрольная сумма 0 — «не считалась»)
+		if len(p) >= ihl+8 {
+			o := ihl + 6
+			if c := binary.BigEndian.Uint16(p[o:]); c != 0 {
+				v := fixSum(c, oldW, newW)
+				if v == 0 {
+					v = 0xffff
+				}
+				binary.BigEndian.PutUint16(p[o:], v)
+			}
+		}
+	}
+}
+
+func (m *memTun) natOut(p []byte) {
+	if m.wgAddr == nil || len(p) < 20 || p[0]>>4 != 4 || bytes.Equal(p[12:16], m.wgAddr) {
+		return
+	}
+	m.mu.Lock()
+	if m.orig == nil {
+		m.orig = append([]byte(nil), p[12:16]...)
+		Logf("   адрес в аккаунте WireGuard %d.%d.%d.%d, а трафик идёт с %d.%d.%d.%d — подменяю",
+			m.wgAddr[0], m.wgAddr[1], m.wgAddr[2], m.wgAddr[3], p[12], p[13], p[14], p[15])
+	}
+	same := bytes.Equal(p[12:16], m.orig)
+	m.mu.Unlock()
+	if same {
+		rewriteIPv4(p, 12, m.wgAddr)
+	}
+}
+
+func (m *memTun) natIn(p []byte) {
+	if m.wgAddr == nil || len(p) < 20 || p[0]>>4 != 4 || !bytes.Equal(p[16:20], m.wgAddr) {
+		return
+	}
+	m.mu.Lock()
+	o := m.orig
+	m.mu.Unlock()
+	if o != nil {
+		rewriteIPv4(p, 16, o)
+	}
 }
 
 func (m *memTun) File() *os.File { return nil }
@@ -11941,12 +12334,14 @@ func (m *memTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	m.natOut(bufs[0][offset : offset+n])
 	sizes[0] = n
 	return 1, nil
 }
 
 func (m *memTun) Write(bufs [][]byte, offset int) (int, error) {
 	for i, b := range bufs {
+		m.natIn(b[offset:])
 		if err := m.dev.WritePacket(b[offset:]); err != nil {
 			return i, err
 		}
@@ -11992,6 +12387,16 @@ func NewWGRunner(acc *Account) (Runner, error) {
 			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
 			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)
 		}
+		if s.Params["rsv"] == "1" {
+			rb, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(acc.ClientID))
+			if derr != nil || len(rb) != 3 {
+				return errors.New("для этой стратегии нужен client_id аккаунта (reserved-байты)")
+			}
+			fk.UseReserved = true
+			copy(fk.Reserved[:], rb)
+			Logf("   reserved-байты аккаунта: %v", rb)
+		}
+		fk.CountWG = true
 		relay, err := StartUDPRelay(remote, fk)
 		if err != nil {
 			return err
@@ -12002,7 +12407,13 @@ func NewWGRunner(acc *Account) (Runner, error) {
 		if err != nil {
 			return err
 		}
+		if st, ok := dev.(interface{ SetStats(func() string) }); ok {
+			st.SetStats(relay.Stats) // счётчики сообщений WG попадут в причину сбоя
+		}
 		mt := &memTun{dev: dev, mtu: 1280, events: make(chan tun.Event, 4)}
+		if a4 := net.ParseIP(strings.Split(acc.AddrV4, "/")[0]).To4(); a4 != nil {
+			mt.wgAddr = []byte(a4)
+		}
 		logger := &device.Logger{
 			Verbosef: func(format string, args ...any) {
 				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") && !strings.Contains(l, "Routine:") {
