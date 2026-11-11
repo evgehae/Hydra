@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=16
+NEW=17
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -26,6 +26,7 @@ putb() {
 # убрать лишний файл из прошлой версии (манифест лежал не там)
 rm -f app/src/main/java/AndroidManifest.xml
 rm -f app/src/main/java/app/hydra/SettingsScreen.kt
+rm -f app/src/main/res/drawable-nodpi/ic_launcher_bg.webp app/src/main/res/drawable-nodpi/ic_launcher_fg.webp
 
 GODIR="$(dirname "$(find . -name go.mod -not -path './app/*' | head -1)")"
 
@@ -85,8 +86,8 @@ android {
         applicationId = "app.hydra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.6.0"
+        versionCode = 8
+        versionName = "0.7.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -1521,6 +1522,11 @@ fun DiagnosticsScreen(
                 }
             }
         )
+        SettingRow(
+            stringResource(R.string.diag_test_failover),
+            stringResource(R.string.diag_test_failover_sub),
+            onClick = { try { mobile.Mobile.testFailover() } catch (t: Throwable) { } }
+        )
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
         SettingRow(
@@ -2131,6 +2137,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.ParcelFileDescriptor
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
@@ -2162,6 +2169,16 @@ class HydraVpnService : VpnService() {
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var cellCallback: ConnectivityManager.NetworkCallback? = null
     private var forceCell = false
+
+    /** TUN живёт в службе: при перезапуске ядра интерфейс не пропадает, и трафик не уходит мимо VPN. */
+    private var tunPfd: ParcelFileDescriptor? = null
+    private var restartFails = 0
+    private var nextRestartAt = 0L
+
+    private fun closeTun() {
+        try { tunPfd?.close() } catch (t: Throwable) { }
+        tunPfd = null
+    }
 
     private fun jlog(s: String) { try { mobile.Mobile.logLine(s) } catch (t: Throwable) { } }
 
@@ -2199,7 +2216,7 @@ class HydraVpnService : VpnService() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CHANNEL)
-            .setContentTitle("Hydra")
+            .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pi)
@@ -2238,8 +2255,12 @@ class HydraVpnService : VpnService() {
                     else -> getString(R.string.notif_connecting)
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
-                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected) {
-                    Log.w(TAG, "ядро остановилось — поднимаю заново")
+                if (raw.startsWith("up")) restartFails = 0
+                val now = System.currentTimeMillis()
+                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt) {
+                    restartFails++
+                    nextRestartAt = now + minOf(60_000L, 3_000L shl minOf(restartFails, 5))
+                    jlog("служба: ядро остановлено — поднимаю заново (попытка $restartFails)")
                     startVpn()
                 }
             } catch (t: Throwable) {
@@ -2254,6 +2275,8 @@ class HydraVpnService : VpnService() {
         val running = try { !mobile.Mobile.engineStatus().startsWith("off") } catch (t: Throwable) { false }
         if (running) return
 
+        handler.removeCallbacks(statusUpdater)
+        handler.postDelayed(statusUpdater, 3000)
         val prefs = Prefs(this)
         forceCell = prefs.channel == "cell"
         try {
@@ -2314,8 +2337,8 @@ class HydraVpnService : VpnService() {
         val v4 = try { mobile.Mobile.accountAddr4(dir) } catch (t: Throwable) { "" }
         val v6 = try { mobile.Mobile.accountAddr6(dir) } catch (t: Throwable) { "" }
         if (v4.isEmpty()) {
-            Log.e(TAG, "нет аккаунта WARP")
-            stopVpn()
+            // аккаунта ещё нет (приложение само пробует зарегистрироваться): ждём и повторяем, VPN не бросаем
+            jlog("служба: нет аккаунта WARP — повторю позже")
             return
         }
 
@@ -2392,20 +2415,29 @@ class HydraVpnService : VpnService() {
             }
         }
 
-        val pfd = try { b.establish() } catch (e: Exception) { null }
+        val pfd = tunPfd ?: (try { b.establish() } catch (e: Exception) { null })
         if (pfd == null) {
             Log.e(TAG, "не удалось создать TUN")
+            jlog("служба: не удалось создать TUN (нет разрешения VPN?) — остановка")
             stopVpn()
             return
         }
+        tunPfd = pfd
+        // ядру отдаём копию дескриптора: когда оно закроет её, сам интерфейс остаётся у службы
+        val coreFd = try { ParcelFileDescriptor.dup(pfd.fileDescriptor) } catch (e: Exception) { null }
+        if (coreFd == null) {
+            jlog("служба: не удалось продублировать TUN — пересоздаю")
+            closeTun()
+            return
+        }
         val err = try {
-            mobile.Mobile.startTunnel(dir, pfd.detachFd().toLong())
+            mobile.Mobile.startTunnel(dir, coreFd.detachFd().toLong())
         } catch (t: Throwable) {
             t.message ?: "ошибка ядра"
         }
         if (err.isNotEmpty()) {
             Log.e(TAG, err)
-            stopVpn()
+            jlog("служба: ядро не запустилось: $err — повторю")
             return
         }
         watchNetwork()
@@ -2500,6 +2532,7 @@ class HydraVpnService : VpnService() {
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }
         handler.removeCallbacksAndMessages(null)
         try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        closeTun()
         stopSelf()
     }
 
@@ -2516,6 +2549,7 @@ class HydraVpnService : VpnService() {
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cm().bindProcessToNetwork(null) } catch (t: Throwable) { }
         try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        closeTun()
         super.onDestroy()
     }
 }
@@ -4595,7 +4629,7 @@ OZusRhpVkFgm+PzUrQehbDjD3kNWKOXqG60rOFz633d+p24jmgmEIqh97DELrGUMDTv2SdWpQTXH
 czxcnCCtVOxRBWOvabGZrBVMcAY1Ytdf8zmAAAA=
 HYDRA_EOF
 
-putb app/src/main/res/drawable-nodpi/ic_launcher_bg.webp <<'HYDRA_EOF'
+putb app/src/main/res/drawable-nodpi/ic_warp_bg.webp <<'HYDRA_EOF'
 UklGRr5MAABXRUJQVlA4TLFMAAAvh8KhABGGbdtGgh/0UKT7L/wk6U0Q0f8J4NV1ifeQhBtLEpMq
 kCMTYlY1YuAakdHJKXJFrIjJtG7Odc6MH+k3uq7N84GSG9w3a+6aKsFuUgPsFrXAblATGtQGu6Ay
 TfsAOzPVwguGb6Eun4CBiBWBe4n2pV6j3aSCSdJu0ayYJO0GkeSs0SrpoJw32gWJJFXxRjulCJKq
@@ -4943,7 +4977,7 @@ K6lDAjjtXDnHlAAq6OxaVSmSv0zXnM2Q/CXaYVvcHJLAr3zC6w2Sv4Sz2YSmBNBq1W7xfFaBJHB6
 9pBrdhJAXGa7tloXyV/ihQNW0RKSvwVx2W4iZUr+6M4OdpohJH+5aM1FZih2AA==
 HYDRA_EOF
 
-putb app/src/main/res/drawable-nodpi/ic_launcher_fg.webp <<'HYDRA_EOF'
+putb app/src/main/res/drawable-nodpi/ic_warp_fg.webp <<'HYDRA_EOF'
 UklGRvQbAABXRUJQVlA4TOgbAAAvh8KhELVgoG3btO1a/RqxnTzbtm3bNoNn27Zt27YV49mInV7K
 2nuv0dec6/yy9tdacfLzb79I3jzxjaAAAADiJFon3R3SzegGGd3NdtsY3WDS9RMbabBbwla6G1vq
 pVulG8mNMWjRth23bfZz1jyQKmKK4ANIvP4N/2kYvf96//X+6/3X+6/3X++/3n+9/3r/9f7r/df7
@@ -5189,8 +5223,8 @@ HYDRA_EOF
 putv app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_bg" />
-    <foreground android:drawable="@drawable/ic_launcher_fg" />
+    <background android:drawable="@drawable/ic_warp_bg" />
+    <foreground android:drawable="@drawable/ic_warp_fg" />
     <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>
 HYDRA_EOF
@@ -5198,8 +5232,8 @@ HYDRA_EOF
 putv app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_bg" />
-    <foreground android:drawable="@drawable/ic_launcher_fg" />
+    <background android:drawable="@drawable/ic_warp_bg" />
+    <foreground android:drawable="@drawable/ic_warp_fg" />
     <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>
 HYDRA_EOF
@@ -5207,7 +5241,7 @@ HYDRA_EOF
 putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hydra</string>
+    <string name="app_name">WARP CLAUDE</string>
 
     <string name="tab_home">Главная</string>
     <string name="tab_split">Приложения</string>
@@ -5456,6 +5490,8 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="diag_full_running">Проверяю, это займёт несколько секунд…</string>
     <string name="diag_sys">Состояние системы и памяти</string>
     <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
+    <string name="diag_test_failover">Проверить горячий резерв</string>
+    <string name="diag_test_failover_sub">Имитирует отказ основного туннеля: смотрите результат в журнале (🧪)</string>
 </resources>
 HYDRA_EOF
 
@@ -5469,7 +5505,7 @@ HYDRA_EOF
 putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hydra</string>
+    <string name="app_name">WARP CLAUDE</string>
 
     <string name="tab_home">Home</string>
     <string name="tab_split">Apps</string>
@@ -5718,6 +5754,8 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="diag_full_running">Checking, this takes a few seconds…</string>
     <string name="diag_sys">System state and memory</string>
     <string name="diag_sys_sub">Networks, battery, Android modes, DNS, operator, strategy memory</string>
+    <string name="diag_test_failover">Test hot standby</string>
+    <string name="diag_test_failover_sub">Simulates a primary tunnel failure: see the result in the journal (🧪)</string>
 </resources>
 HYDRA_EOF
 
@@ -6164,6 +6202,8 @@ type Engine struct {
 	upSince                    time.Time
 	lastFail                   string
 	lastFailAt                 time.Time
+	probesTotal, probesLost    int
+	testFail                   chan struct{}
 
 	mu      sync.Mutex
 	status  Status
@@ -6202,6 +6242,7 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		tunDead: make(chan struct{}),
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
+		testFail: make(chan struct{}, 1),
 	}
 }
 
@@ -6751,6 +6792,29 @@ func (e *Engine) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func (e *Engine) noteProbe(ok bool) {
+	e.mu.Lock()
+	e.probesTotal++
+	if !ok {
+		e.probesLost++
+	}
+	e.mu.Unlock()
+}
+
+func (e *Engine) probeStats() (total, lost int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.probesTotal, e.probesLost
+}
+
+// TestFailover просит движок имитировать отказ основного туннеля, чтобы проверить горячий резерв.
+func (e *Engine) TestFailover() {
+	select {
+	case e.testFail <- struct{}{}:
+	default:
+	}
+}
+
 func (e *Engine) noteConnect() {
 	e.mu.Lock()
 	e.nConnect++
@@ -6782,6 +6846,9 @@ func (e *Engine) Stats() string {
 	s += "подключений: " + itoa(e.nConnect) + ", мгновенных переходов на резерв: " + itoa(e.nFailover) + ", потерь без резерва: " + itoa(e.nLost) + "\n"
 	if !e.upSince.IsZero() {
 		s += "с последнего подключения: " + time.Since(e.upSince).Round(time.Second).String() + "\n"
+	}
+	if e.probesTotal > 0 {
+		s += "проб: " + itoa(e.probesTotal) + ", потеряно: " + itoa(e.probesLost) + "\n"
 	}
 	if e.lastFail != "" {
 		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"
@@ -8002,7 +8069,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -8459,13 +8526,18 @@ func StartTunnel(dir string, tunFd int) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	vpnEngine, vpnCancel = e, cancel
 	go func() {
+		defer func() {
+			if r := recover(); r != nil { // паника движка не должна ронять приложение: служба поднимет его заново
+				hydra.Logf("💥 паника движка: %v", r)
+			}
+			mem.Save()
+			vpnMu.Lock()
+			if vpnEngine == e {
+				vpnEngine, vpnCancel = nil, nil
+			}
+			vpnMu.Unlock()
+		}()
 		e.Run(ctx)
-		mem.Save()
-		vpnMu.Lock()
-		if vpnEngine == e {
-			vpnEngine, vpnCancel = nil, nil
-		}
-		vpnMu.Unlock()
 	}()
 	return ""
 }
@@ -8513,6 +8585,16 @@ func Diagnostics() string {
 		out += m.Summary(nk, 15)
 	}
 	return out
+}
+
+// TestFailover имитирует отказ основного туннеля, чтобы проверить переход на горячий резерв.
+func TestFailover() {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e != nil {
+		e.TestFailover()
+	}
 }
 HYDRA_EOF
 
@@ -9524,6 +9606,7 @@ package hydra
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -9569,7 +9652,15 @@ func (e *Engine) startAttempt(ctx context.Context, s Strategy, active bool) *att
 	}
 	Logf("▶ стратегия %s", s.ID)
 	Logf("   %s", describeStrategy(s))
-	go func() { a.errc <- e.cfg.Runner(actx, a.dev, s) }()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil { // сбой клиента туннеля не должен ронять приложение
+				Logf("💥 паника в клиенте туннеля %s: %v", s.ID, r)
+				a.errc <- fmt.Errorf("паника: %v", r)
+			}
+		}()
+		a.errc <- e.cfg.Runner(actx, a.dev, s)
+	}()
 	return a
 }
 
@@ -9840,6 +9931,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	bad, sbBad, ticks := 0, 0, 0
 	nextSb := time.Now().Add(3 * time.Second)
 	lastLearn := time.Time{}
+	lastBeat := time.Now()
 
 	// мгновенный переход на резерв; false — резерва нет
 	failover := func(reason string) bool {
@@ -9880,6 +9972,16 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			newSkip = ""
 			restart = true
 			return
+		case <-e.testFail:
+			Logf("🧪 тест: имитирую отказ основного туннеля %s", p.s.ID)
+			if sb == nil {
+				Logf("🧪 резерва сейчас нет — переключаться некуда (резерв поднимается в течение минуты после подключения)")
+				continue
+			}
+			t0 := time.Now()
+			if failover("тест переключения") {
+				Logf("🧪 переключение выполнено за %d мс", time.Since(t0).Milliseconds())
+			}
 		case v := <-res:
 			live--
 			if v.ok {
@@ -9914,13 +10016,24 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			}
 			ticks++
 			r, c, err := p.dev.probe(p.ctx, e.cfg.ProbeEvery)
+			e.noteProbe(err == nil)
+			if err != nil && p.ctx.Err() == nil {
+				// единичная потеря UDP — ещё не отказ: сразу повторяем пробу
+				r, c, err = p.dev.probe(p.ctx, 1500*time.Millisecond)
+				e.noteProbe(err == nil)
+			}
 			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
 				_, err = p.dev.tcpProbe(p.ctx, e.cfg.TCPTimeout)
 			}
+			limit := e.cfg.BadProbes
+			if sb != nil && limit > 2 {
+				limit = 2 // резерв готов — переходим на него быстрее
+			}
 			if err != nil {
 				bad++
-				Logf("   проба без ответа (%d из %d): %v", bad, e.cfg.BadProbes, err)
-				if bad >= e.cfg.BadProbes {
+				Logf("   проба без ответа (%d из %d, в туннель ушло %d пакетов, пришло %d): %v", bad, limit,
+					atomic.LoadInt32(&p.dev.sent), atomic.LoadInt32(&p.dev.recv), err)
+				if bad >= limit {
 					e.blame(nk, p.s.ID)
 					e.emit("degraded", p.s.ID, "туннель перестал отвечать")
 					Logf("✘ туннель перестал отвечать")
@@ -9966,6 +10079,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if sb != nil {
 				if _, _, perr := sb.dev.probe(sb.ctx, 1500*time.Millisecond); perr != nil {
 					sbBad++
+					Logf("   резерв %s не ответил на пробу (%d из %d)", sb.s.ID, sbBad, e.cfg.BadProbes)
 					if sbBad >= e.cfg.BadProbes {
 						Logf("   резерв %s не отвечает — убираю", sb.s.ID)
 						sb.cancel()
@@ -9975,6 +10089,16 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				} else {
 					sbBad = 0
 				}
+			}
+			if time.Since(lastBeat) > 10*time.Minute {
+				lastBeat = time.Now()
+				sbName := "нет"
+				if sb != nil {
+					sbName = sb.s.ID
+				}
+				total, lost := e.probeStats()
+				Logf("💓 в порядке: основной %s, дата-центр %s, пинг %d мс, резерв: %s, проб потеряно %d из %d",
+					p.s.ID, colo, r.Milliseconds(), sbName, lost, total)
 			}
 			// новый резерв или проверка другой стратегии «на лету»
 			if sb == nil && live == 0 && time.Now().After(nextSb) {
