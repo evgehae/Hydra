@@ -2,6 +2,7 @@ package app.hydra
 
 import android.content.Intent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,6 +45,8 @@ fun DiagnosticsScreen(
     var quick by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     var showResult by remember { mutableStateOf(false) }
+    var showQuick by remember { mutableStateOf(false) }
+    var showSys by remember { mutableStateOf(false) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -89,7 +92,16 @@ fun DiagnosticsScreen(
             onClick = {
                 if (!quick) {
                     quick = true
-                    scope.launch { base = runDiagnostics(); quick = false }
+                    scope.launch {
+                        val r = runDiagnostics()
+                        base = r
+                        quick = false
+                        try {
+                            mobile.Mobile.logLine("🔎 быстрая проверка (мимо VPN): DNS " + (if (r.dnsOk) "ок ${r.dnsMs} мс" else "сбой") +
+                                ", HTTPS " + (if (r.httpsOk) "ок ${r.httpsMs} мс" else "сбой") + ", дата-центр " + r.colo + ", IP " + r.ip)
+                        } catch (t: Throwable) { }
+                        showQuick = true
+                    }
                 }
             }
         )
@@ -111,12 +123,15 @@ fun DiagnosticsScreen(
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
         SettingRow(
+            stringResource(R.string.diag_sys),
+            stringResource(R.string.diag_sys_sub),
+            onClick = { showSys = true }
+        )
+        SettingRow(
             stringResource(R.string.diag_share),
             stringResource(R.string.diag_share_sub),
             onClick = {
-                val text = buildReport(ctx, prefs, vpn, account, checks)
-                val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+                shareReport(ctx, buildReport(ctx, prefs, vpn, account, checks))
             }
         )
         SettingRow(
@@ -153,13 +168,51 @@ fun DiagnosticsScreen(
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     showResult = false
-                    val text = buildReport(ctx, prefs, vpn, account, checks)
-                    val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                    try { ctx.startActivity(Intent.createChooser(i, null)) } catch (t: Throwable) { }
+                    shareReport(ctx, buildReport(ctx, prefs, vpn, account, checks))
                 }) { Text(stringResource(R.string.diag_share)) }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showResult = false }) { Text(stringResource(R.string.btn_ok)) }
+            }
+        )
+    }
+    if (showQuick) {
+        val r = base
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showQuick = false },
+            title = { Text(stringResource(R.string.diag_quick)) },
+            text = {
+                Column {
+                    if (r != null) {
+                        Text((if (r.dnsOk) "✔ " else "✘ ") + stringResource(R.string.chk_dns) + ": " + (if (r.dnsOk) "${r.dnsMs} ms" else stringResource(R.string.diag_fail)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text((if (r.httpsOk) "✔ " else "✘ ") + stringResource(R.string.chk_https) + ": " + (if (r.httpsOk) "${r.httpsMs} ms" else stringResource(R.string.diag_fail)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text(stringResource(R.string.diag_dc) + ": " + (if (r.colo.isEmpty()) "—" else coloLabel(r.colo)), modifier = Modifier.padding(vertical = 3.dp))
+                        Text(stringResource(R.string.diag_ip) + ": " + (if (r.ip.isEmpty()) "—" else r.ip), modifier = Modifier.padding(vertical = 3.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showQuick = false }) { Text(stringResource(R.string.btn_ok)) }
+            }
+        )
+    }
+    if (showSys) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showSys = false },
+            title = { Text(stringResource(R.string.diag_sys)) },
+            text = {
+                SelectionContainer {
+                    Text(
+                        (try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "" }) + "\n" + systemReport(ctx),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showSys = false }) { Text(stringResource(R.string.btn_ok)) }
             }
         )
     }

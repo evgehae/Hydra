@@ -41,7 +41,22 @@ class HydraVpnService : VpnService() {
     private var cellCallback: ConnectivityManager.NetworkCallback? = null
     private var forceCell = false
 
+    private fun jlog(s: String) { try { mobile.Mobile.logLine(s) } catch (t: Throwable) { } }
+
+    private fun describeNet(n: Network): String = try {
+        val c = cm().getNetworkCapabilities(n)
+        val t = when {
+            c == null -> "?"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "сотовая"
+            c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "другая"
+        }
+        t + (if (c?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) ", проверена" else ", не проверена")
+    } catch (t: Throwable) { "?" }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        jlog("служба: команда " + (intent?.action ?: "перезапуск системой / запуск"))
         goForeground(getString(R.string.notif_connecting))
         val prefs = Prefs(this)
         if (intent?.action == ACTION_STOP) {
@@ -125,6 +140,7 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
             mobile.Mobile.setParallel(if (prefs.parallel) 3L else 1L)
+            jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=${prefs.parallel}, свой DNS=${if (prefs.customDnsOn) prefs.customDns else "нет"}")
             mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
@@ -340,8 +356,8 @@ class HydraVpnService : VpnService() {
                     try { mobile.Mobile.setNetKey(currentNetKey()) } catch (t: Throwable) { }
                 }, 300)
             }
-            override fun onAvailable(network: Network) = push()
-            override fun onLost(network: Network) = push()
+            override fun onAvailable(network: Network) { jlog("📶 сеть появилась: " + describeNet(network)); push() }
+            override fun onLost(network: Network) { jlog("📶 сеть пропала"); push() }
         }
         netCallback = cb
         try {
@@ -352,6 +368,7 @@ class HydraVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        jlog("служба: остановка")
         Prefs(this).wantConnected = false
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (t: Throwable) { }
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
@@ -365,11 +382,13 @@ class HydraVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        jlog("система отозвала VPN (включён другой VPN или VPN выключен в настройках)")
         stopVpn()
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        jlog("служба: уничтожена")
         handler.removeCallbacksAndMessages(null)
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }

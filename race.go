@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 )
 
@@ -87,13 +88,19 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 		}
 	}
 	if !up {
+		sent, recv := int(atomic.LoadInt32(&a.dev.sent)), int(atomic.LoadInt32(&a.dev.recv))
 		hint := ""
-		if s.Transport == "wg" {
-			hint = " — похоже, провайдер режет WireGuard (UDP) к этому адресу"
-		} else if s.Params["h2"] != "1" {
-			hint = " — похоже, провайдер режет QUIC к этому адресу"
+		switch {
+		case recv > 0:
+			hint = " — пакеты из туннеля приходят, но проба без ответа: сервер принял туннель, но не пропускает трафик"
+		case s.Transport == "wg":
+			hint = " — WireGuard: рукопожатие могло пройти, но данные из туннеля не возвращаются"
+		case s.Params["h2"] == "1":
+			hint = " — из туннеля не пришло ни одного пакета (HTTP/2 к этому адресу)"
+		default:
+			hint = " — из туннеля не пришло ни одного пакета: похоже, QUIC к этому адресу режется"
 		}
-		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с" + hint
+		msg := "нет ответа от туннеля за " + itoa(int(timeout.Seconds())) + " с (в туннель ушло пакетов: " + itoa(sent) + ", пришло из туннеля: " + itoa(recv) + ")" + hint
 		Logf("   ✘ %s: %s", s.ID, msg)
 		return false, e.fail(nk, s, msg)
 	}
@@ -147,34 +154,41 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// pickStandby выбирает стратегию для резерва: лучшая по памяти, по возможности с другим адресом, чем у основной.
+// pickStandby выбирает стратегию для резерва: лучшая по памяти того же транспорта, что и основная,
+// по возможности с другим адресом; другие транспорты — только если своих кандидатов не осталось.
 func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]time.Time, tried map[string]time.Time) (Strategy, bool) {
 	pep := hostOnly(primary.Params["endpoint"])
 	ranked := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
-	var fb Strategy
-	haveFB := false
-	for _, s := range ranked {
-		if s.ID == primary.ID {
-			continue
+	pass := func(sameTransport bool) (Strategy, bool) {
+		var fb Strategy
+		haveFB := false
+		for _, s := range ranked {
+			if s.ID == primary.ID || (s.Transport == primary.Transport) != sameTransport {
+				continue
+			}
+			if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
+				continue
+			}
+			ep := s.Params["endpoint"]
+			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+				continue
+			}
+			if e.cfg.Mem.Doomed(nk, s.ID) {
+				continue
+			}
+			if hostOnly(ep) != pep {
+				return s, true
+			}
+			if !haveFB {
+				fb, haveFB = s, true
+			}
 		}
-		if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
-			continue
-		}
-		ep := s.Params["endpoint"]
-		if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
-			continue
-		}
-		if e.cfg.Mem.Doomed(nk, s.ID) {
-			continue
-		}
-		if hostOnly(ep) != pep {
-			return s, true
-		}
-		if !haveFB {
-			fb, haveFB = s, true
-		}
+		return fb, haveFB
 	}
-	return fb, haveFB
+	if s, ok := pass(true); ok {
+		return s, true
+	}
+	return pass(false)
 }
 
 // raceRound — один «раунд» параллельного режима: гонка, затем работа с горячим резервом,
@@ -297,6 +311,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	e.setStatus(Status{State: "up", Strategy: p.s.ID, Colo: colo, RTT: p.rtt, Message: msg})
 	e.emit("connected", p.s.ID, colo)
 	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(p.start).Seconds(), p.s.ID, colo, p.rtt.Milliseconds())
+	e.noteConnect()
 
 	var sb *attempt
 	tried := map[string]time.Time{}
@@ -320,10 +335,12 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		e.setStatus(Status{State: "up", Strategy: p.s.ID, Colo: colo, RTT: p.rtt, Message: msg})
 		e.emit("connected", p.s.ID, colo)
 		Logf("⚡ резерв принял нагрузку без разрыва: %s → %s (%s)", old.s.ID, p.s.ID, reason)
+		e.noteLoss(reason, true)
 		nextSb = time.Now().Add(5 * time.Second)
 		return true
 	}
 	lose := func(reason string) {
+		e.noteLoss(reason, false)
 		e.setStatus(Status{State: "reconnecting", Message: reason})
 		newSkip = p.s.ID
 		restart = true

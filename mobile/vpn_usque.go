@@ -17,6 +17,7 @@ import (
 var (
 	vpnMu     sync.Mutex
 	vpnEngine *hydra.Engine
+	vpnMem    *hydra.Memory
 	vpnCancel context.CancelFunc
 )
 
@@ -89,6 +90,7 @@ func StartTunnel(dir string, tunFd int) string {
 		return "в аккаунте нет IPv4-адреса"
 	}
 	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
+	vpnMem = mem
 
 	cfg := hydra.DefaultEngineConfig()
 	cfg.LocalIP = ip
@@ -144,4 +146,21 @@ func EngineStatus() string {
 	rx, tx := e.Traffic()
 	return fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d", st.State, st.Strategy, st.Colo,
 		st.RTT.Milliseconds(), strings.ReplaceAll(st.Message, "|", "/"), rx, tx)
+}
+
+// Diagnostics — сводка движка и памяти стратегий для отчёта.
+func Diagnostics() string {
+	out := ""
+	if e := vpnEngine; e != nil {
+		out += e.Stats()
+	} else {
+		out += "движок не запущен\n"
+	}
+	polMu.Lock()
+	nk := netKey
+	polMu.Unlock()
+	if m := vpnMem; m != nil {
+		out += m.Summary(nk, 15)
+	}
+	return out
 }

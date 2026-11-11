@@ -247,4 +247,6 @@
     <string name="adv_parallel">Параллельный режим и горячий резерв</string>
     <string name="adv_parallel_sub">Несколько путей одновременно, мгновенный переход на резерв при сбое. Отключите, если что-то работает странно.</string>
     <string name="diag_full_running">Проверяю, это займёт несколько секунд…</string>
+    <string name="diag_sys">Состояние системы и памяти</string>
+    <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
 </resources>

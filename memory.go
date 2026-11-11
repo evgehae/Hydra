@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -241,5 +242,38 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 		return rate - pen + bonus
 	}
 	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
+	return out
+}
+
+// Summary — читаемая сводка памяти для диагностики: лучшие стратегии в этой сети и счётчики.
+func (m *Memory) Summary(net string, n int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ns := m.Nets[net]
+	type row struct {
+		id string
+		st *stat
+	}
+	rows := make([]row, 0, len(ns))
+	for id, st := range ns {
+		rows = append(rows, row{id, st})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].st.OK != rows[j].st.OK {
+			return rows[i].st.OK > rows[j].st.OK
+		}
+		return rows[i].st.Fail < rows[j].st.Fail
+	})
+	out := fmt.Sprintf("память: сетей %d; в этой сети (%s) стратегий с опытом %d, придуманных %d\n", len(m.Nets), net, len(ns), len(m.Gen[net]))
+	for i, r := range rows {
+		if i >= n {
+			break
+		}
+		last := "—"
+		if !r.st.LastOK.IsZero() {
+			last = r.st.LastOK.Format("01-02 15:04")
+		}
+		out += fmt.Sprintf("  %s: успехов %d, сбоев %d, ~%.0f мс, последний успех %s\n", r.id, r.st.OK, r.st.Fail, r.st.EWMAms, last)
+	}
 	return out
 }

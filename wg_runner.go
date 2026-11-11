@@ -98,7 +98,7 @@ func NewWGRunner(acc *Account) (Runner, error) {
 		mt := &memTun{dev: dev, mtu: 1280, events: make(chan tun.Event, 4)}
 		logger := &device.Logger{
 			Verbosef: func(format string, args ...any) {
-				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") {
+				if l := fmt.Sprintf(format, args...); strings.Contains(l, "andshake") && !strings.Contains(l, "Routine:") {
 					Logf("   wg: %s", l)
 				}
 			},

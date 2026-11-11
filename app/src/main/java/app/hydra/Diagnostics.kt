@@ -124,27 +124,59 @@ fun journalErrors(): List<String> = try {
     mobile.Mobile.getJournal(0).lines().filter { it.contains("✘") || it.contains("⚠") || it.contains("⛔") || it.contains("ошибк", true) }
 } catch (t: Throwable) { emptyList() }
 
-/** Текст отчёта для разработчика: версия, устройство, состояние, проверки, журнал. Ключи и токены не включаются. */
+/** Полный отчёт: система, настройки, состояние движка и память, проверки, журнал. Ключи и токены не включаются. */
 fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, account: AccountController, checks: List<DiagCheck>): String {
     val sb = StringBuilder()
     sb.append("Hydra report ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())).append('\n')
-    sb.append("device: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
-        .append(", Android ").append(android.os.Build.VERSION.RELEASE).append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n")
     sb.append("core: ").append(try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" }).append('\n')
+    sb.append("\n--- состояние ---\n")
     sb.append("state: ").append(vpn.state).append(", strategy: ").append(vpn.strategy).append(", colo: ").append(vpn.colo)
         .append(", rtt: ").append(vpn.rttMs).append(" ms, rx/tx: ").append(fmtBytes(vpn.rxBytes)).append(" / ").append(fmtBytes(vpn.txBytes)).append('\n')
     if (vpn.message.isNotEmpty()) sb.append("message: ").append(vpn.message).append('\n')
-    sb.append("network: ").append(networkType(ctx)).append('\n')
     sb.append("account: masque=").append(account.id.take(8)).append(" wg=").append(account.wgId.take(8)).append('\n')
     sb.append("settings: protocol=").append(prefs.protocol).append(", channel=").append(prefs.channel)
         .append(", blockedColos=").append(prefs.blockedColos).append(", allowColos=").append(prefs.allowColos)
-        .append(", fallbackAny=").append(prefs.fallbackAny).append(", customSni=").append(prefs.customSni)
-        .append(", customEndpoint=").append(prefs.customEndpoint).append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off").append('\n')
+        .append(", fallbackAny=").append(prefs.fallbackAny).append(", parallel=").append(prefs.parallel)
+        .append(", autostart=").append(prefs.autoStart)
+        .append(", customSni=").append(prefs.customSni).append(", customEndpoint=").append(prefs.customEndpoint)
+        .append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off")
+        .append(", excludedRoutes=").append(prefs.excludedRoutes.split(',').size)
+        .append(", splitOnlySelected=").append(prefs.splitOnlySelected).append(", splitApps=").append(prefs.splitApps.size).append('\n')
+    sb.append("\n--- движок и память ---\n")
+    sb.append(try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "н/д\n" })
+    sb.append("\n--- система ---\n")
+    sb.append(try { systemReport(ctx) } catch (t: Throwable) { "н/д\n" })
     if (checks.isNotEmpty()) {
-        sb.append("\n--- checks ---\n")
+        sb.append("\n--- проверки (мимо VPN) ---\n")
         checks.forEach { sb.append(if (it.ok) "OK   " else "FAIL ").append(it.name).append(": ").append(it.detail).append('\n') }
     }
-    sb.append("\n--- journal ---\n")
-    sb.append(try { mobile.Mobile.getJournal(600) } catch (t: Throwable) { "" })
+    sb.append("\n--- журнал ---\n")
+    sb.append(try { mobile.Mobile.getJournal(1500) } catch (t: Throwable) { "" })
     return sb.toString()
+}
+
+/** Отправляет отчёт файлом .txt (так его принимают мессенджеры и почта); если не вышло — текстом. */
+fun shareReport(ctx: android.content.Context, text: String) {
+    try {
+        val dir = java.io.File(ctx.cacheDir, "reports")
+        dir.mkdirs()
+        dir.listFiles()?.forEach { if (it.name.startsWith("hydra-report")) it.delete() }
+        val name = "hydra-report-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
+        val f = java.io.File(dir, name)
+        f.writeText(text)
+        val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+        val i = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, name)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        i.clipData = android.content.ClipData.newRawUri(name, uri)
+        ctx.startActivity(android.content.Intent.createChooser(i, null).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+    } catch (t: Throwable) {
+        try {
+            val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text.takeLast(200_000))
+            ctx.startActivity(android.content.Intent.createChooser(i, null))
+        } catch (t2: Throwable) { }
+    }
 }

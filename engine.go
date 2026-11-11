@@ -78,6 +78,12 @@ type Engine struct {
 	once    sync.Once
 	soft    bool
 
+	// статистика работы (под mu)
+	nConnect, nFailover, nLost int
+	upSince                    time.Time
+	lastFail                   string
+	lastFailAt                 time.Time
+
 	mu      sync.Mutex
 	status  Status
 	waiters map[uint16]chan string
@@ -180,6 +186,8 @@ type attemptDev struct {
 	tcpSeq  uint32
 	tcpAck  chan struct{}
 	active  int32         // 1 — через эту карту идёт трафик приложений
+	sent    int32         // сколько пакетов клиент туннеля забрал у нас (пробы и трафик)
+	recv    int32         // сколько пакетов клиент туннеля отдал нам
 	wake    chan struct{} // будит ReadPacket, когда карта становится активной
 }
 
@@ -223,8 +231,10 @@ func (d *attemptDev) ReadPacket(buf []byte) (int, error) {
 		case <-d.e.tunDead:
 			return 0, io.EOF
 		case p := <-d.probeQ:
+			atomic.AddInt32(&d.sent, 1)
 			return copy(buf, p), nil
 		case p := <-outc:
+			atomic.AddInt32(&d.sent, 1)
 			return copy(buf, p), nil
 		case <-d.wake:
 		}
@@ -237,6 +247,7 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 		return io.ErrClosedPipe
 	default:
 	}
+	atomic.AddInt32(&d.recv, 1)
 	if id, colo, ok := ParseColoReply(pkt, d.port); ok {
 		d.e.deliver(id, colo)
 		return nil
@@ -535,6 +546,10 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.Close()
 	go e.readTun()
+	select { // стартовый сигнал о смене сети (его присылает Android при запуске) не нужен
+	case <-e.cfg.NetChanged:
+	default:
+	}
 	Logf("Гидра запущена: стратегий %d, запрещённые дата-центры: %s", len(e.cfg.Strategies), policyText(e.cfg.Policy))
 
 	backoff := time.Second
@@ -653,4 +668,42 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func (e *Engine) noteConnect() {
+	e.mu.Lock()
+	e.nConnect++
+	e.upSince = time.Now()
+	e.mu.Unlock()
+}
+
+func (e *Engine) noteLoss(reason string, failover bool) {
+	e.mu.Lock()
+	if failover {
+		e.nFailover++
+	} else {
+		e.nLost++
+	}
+	e.lastFail = reason
+	e.lastFailAt = time.Now()
+	e.mu.Unlock()
+}
+
+// Stats — сводка работы движка для диагностики.
+func (e *Engine) Stats() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	mode := "по очереди"
+	if e.cfg.Parallel > 1 {
+		mode = "параллельный (гонка + горячий резерв)"
+	}
+	s := "режим: " + mode + "\n"
+	s += "подключений: " + itoa(e.nConnect) + ", мгновенных переходов на резерв: " + itoa(e.nFailover) + ", потерь без резерва: " + itoa(e.nLost) + "\n"
+	if !e.upSince.IsZero() {
+		s += "с последнего подключения: " + time.Since(e.upSince).Round(time.Second).String() + "\n"
+	}
+	if e.lastFail != "" {
+		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"
+	}
+	return s
 }
