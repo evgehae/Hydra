@@ -11,7 +11,7 @@ put() {
 # Версия набора файлов: при смене номера файлы ниже обновляются один раз, потом их можно править руками.
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=18
+NEW=19
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -83,11 +83,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "app.hydra"
+        applicationId = "warp.claude.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.8.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -336,6 +336,27 @@ class AccountController(
         }
     }
 
+    private var wg2Busy = false
+    private var wg2Fails = 0
+
+    /** Второй аккаунт WireGuard: у сервера одна сессия на ключ, без него резерв WireGuard невозможен. */
+    private fun ensureWg2() {
+        if (wg2Busy || wg2Fails >= 3 || wgId.isEmpty()) return
+        val has = try { mobile.Mobile.wireguardExtraID(dir).isNotEmpty() } catch (t: Throwable) { true }
+        if (has) return
+        wg2Busy = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                try {
+                    mobile.Mobile.setDNS(dnsProvider())
+                    mobile.Mobile.registerWireguardExtraReport(dir)
+                } catch (t: Throwable) { "FAIL " + (t.message ?: "") }
+            }
+            if (!r.startsWith("OK")) wg2Fails++
+            wg2Busy = false
+        }
+    }
+
     private var healTries = 0
     private var nextHealAt = 0L
 
@@ -345,7 +366,7 @@ class AccountController(
      */
     fun heal() {
         if (working) return
-        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; return }
+        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; ensureWg2(); return }
         val now = System.currentTimeMillis()
         if (now < nextHealAt) return
         healTries++
@@ -1426,7 +1447,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** «Диагностика»: состояние, проверки, ошибки, журнал, отчёт. */
 @Composable
@@ -1449,6 +1472,8 @@ fun DiagnosticsScreen(
     var showResult by remember { mutableStateOf(false) }
     var showQuick by remember { mutableStateOf(false) }
     var showSys by remember { mutableStateOf(false) }
+    var wlRunning by remember { mutableStateOf(false) }
+    var wlText by remember { mutableStateOf<String?>(null) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -1529,6 +1554,22 @@ fun DiagnosticsScreen(
         )
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
+        SettingRow(
+            stringResource(R.string.diag_wl),
+            stringResource(R.string.diag_wl_sub),
+            value = if (wlRunning) "…" else null,
+            onClick = {
+                if (!wlRunning) {
+                    wlRunning = true
+                    scope.launch {
+                        val t = withContext(Dispatchers.IO) { try { mobile.Mobile.whitelistCheck() } catch (e: Throwable) { "н/д" } }
+                        try { mobile.Mobile.logLine("🔎 проверка белых списков:\n" + t) } catch (e: Throwable) { }
+                        wlText = t
+                        wlRunning = false
+                    }
+                }
+            }
+        )
         SettingRow(
             stringResource(R.string.diag_sys),
             stringResource(R.string.diag_sys_sub),
@@ -1623,6 +1664,19 @@ fun DiagnosticsScreen(
             }
         )
     }
+    wlText?.let { t ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { wlText = null },
+            title = { Text(stringResource(R.string.diag_wl)) },
+            text = {
+                SelectionContainer {
+                    Text(t, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 15.sp,
+                        modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()))
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { wlText = null }) { Text(stringResource(R.string.btn_ok)) } }
+        )
+    }
 }
 
 /** Только сбои из журнала. */
@@ -1671,6 +1725,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -1685,6 +1740,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -1692,6 +1748,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -1710,7 +1767,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 private val TitleBlue = Color(0xFF3F5BFF)
@@ -1729,6 +1788,10 @@ fun HomeScreen(
     val needAppsToast = stringResource(R.string.need_apps_toast)
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    var wlText by remember { mutableStateOf<String?>(null) }
+    var wlRelay by remember { mutableStateOf(false) }
+    var wlBusy by remember { mutableStateOf(false) }
+    val whitelist = vpn.message.startsWith("🛑")
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) vpn.start()
@@ -1766,6 +1829,7 @@ fun HomeScreen(
         !hasAccount -> stringResource(R.string.home_sub_need_account)
         up -> if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.home_private)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
+        whitelist -> stringResource(R.string.wl_sub)
         vpn.state == "reconnecting" || vpn.state == "failed" ->
             if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_connecting_sub)
         else -> stringResource(R.string.home_not_private)
@@ -1894,7 +1958,55 @@ fun HomeScreen(
                 }
             }
         }
+        // режим белых списков: оператор пропускает только российские сайты
+        if (whitelist) {
+            Spacer(Modifier.height(16.dp))
+            HCard {
+                Text(stringResource(R.string.wl_title), fontWeight = FontWeight.SemiBold, color = NeonAmber)
+                Text(
+                    stringResource(R.string.wl_text),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            if (!wlBusy) {
+                                wlBusy = true
+                                scope.launch {
+                                    val t = withContext(Dispatchers.IO) { try { mobile.Mobile.whitelistCheck() } catch (e: Throwable) { "н/д" } }
+                                    try { mobile.Mobile.logLine("🔎 проверка белых списков:\n" + t) } catch (e: Throwable) { }
+                                    wlText = t
+                                    wlBusy = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (wlBusy) "…" else stringResource(R.string.wl_check)) }
+                    OutlinedButton(onClick = { wlRelay = true }, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.wl_relay))
+                    }
+                }
+            }
+        }
         Spacer(Modifier.weight(3.2f))
+    }
+    wlText?.let { t ->
+        AlertDialog(
+            onDismissRequest = { wlText = null },
+            title = { Text(stringResource(R.string.wl_title)) },
+            text = { Text(t, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { wlText = null }) { Text(stringResource(R.string.btn_ok)) } }
+        )
+    }
+    if (wlRelay) {
+        AlertDialog(
+            onDismissRequest = { wlRelay = false },
+            title = { Text(stringResource(R.string.wl_relay_title)) },
+            text = { Text(stringResource(R.string.wl_relay_text), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { wlRelay = false }) { Text(stringResource(R.string.btn_ok)) } }
+        )
     }
 }
 
@@ -5492,6 +5604,15 @@ putv app/src/main/res/values-ru/strings.xml <<'HYDRA_EOF'
     <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
     <string name="diag_test_failover">Проверить горячий резерв</string>
     <string name="diag_test_failover_sub">Имитирует отказ основного туннеля: смотрите результат в журнале (🧪)</string>
+    <string name="wl_title">Режим белых списков</string>
+    <string name="wl_sub">Белые списки: Cloudflare недоступен, жду</string>
+    <string name="wl_text">Оператор пропускает только российские сайты, поэтому Cloudflare WARP (как и любой зарубежный VPN) сейчас не подключается. Гидра сама проверяет сеть и подключится, когда ограничения снимут. Пока она пробует имена российских сайтов (SNI) и не портит память стратегий.</string>
+    <string name="wl_check">Проверить сеть</string>
+    <string name="wl_relay">Что можно сделать</string>
+    <string name="wl_relay_title">Как обойти белые списки</string>
+    <string name="wl_relay_text">Если оператор фильтрует по IP-адресам, поможет только ретранслятор: небольшая программа на сервере, чей адрес входит в белый список (российский хостинг или облако). Она просто пересылает UDP-пакеты к Cloudflare.\n\nНа сервере (Linux) одна команда:\nsocat UDP4-LISTEN:443,fork,reuseaddr UDP4:162.159.198.2:443\n\nВ приложении: Дополнительно → Польз. конечная точка → IP-адрес сервера:443.\n\nПодойдёт ли конкретный хостинг, зависит от оператора и региона: проверьте, открывается ли его адрес в режиме белых списков. Без собственного сервера обход возможен только если фильтр смотрит на имя сайта (SNI), а не на IP: Гидра проверяет это сама (кнопка «Проверить сеть»).</string>
+    <string name="diag_wl">Проверка белых списков</string>
+    <string name="diag_wl_sub">Какие адреса и имена доступны оператору сейчас</string>
 </resources>
 HYDRA_EOF
 
@@ -5756,6 +5877,15 @@ putv app/src/main/res/values/strings.xml <<'HYDRA_EOF'
     <string name="diag_sys_sub">Networks, battery, Android modes, DNS, operator, strategy memory</string>
     <string name="diag_test_failover">Test hot standby</string>
     <string name="diag_test_failover_sub">Simulates a primary tunnel failure: see the result in the journal (🧪)</string>
+    <string name="wl_title">Whitelist mode</string>
+    <string name="wl_sub">Whitelist mode: Cloudflare is unreachable, waiting</string>
+    <string name="wl_text">The operator only lets Russian sites through, so Cloudflare WARP (like any foreign VPN) cannot connect right now. Hydra keeps checking and will connect when the limits are lifted. Meanwhile it tries Russian site names (SNI) and does not damage the strategy memory.</string>
+    <string name="wl_check">Check network</string>
+    <string name="wl_relay">What can be done</string>
+    <string name="wl_relay_title">How to bypass whitelists</string>
+    <string name="wl_relay_text">If the operator filters by IP address, only a relay helps: a small program on a server whose address is on the whitelist (a Russian host or cloud). It just forwards UDP packets to Cloudflare.\n\nOn the server (Linux), one command:\nsocat UDP4-LISTEN:443,fork,reuseaddr UDP4:162.159.198.2:443\n\nIn the app: Advanced → Custom endpoint → server IP:443.\n\nWhether a given host works depends on the operator and region: check that its address opens in whitelist mode. Without your own server a bypass is possible only if the filter looks at the site name (SNI) rather than the IP: Hydra checks this itself (the Check network button).</string>
+    <string name="diag_wl">Whitelist check</string>
+    <string name="diag_wl_sub">Which addresses and names the operator lets through now</string>
 </resources>
 HYDRA_EOF
 
@@ -6034,6 +6164,26 @@ func CustomEndpointStrategies(ep string) []Strategy {
 	}
 	return append(out, mk("h2", "std", nil))
 }
+
+// WhitelistStrategies — стратегии для режима белых списков: настоящий SNI подменяется на имя, которое
+// оператор пропускает (российский сайт). HTTP/2 по TCP идёт первым: проход TLS к Cloudflare проверен заранее.
+func WhitelistStrategies(snis []string) []Strategy {
+	if len(snis) > 3 {
+		snis = snis[:3]
+	}
+	var out []Strategy
+	for _, sni := range snis {
+		for _, h := range []string{"162.159.198.2", "162.159.198.1"} {
+			hp := net.JoinHostPort(h, "443")
+			out = append(out, Strategy{ID: "h2/" + hp + "/wl:" + sni, Transport: "masque",
+				Params: map[string]string{"endpoint": hp, "sni": sni, "h2": "1"}})
+		}
+		hp := net.JoinHostPort("162.159.198.2", "443")
+		out = append(out, Strategy{ID: "h3/" + hp + "/wl:" + sni, Transport: "masque",
+			Params: map[string]string{"endpoint": hp, "sni": sni, "h2": "0"}})
+	}
+	return out
+}
 HYDRA_EOF
 
 putv "$GODIR/dns.go" <<'HYDRA_EOF'
@@ -6167,6 +6317,9 @@ type EngineConfig struct {
 	NetAlive     func() bool   // есть ли вообще интернет мимо туннеля (nil — не проверять)
 	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
 	Parallel     int           // >1: параллельная гонка стратегий и горячий резерв; 0/1 — по очереди
+	NetState     func() string // "ok" | "whitelist" | "dead": доступен ли зарубежный интернет (nil — не проверять)
+	WLScan       func(ctx context.Context) []string // какие SNI проходят к Cloudflare в режиме белых списков
+	CanRun       func(Strategy) bool                // можно ли сейчас запускать стратегию (например, свободен ли аккаунт WG)
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -6204,6 +6357,9 @@ type Engine struct {
 	lastFailAt                 time.Time
 	probesTotal, probesLost    int
 	testFail                   chan struct{}
+	tried                      map[string]time.Time // когда стратегию последний раз пробовали
+	inOutage, outageLogged     bool
+	wlLast                     time.Time
 
 	mu      sync.Mutex
 	status  Status
@@ -6243,6 +6399,7 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
 		testFail: make(chan struct{}, 1),
+		tried:    map[string]time.Time{},
 	}
 }
 
@@ -6710,7 +6867,23 @@ func (e *Engine) Run(ctx context.Context) error {
 				Logf("🧹 убрал %d придуманных способов, которые в этой сети не работают", n)
 			}
 		}
+		// сеть: есть ли вообще зарубежный интернет (режим белых списков, обрыв)
+		var wlExtra []Strategy
+		if st := e.netState(); st != "ok" {
+			extra, wait := e.outageStep(ctx, st)
+			if wait {
+				continue
+			}
+			wlExtra = extra
+		} else if e.inOutage {
+			e.inOutage, e.outageLogged = false, false
+			e.cfg.Mem.Rehabilitate(nk)
+			Logf("♻ ограничения сняты — зарубежный интернет снова доступен")
+		}
 		cands := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
+		if len(wlExtra) > 0 {
+			cands = append(append([]Strategy(nil), wlExtra...), cands...)
+		}
 		ran, skipped := 0, 0
 		lastReason := ""
 		sawBlocked := false
@@ -6802,6 +6975,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+// ErrRunnerBusy: клиент туннеля сейчас занят (например, единственный аккаунт WireGuard уже держит сессию).
+var ErrRunnerBusy = errors.New("клиент туннеля занят")
 
 func (e *Engine) noteProbe(ok bool) {
 	e.mu.Lock()
@@ -7459,6 +7635,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"strconv"
 	"time"
 )
@@ -7489,7 +7666,19 @@ func (e *Engine) allStrategies(nk string) []Strategy {
 var sniPool = []string{
 	"consumer-masque.cloudflareclient.com", "cdnjs.cloudflare.com", "www.cloudflare.com",
 	"one.one.one.one", "developers.cloudflare.com", "dash.cloudflare.com",
+	"speed.cloudflare.com", "cloudflare.dev", "research.cloudflare.com",
+	"www.speedtest.net", "www.microsoft.com", "www.apple.com", "www.bing.com",
+	// российские сайты: имена, которые операторы пропускают даже в режиме белых списков
+	"ya.ru", "yandex.ru", "dzen.ru", "vk.com", "mail.ru", "gosuslugi.ru",
 }
+
+// Порты, на которых слушают серверы WARP (взято из списков сканеров и генераторов конфигов).
+var masquePorts = []string{"443", "8443", "4443", "8095", "500", "1701", "4500"}
+var wgPorts = []string{"2408", "500", "1701", "4500", "854", "859", "864", "878", "880", "890", "891", "894", "903",
+	"908", "928", "934", "939", "942", "943", "945", "946", "955", "968", "987", "988", "1002", "1010", "1014",
+	"1018", "1070", "1074", "1180", "3476", "3581", "3854", "4177", "4198", "4233", "5279", "5956", "7103",
+	"7152", "7156", "7281", "7559", "8319", "8742", "8854", "8886"}
+var keepPool = []int{5, 10, 15, 30}
 
 func family(s Strategy) string {
 	switch {
@@ -7531,8 +7720,8 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 	for _, s := range all {
 		f := family(s)
 		ep := s.Params["endpoint"]
-		if f == "" || ep == "" || seenEP[f+ep] {
-			continue
+		if f == "" || ep == "" || seenEP[f+ep] || mem.EndpointDead(nk, s.ID) {
+			continue // мёртвые адреса в мутации не участвуют
 		}
 		seenEP[f+ep] = true
 		eps[f] = append(eps[f], ep)
@@ -7568,10 +7757,19 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			if rnd.Intn(4) == 0 { // настоящий SNI в QUIC Initial — то, что читает DPI
 				q["sni"] = sniPool[rnd.Intn(len(sniPool))]
 			}
+			if rnd.Intn(10) < 3 { // другой порт: операторы нередко режут именно UDP 443
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), masquePorts[rnd.Intn(len(masquePorts))])
+			}
+			if rnd.Intn(4) == 0 { // другой период keepalive: помогает против таймеров NAT оператора
+				q["keep"] = strconv.Itoa(keepPool[rnd.Intn(len(keepPool))])
+			}
 			q["fttl"] = strconv.Itoa(ttl)
 			q["fcount"] = strconv.Itoa(cnt)
 			q["fsize"] = strconv.Itoa(size)
 			id = fmt.Sprintf("h3/%s/g:%s:%s:%dx%ds%d", q["endpoint"], q["sni"], q["fake"], ttl, cnt, size)
+			if k := q["keep"]; k != "" {
+				id += "k" + k
+			}
 		case "h2":
 			q["sni"] = sniPool[rnd.Intn(len(sniPool))]
 			id = fmt.Sprintf("h2/%s/g:%s", q["endpoint"], q["sni"])
@@ -7580,6 +7778,9 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
+			if rnd.Intn(10) < 4 { // у серверов WARP десятки рабочих UDP-портов
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), wgPorts[rnd.Intn(len(wgPorts))])
+			}
 			sfx := ""
 			if q["rsv"] == "1" {
 				sfx = "r"
@@ -7609,9 +7810,15 @@ func (e *Engine) learn(nk string) {
 	Logf("🧬 все известные способы не сработали — придумал %d новых вариантов обхода для сети %s", len(gen), nk)
 }
 
-// blame записывает провал стратегии, но только если интернет вообще есть: иначе виновата сеть, а не стратегия.
+// blame записывает провал стратегии, но только если зарубежный интернет вообще есть: иначе виновата сеть
+// (обрыв или режим белых списков), а не стратегия.
 func (e *Engine) blame(nk, id string) bool {
-	if e.cfg.NetAlive != nil && !e.cfg.NetAlive() {
+	if e.cfg.NetState != nil {
+		if st := e.netState(); st != "ok" {
+			Logf("   ⚠ зарубежного интернета нет (%s) — стратегию не виню", st)
+			return false
+		}
+	} else if e.cfg.NetAlive != nil && !e.cfg.NetAlive() {
 		Logf("   ⚠ интернета нет совсем — стратегию не виню")
 		return false
 	}
@@ -7619,17 +7826,29 @@ func (e *Engine) blame(nk, id string) bool {
 	return true
 }
 
-// waitOnline ждёт, пока интернет снова появится (проверка раз в 3 с или по сигналу о смене сети).
+// waitOnline ждёт, пока зарубежный интернет появится (или станет понятно, что включены белые списки).
+// Проверки редеют: 3 с, затем 10 с, затем 30 с.
 func (e *Engine) waitOnline(ctx context.Context) {
+	iv := 3 * time.Second
+	start := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-e.cfg.NetChanged:
-		case <-time.After(3 * time.Second):
+		case <-time.After(iv):
 		}
-		if e.cfg.NetAlive == nil || e.cfg.NetAlive() {
+		if e.cfg.NetState != nil {
+			if st := e.netState(); st == "ok" || st == "whitelist" {
+				return
+			}
+		} else if e.cfg.NetAlive == nil || e.cfg.NetAlive() {
 			return
+		}
+		if since := time.Since(start); since > 10*time.Minute {
+			iv = 30 * time.Second
+		} else if since > time.Minute {
+			iv = 10 * time.Second
 		}
 	}
 }
@@ -7787,7 +8006,7 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 		Logf("   запускаю клиент MASQUE (usque)…")
 		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
 			TLSConfig:         tlsCfg,
-			KeepalivePeriod:   30 * time.Second,
+			KeepalivePeriod:   time.Duration(atoiDefault(s.Params["keep"], 30)) * time.Second,
 			InitialPacketSize: 1242,
 			Endpoint:          ep,
 			Device:            dev,
@@ -7832,6 +8051,7 @@ type Memory struct {
 	Nets map[string]map[string]*stat `json:"nets"`
 	// Gen — стратегии, которые Гидра придумала сама, по сетям.
 	Gen map[string][]Strategy `json:"gen"`
+	Ver int                   `json:"ver"` // версия формата: <2 — в памяти могли быть сбои из-за белых списков
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -7853,7 +8073,60 @@ func LoadMemory(path string) (*Memory, error) {
 	if m.Nets == nil {
 		m.Nets = map[string]map[string]*stat{}
 	}
+	if m.Ver < 2 {
+		// прежние версии записывали провалы стратегий и тогда, когда виноват был режим белых списков
+		for k := range m.Nets {
+			m.rehabLocked(k)
+		}
+		m.Ver = 2
+	}
 	return m, nil
+}
+
+func (m *Memory) rehabLocked(net string) {
+	for _, st := range m.Nets[net] {
+		if st.OK > 0 {
+			if st.Fail > st.OK {
+				st.Fail = st.OK
+			}
+		} else if st.Fail > 1 {
+			st.Fail = 1
+		}
+		st.LastFail = time.Time{}
+	}
+}
+
+// Rehabilitate прощает сбои, накопленные в период без интернета или режима белых списков.
+func (m *Memory) Rehabilitate(net string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rehabLocked(net)
+	m.saveSoonLocked()
+}
+
+// EndpointDead: все стратегии с этим адресом (и протоколом) в этой сети подряд не работали, ни разу не сработав.
+// Такие адреса на время (12 часов после последнего сбоя) исключаются из фоновых проверок и мутаций.
+func (m *Memory) EndpointDead(net, id string) bool {
+	parts := strings.SplitN(id, "/", 3)
+	if len(parts) < 3 {
+		return false
+	}
+	key := parts[0] + "/" + parts[1] + "/"
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ok, fail := 0, 0
+	var last time.Time
+	for sid, st := range m.Nets[net] {
+		if !strings.HasPrefix(sid, key) {
+			continue
+		}
+		ok += st.OK
+		fail += st.Fail
+		if st.LastFail.After(last) {
+			last = st.LastFail
+		}
+	}
+	return ok == 0 && fail >= 3 && time.Since(last) < quarantineFor
 }
 
 func (m *Memory) Save() error {
@@ -8115,7 +8388,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.7.0"
+const version = "0.8.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -8155,6 +8428,9 @@ func SetDNS(csv string) {
 func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
 func wgPath(dir string) string      { return filepath.Join(dir, "wg.json") }
 
+// wg2Path — второй аккаунт WireGuard: у сервера одна сессия на ключ, поэтому для горячего резерва нужен свой ключ.
+func wg2Path(dir string) string { return filepath.Join(dir, "wg2.json") }
+
 // AccountID возвращает ID сохранённого аккаунта или "".
 func AccountID(dir string) string {
 	a, err := hydra.LoadAccount(accountPath(dir))
@@ -8170,6 +8446,18 @@ func RegisterReport(dir string) string { return registerReport(accountPath(dir),
 
 // RegisterWireguardReport создаёт обычную конфигурацию WARP (WireGuard), как wgcf.
 func RegisterWireguardReport(dir string) string { return registerReport(wgPath(dir), true) }
+
+// RegisterWireguardExtraReport регистрирует второй аккаунт WireGuard (для резерва).
+func RegisterWireguardExtraReport(dir string) string { return registerReport(wg2Path(dir), true) }
+
+// WireguardExtraID возвращает ID второго аккаунта WireGuard или "".
+func WireguardExtraID(dir string) string {
+	a, err := hydra.LoadAccount(wg2Path(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.ID
+}
 
 func registerReport(path string, wg bool) string {
 	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
@@ -8286,37 +8574,234 @@ func ImportWireguardConfig(dir, text string) string {
 }
 
 // DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
-func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }
+func DeleteWireguardConfig(dir string) {
+	os.Remove(wgPath(dir))
+	os.Remove(wg2Path(dir))
+}
 HYDRA_EOF
 
 putv "$GODIR/mobile/netalive.go" <<'HYDRA_EOF'
 package mobile
 
 import (
+	"context"
+	"crypto/tls"
+	"fmt"
 	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// realNetAlive: есть ли интернет мимо туннеля (приложение исключено из VPN, поэтому проверка честная).
-// Достаточно, чтобы ответил любой из нескольких известных адресов.
-func realNetAlive() bool {
-	targets := []string{"1.1.1.1:443", "8.8.8.8:443", "77.88.8.8:443", "9.9.9.9:443"}
-	ch := make(chan bool, len(targets))
-	for _, t := range targets {
-		go func(t string) {
-			c, err := net.DialTimeout("tcp", t, 2500*time.Millisecond)
+// Состояние сети: "ok" — зарубежный интернет доступен; "whitelist" — отвечают только российские адреса
+// (режим «белых списков» у оператора); "dead" — не отвечает ничего.
+
+var (
+	foreignTargets  = []string{"1.1.1.1:443", "8.8.8.8:443", "9.9.9.9:443", "162.159.198.2:443"}
+	domesticTargets = []string{"77.88.8.8:443", "77.88.8.1:443"}
+
+	lastState   atomic.Value // string
+	lastStateAt atomic.Int64
+)
+
+type dialRes struct {
+	addr    string
+	foreign bool
+	ok      bool
+	ms      int64
+}
+
+func dialAll(timeout time.Duration) []dialRes {
+	type job struct {
+		addr    string
+		foreign bool
+	}
+	var jobs []job
+	for _, a := range foreignTargets {
+		jobs = append(jobs, job{a, true})
+	}
+	for _, a := range domesticTargets {
+		jobs = append(jobs, job{a, false})
+	}
+	out := make([]dialRes, len(jobs))
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		go func(i int, j job) {
+			defer wg.Done()
+			t0 := time.Now()
+			c, err := net.DialTimeout("tcp", j.addr, timeout)
 			if err == nil {
 				c.Close()
 			}
-			ch <- err == nil
-		}(t)
+			out[i] = dialRes{j.addr, j.foreign, err == nil, time.Since(t0).Milliseconds()}
+		}(i, j)
 	}
-	for range targets {
-		if <-ch {
-			return true
+	wg.Wait()
+	return out
+}
+
+func classify(rs []dialRes) string {
+	dom := false
+	for _, r := range rs {
+		if r.ok && r.foreign {
+			return "ok"
+		}
+		if r.ok && !r.foreign {
+			dom = true
 		}
 	}
-	return false
+	if dom {
+		return "whitelist"
+	}
+	return "dead"
+}
+
+// realNetState: быстрая проверка — как только отвечает любой зарубежный адрес, сеть «ok».
+func realNetState() string {
+	type r struct {
+		foreign, ok bool
+	}
+	ch := make(chan r, len(foreignTargets)+len(domesticTargets))
+	probe := func(addr string, foreign bool) {
+		c, err := net.DialTimeout("tcp", addr, 2500*time.Millisecond)
+		if err == nil {
+			c.Close()
+		}
+		ch <- r{foreign, err == nil}
+	}
+	for _, a := range foreignTargets {
+		go probe(a, true)
+	}
+	for _, a := range domesticTargets {
+		go probe(a, false)
+	}
+	dom := false
+	st := "dead"
+	for i := 0; i < len(foreignTargets)+len(domesticTargets); i++ {
+		x := <-ch
+		if x.ok && x.foreign {
+			st = "ok"
+			break
+		}
+		if x.ok {
+			dom = true
+		}
+	}
+	if st != "ok" && dom {
+		st = "whitelist"
+	}
+	lastState.Store(st)
+	lastStateAt.Store(time.Now().Unix())
+	return st
+}
+
+// realNetAlive: есть ли зарубежный интернет (для отказоустойчивых проверок).
+func realNetAlive() bool { return realNetState() == "ok" }
+
+// wlSNIs — имена российских сайтов, которые операторы чаще всего пропускают в режиме белых списков.
+var wlSNIs = []string{
+	"ya.ru", "yandex.ru", "www.yandex.ru", "dzen.ru", "vk.com", "mail.ru", "gosuslugi.ru",
+	"www.gosuslugi.ru", "sberbank.ru", "ozon.ru", "wildberries.ru", "avito.ru", "rutube.ru", "kinopoisk.ru",
+}
+
+func tlsOK(ctx context.Context, addr, sni string) bool {
+	d := &net.Dialer{Timeout: 3 * time.Second}
+	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{ServerName: sni, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return ctx.Err() == nil
+}
+
+// realWLScan: с какими именами (SNI) удаётся завершить TLS-рукопожатие с Cloudflare сквозь белые списки.
+func realWLScan(ctx context.Context) []string {
+	const host = "162.159.198.2:443"
+	res := make([]bool, len(wlSNIs))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+	for i, sni := range wlSNIs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, sni string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			res[i] = tlsOK(ctx, host, sni)
+		}(i, sni)
+	}
+	wg.Wait()
+	var out []string
+	for i, ok := range res {
+		if ok {
+			out = append(out, wlSNIs[i])
+		}
+	}
+	return out
+}
+
+// WhitelistCheck — подробная проверка для экрана диагностики: что доступно, а что нет.
+func WhitelistCheck() string {
+	rs := dialAll(3 * time.Second)
+	st := classify(rs)
+	var b strings.Builder
+	switch st {
+	case "ok":
+		b.WriteString("Состояние сети: обычная (зарубежный интернет доступен)\n")
+	case "whitelist":
+		b.WriteString("Состояние сети: БЕЛЫЕ СПИСКИ (отвечают только российские адреса)\n")
+	default:
+		b.WriteString("Состояние сети: нет интернета\n")
+	}
+	b.WriteString("\nTCP-соединения:\n")
+	for _, r := range rs {
+		kind := "зарубежный"
+		if !r.foreign {
+			kind = "российский"
+		}
+		mark := "✘"
+		if r.ok {
+			mark = "✔"
+		}
+		b.WriteString(fmt.Sprintf("  %s %s (%s) %d мс\n", mark, r.addr, kind, r.ms))
+	}
+	ctx := context.Background()
+	b.WriteString("\nTLS-рукопожатие с Cloudflare (162.159.198.2:443) под разными именами:\n")
+	base := "www.cloudflare.com"
+	mark := "✘"
+	if tlsOK(ctx, "162.159.198.2:443", base) {
+		mark = "✔"
+	}
+	b.WriteString(fmt.Sprintf("  %s %s (обычное имя)\n", mark, base))
+	pass := realWLScan(ctx)
+	for _, sni := range wlSNIs {
+		m := "✘"
+		for _, p := range pass {
+			if p == sni {
+				m = "✔"
+			}
+		}
+		b.WriteString(fmt.Sprintf("  %s %s\n", m, sni))
+	}
+	if st == "whitelist" {
+		if len(pass) > 0 {
+			b.WriteString("\nК Cloudflare проходят имена: " + strings.Join(pass, ", ") + ". Гидра попробует подключиться с ними.\n")
+		} else {
+			b.WriteString("\nНи одно имя не прошло: фильтр, похоже, работает по IP-адресам. Нужен ретранслятор с адресом из белого списка (см. подсказку).\n")
+		}
+	}
+	return b.String()
+}
+
+// netStateInfo — последнее известное состояние без сетевых запросов (для отчёта).
+func netStateInfo() string {
+	s, _ := lastState.Load().(string)
+	if s == "" {
+		return "состояние сети: ещё не проверялось\n"
+	}
+	ago := time.Now().Unix() - lastStateAt.Load()
+	return fmt.Sprintf("состояние сети: %s (проверено %d с назад)\n", s, ago)
 }
 HYDRA_EOF
 
@@ -8481,6 +8966,7 @@ var (
 	vpnMu     sync.Mutex
 	vpnEngine *hydra.Engine
 	vpnMem    *hydra.Memory
+	vpnWG     *hydra.WGPool
 	vpnCancel context.CancelFunc
 )
 
@@ -8494,6 +8980,7 @@ func StartTunnel(dir string, tunFd int) string {
 	}
 	macc, _ := hydra.LoadAccount(accountPath(dir))
 	wacc, _ := hydra.LoadAccount(wgPath(dir))
+	wacc2, _ := hydra.LoadAccount(wg2Path(dir))
 	if macc == nil && wacc == nil {
 		return "нет аккаунта WARP"
 	}
@@ -8506,13 +8993,20 @@ func StartTunnel(dir string, tunFd int) string {
 		}
 		runners["masque"] = r
 	}
+	var wgp *hydra.WGPool
 	if wacc != nil {
-		r, err := hydra.NewWGRunner(wacc)
+		accs := []*hydra.Account{wacc}
+		if wacc2 != nil && wacc2.Kind == "wg" {
+			accs = append(accs, wacc2) // второй ключ: резерв WireGuard не мешает основной сессии
+		}
+		wgp = hydra.NewWGPool(accs...)
+		r, err := hydra.NewWGPoolRunner(wgp)
 		if err != nil {
 			return err.Error()
 		}
 		runners["wg"] = r
 	}
+	vpnWG = wgp
 	var mS, wS []hydra.Strategy
 	if macc != nil {
 		mS = hydra.MasqueStrategies(macc)
@@ -8566,6 +9060,9 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == ""
 	cfg.NetAlive = realNetAlive
+	cfg.NetState = realNetState
+	cfg.WLScan = realWLScan
+	cfg.CanRun = func(s hydra.Strategy) bool { return wgp.CanRun(s) } // wgp может быть nil: метод это учитывает
 	cfg.Parallel = currentParallel()
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
@@ -8625,9 +9122,11 @@ func Diagnostics() string {
 	if e := vpnEngine; e != nil {
 		out += e.Stats()
 		out += e.PoolSummary(nk)
+		out += vpnWG.Info()
 	} else {
 		out += "движок не запущен\n"
 	}
+	out += netStateInfo()
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
 	}
@@ -9098,6 +9597,77 @@ func TestFailoverToStandby(t *testing.T) {
 }
 HYDRA_EOF
 
+putv "$GODIR/outage.go" <<'HYDRA_EOF'
+package hydra
+
+import (
+	"context"
+	"strings"
+	"time"
+)
+
+const wlMessage = "🛑 Белые списки: оператор пропускает только российские сайты, Cloudflare сейчас недоступен. Подключусь сам, когда ограничения снимут"
+
+// netState — доступен ли зарубежный интернет: "ok", "whitelist" (отвечают только российские адреса) или "dead".
+func (e *Engine) netState() string {
+	if e.cfg.NetState == nil {
+		return "ok"
+	}
+	return e.cfg.NetState()
+}
+
+func (e *Engine) sleepOrNet(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-e.cfg.NetChanged:
+	case <-time.After(d):
+	}
+}
+
+func (e *Engine) noteTry(id string) {
+	e.mu.Lock()
+	if e.tried == nil {
+		e.tried = map[string]time.Time{}
+	}
+	e.tried[id] = time.Now()
+	e.mu.Unlock()
+}
+
+func (e *Engine) recentlyTried(id string, d time.Duration) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	t, ok := e.tried[id]
+	return ok && time.Since(t) < d
+}
+
+// outageStep обрабатывает «нет зарубежного интернета». wait=true — подключаться сейчас бессмысленно
+// (уже подождали, надо перечитать состояние). Иначе возвращает дополнительные стратегии для режима белых списков.
+func (e *Engine) outageStep(ctx context.Context, st string) (extra []Strategy, wait bool) {
+	e.inOutage = true
+	if st == "dead" {
+		e.setStatus(Status{State: "reconnecting", Message: "нет интернета — жду сеть"})
+		e.waitOnline(ctx)
+		return nil, true
+	}
+	if !e.outageLogged {
+		e.outageLogged = true
+		Logf("🛑 режим белых списков: российские адреса отвечают, а Cloudflare, Google и другие зарубежные — нет")
+	}
+	e.setStatus(Status{State: "reconnecting", Message: wlMessage})
+	// после попытки обхода даём паузу: чаще раза в минуту не сканируем
+	if e.cfg.WLScan != nil && time.Since(e.wlLast) >= time.Minute {
+		if pass := e.cfg.WLScan(ctx); len(pass) > 0 {
+			e.wlLast = time.Now()
+			Logf("🔎 к Cloudflare сквозь белые списки проходят имена (SNI): %s — пробую подключиться с ними", strings.Join(pass, ", "))
+			return WhitelistStrategies(pass), false
+		}
+		e.wlLast = time.Now().Add(-45 * time.Second) // ничего не прошло: следующий скан через ~15 с
+	}
+	e.sleepOrNet(ctx, 20*time.Second)
+	return nil, true
+}
+HYDRA_EOF
+
 putv "$GODIR/pool.go" <<'HYDRA_EOF'
 package hydra
 
@@ -9187,6 +9757,9 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 		if t, ok := tested[s.ID]; ok && time.Since(t) < testRetry {
 			return false
 		}
+		if e.recentlyTried(s.ID, testRetry) || e.cfg.Mem.EndpointDead(nk, s.ID) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+			return false
+		}
 		ep := s.Params["endpoint"]
 		if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
 			return false
@@ -9233,6 +9806,15 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 		}
 	}
 	return Strategy{}, "", false
+}
+
+// familyPresent — какие семейства стратегий вообще есть в списке (например, при протоколе «MASQUE» WireGuard нет).
+func (e *Engine) familyPresent(nk string) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range e.allStrategies(nk) {
+		out[poolFamily(s)] = true
+	}
+	return out
 }
 HYDRA_EOF
 
@@ -9791,6 +10373,7 @@ package hydra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -9854,6 +10437,7 @@ func (e *Engine) startAttempt(ctx context.Context, s Strategy, active bool) *att
 // verify ждёт, пока попытка поднимется, и проверяет её: ответ туннеля, дата-центр, реальный TCP.
 func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 	s := a.s
+	e.noteTry(s.ID)
 	timeout := e.cfg.UpTimeout
 	if e.cfg.Mem.Worked(nk, s.ID) {
 		timeout = timeout * 5 / 3
@@ -9866,6 +10450,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 	for !up && time.Since(a.start) < timeout {
 		select {
 		case err := <-a.errc:
+			if errors.Is(err, ErrRunnerBusy) {
+				return false, outcome{reason: "остановка"} // не провал стратегии: клиент просто был занят
+			}
 			msg := "туннель не поднялся"
 			if err != nil {
 				msg = err.Error()
@@ -9972,11 +10559,14 @@ func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]tim
 			if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
 				continue
 			}
+			if e.recentlyTried(s.ID, standbyRetry) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+				continue
+			}
 			ep := s.Params["endpoint"]
 			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
 				continue
 			}
-			if e.cfg.Mem.Doomed(nk, s.ID) {
+			if e.cfg.Mem.Doomed(nk, s.ID) || e.cfg.Mem.EndpointDead(nk, s.ID) {
 				continue
 			}
 			if hostOnly(ep) != pep {
@@ -10002,7 +10592,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	if n > 4 {
 		n = 4
 	}
-	idx := 0
+	taken := make([]bool, len(cands))
 	res := make(chan verdict, 64)
 	live := 0
 	var all []*attempt
@@ -10012,18 +10602,34 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		}
 	}()
 
+	// remaining — остались ли непробованные кандидаты (даже те, которые пока нельзя запускать)
+	remaining := func() bool {
+		for _, t := range taken {
+			if !t {
+				return true
+			}
+		}
+		return false
+	}
 	nextCand := func() (Strategy, bool) {
-		for idx < len(cands) {
-			s := cands[idx]
-			idx++
+		for i, s := range cands {
+			if taken[i] {
+				continue
+			}
 			if s.ID == skip {
+				taken[i] = true
 				continue
 			}
 			ep := s.Params["endpoint"]
 			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+				taken[i] = true
 				skipped++
 				continue
 			}
+			if e.cfg.CanRun != nil && !e.cfg.CanRun(s) {
+				continue // например, единственный аккаунт WireGuard занят: попробуем позже
+			}
+			taken[i] = true
 			return s, true
 		}
 		return Strategy{}, false
@@ -10069,7 +10675,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if live < n && !exhausted {
 				if s, ok := nextCand(); ok {
 					launch(s)
-				} else {
+				} else if !remaining() {
 					exhausted = true
 				}
 			}
@@ -10096,7 +10702,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if live == 0 {
 				if s, ok := nextCand(); ok {
 					launch(s)
-				} else {
+				} else if !remaining() {
 					return
 				}
 			}
@@ -10344,9 +10950,10 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 						launchTester(s)
 					} else if time.Since(lastGen) > 5*time.Minute {
 						lastGen = time.Now()
-						h, _, _ := e.poolCounts(nk)
+						h, u, _ := e.poolCounts(nk)
+						present := e.familyPresent(nk)
 						for _, f := range poolFams {
-							if h[f] < poolTargets[f] {
+							if present[f] && h[f] < poolTargets[f] && u[f] == 0 {
 								e.grow(nk)
 								break
 							}
@@ -11364,6 +11971,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 	// 188.114.96/97.x) отвечают на QUIC, но на рукопожатии получают TLS handshake failure.
 	for _, h := range []string{
 		"162.159.198.1",
+		"162.159.199.2", // запасной официальный адрес MASQUE
 		"2606:4700:103::2", "2606:4700:103::1",
 	} {
 		add(h)
@@ -11408,7 +12016,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 		}
 	}
 	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
-	for _, port := range []string{"500", "1701", "4500"} {
+	for _, port := range []string{"500", "1701", "4500", "8443", "4443", "8095"} {
 		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
 			for i := 0; i < 2; i++ {
 				fv := &fakeVariants[i]
@@ -12359,14 +12967,95 @@ func (m *memTun) Close() error {
 }
 
 // NewWGRunner создаёт Runner, который держит туннель WireGuard по конфигурации acc.
+// WGPool — аккаунты WireGuard. Сервер WARP помнит одну сессию на ключ: второе рукопожатие с тем же ключом
+// «уводит» ответы к новому клиенту, и первый туннель замолкает. Поэтому каждый аккаунт держит не более
+// одной сессии одновременно; для горячего резерва нужен второй аккаунт.
+type WGPool struct {
+	mu   sync.Mutex
+	accs []*Account
+	busy []bool
+}
+
+func NewWGPool(accs ...*Account) *WGPool {
+	p := &WGPool{}
+	for _, a := range accs {
+		if a != nil && a.Kind == "wg" {
+			p.accs = append(p.accs, a)
+		}
+	}
+	p.busy = make([]bool, len(p.accs))
+	return p
+}
+
+func (p *WGPool) acquire() (int, *Account, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, b := range p.busy {
+		if !b {
+			p.busy[i] = true
+			return i, p.accs[i], true
+		}
+	}
+	return 0, nil, false
+}
+
+func (p *WGPool) release(i int) {
+	p.mu.Lock()
+	p.busy[i] = false
+	p.mu.Unlock()
+}
+
+// CanRun: для WireGuard — есть ли свободный аккаунт; остальные стратегии ограничений не имеют.
+func (p *WGPool) CanRun(s Strategy) bool {
+	if p == nil || s.Transport != "wg" {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, b := range p.busy {
+		if !b {
+			return true
+		}
+	}
+	return false
+}
+
+// Info — сводка для диагностики.
+func (p *WGPool) Info() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	busy := 0
+	for _, b := range p.busy {
+		if b {
+			busy++
+		}
+	}
+	return fmt.Sprintf("аккаунтов WireGuard: %d, занято сессиями: %d\n", len(p.accs), busy)
+}
+
+// NewWGRunner — раннер WireGuard с одним аккаунтом.
 func NewWGRunner(acc *Account) (Runner, error) {
-	if acc == nil || acc.Kind != "wg" {
+	return NewWGPoolRunner(NewWGPool(acc))
+}
+
+// NewWGPoolRunner — раннер WireGuard, который берёт свободный аккаунт из пула на время работы сессии.
+func NewWGPoolRunner(p *WGPool) (Runner, error) {
+	if p == nil || len(p.accs) == 0 {
 		return nil, errors.New("нет конфигурации WireGuard")
 	}
-	if _, err := WGUAPI(acc, "127.0.0.1:1"); err != nil {
+	if _, err := WGUAPI(p.accs[0], "127.0.0.1:1"); err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		ai, acc, got := p.acquire()
+		if !got {
+			return ErrRunnerBusy
+		}
+		defer p.release(ai) // выполнится последним: сессия закрыта полностью
+		Logf("   аккаунт WireGuard №%d из %d", ai+1, len(p.accs))
 		remote, err := net.ResolveUDPAddr("udp", s.Params["endpoint"])
 		if err != nil {
 			return fmt.Errorf("адрес %s: %w", s.Params["endpoint"], err)
@@ -12421,7 +13110,11 @@ func NewWGRunner(acc *Account) (Runner, error) {
 				}
 			},
 			Errorf: func(format string, args ...any) {
-				Logf("   wg ✘ %s", fmt.Sprintf(format, args...))
+				l := fmt.Sprintf(format, args...)
+				if strings.Contains(l, "TUN device: EOF") {
+					return // обычное закрытие сессии, не ошибка
+				}
+				Logf("   wg ✘ %s", l)
 			},
 		}
 		d := device.NewDevice(mt, conn.NewDefaultBind(), logger)
