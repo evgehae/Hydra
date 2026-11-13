@@ -24,7 +24,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** «Диагностика»: состояние, проверки, ошибки, журнал, отчёт. */
 @Composable
@@ -47,6 +49,8 @@ fun DiagnosticsScreen(
     var showResult by remember { mutableStateOf(false) }
     var showQuick by remember { mutableStateOf(false) }
     var showSys by remember { mutableStateOf(false) }
+    var wlRunning by remember { mutableStateOf(false) }
+    var wlText by remember { mutableStateOf<String?>(null) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -127,6 +131,22 @@ fun DiagnosticsScreen(
         )
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
+        SettingRow(
+            stringResource(R.string.diag_wl),
+            stringResource(R.string.diag_wl_sub),
+            value = if (wlRunning) "…" else null,
+            onClick = {
+                if (!wlRunning) {
+                    wlRunning = true
+                    scope.launch {
+                        val t = withContext(Dispatchers.IO) { try { mobile.Mobile.whitelistCheck() } catch (e: Throwable) { "н/д" } }
+                        try { mobile.Mobile.logLine("🔎 проверка белых списков:\n" + t) } catch (e: Throwable) { }
+                        wlText = t
+                        wlRunning = false
+                    }
+                }
+            }
+        )
         SettingRow(
             stringResource(R.string.diag_sys),
             stringResource(R.string.diag_sys_sub),
@@ -219,6 +239,19 @@ fun DiagnosticsScreen(
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { showSys = false }) { Text(stringResource(R.string.btn_ok)) }
             }
+        )
+    }
+    wlText?.let { t ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { wlText = null },
+            title = { Text(stringResource(R.string.diag_wl)) },
+            text = {
+                SelectionContainer {
+                    Text(t, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 15.sp,
+                        modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()))
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { wlText = null }) { Text(stringResource(R.string.btn_ok)) } }
         )
     }
 }

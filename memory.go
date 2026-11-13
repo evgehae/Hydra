@@ -28,6 +28,7 @@ type Memory struct {
 	Nets map[string]map[string]*stat `json:"nets"`
 	// Gen — стратегии, которые Гидра придумала сама, по сетям.
 	Gen map[string][]Strategy `json:"gen"`
+	Ver int                   `json:"ver"` // версия формата: <2 — в памяти могли быть сбои из-за белых списков
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -49,7 +50,60 @@ func LoadMemory(path string) (*Memory, error) {
 	if m.Nets == nil {
 		m.Nets = map[string]map[string]*stat{}
 	}
+	if m.Ver < 2 {
+		// прежние версии записывали провалы стратегий и тогда, когда виноват был режим белых списков
+		for k := range m.Nets {
+			m.rehabLocked(k)
+		}
+		m.Ver = 2
+	}
 	return m, nil
+}
+
+func (m *Memory) rehabLocked(net string) {
+	for _, st := range m.Nets[net] {
+		if st.OK > 0 {
+			if st.Fail > st.OK {
+				st.Fail = st.OK
+			}
+		} else if st.Fail > 1 {
+			st.Fail = 1
+		}
+		st.LastFail = time.Time{}
+	}
+}
+
+// Rehabilitate прощает сбои, накопленные в период без интернета или режима белых списков.
+func (m *Memory) Rehabilitate(net string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rehabLocked(net)
+	m.saveSoonLocked()
+}
+
+// EndpointDead: все стратегии с этим адресом (и протоколом) в этой сети подряд не работали, ни разу не сработав.
+// Такие адреса на время (12 часов после последнего сбоя) исключаются из фоновых проверок и мутаций.
+func (m *Memory) EndpointDead(net, id string) bool {
+	parts := strings.SplitN(id, "/", 3)
+	if len(parts) < 3 {
+		return false
+	}
+	key := parts[0] + "/" + parts[1] + "/"
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ok, fail := 0, 0
+	var last time.Time
+	for sid, st := range m.Nets[net] {
+		if !strings.HasPrefix(sid, key) {
+			continue
+		}
+		ok += st.OK
+		fail += st.Fail
+		if st.LastFail.After(last) {
+			last = st.LastFail
+		}
+	}
+	return ok == 0 && fail >= 3 && time.Since(last) < quarantineFor
 }
 
 func (m *Memory) Save() error {

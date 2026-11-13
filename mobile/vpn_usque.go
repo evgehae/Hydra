@@ -18,6 +18,7 @@ var (
 	vpnMu     sync.Mutex
 	vpnEngine *hydra.Engine
 	vpnMem    *hydra.Memory
+	vpnWG     *hydra.WGPool
 	vpnCancel context.CancelFunc
 )
 
@@ -31,6 +32,7 @@ func StartTunnel(dir string, tunFd int) string {
 	}
 	macc, _ := hydra.LoadAccount(accountPath(dir))
 	wacc, _ := hydra.LoadAccount(wgPath(dir))
+	wacc2, _ := hydra.LoadAccount(wg2Path(dir))
 	if macc == nil && wacc == nil {
 		return "нет аккаунта WARP"
 	}
@@ -43,13 +45,20 @@ func StartTunnel(dir string, tunFd int) string {
 		}
 		runners["masque"] = r
 	}
+	var wgp *hydra.WGPool
 	if wacc != nil {
-		r, err := hydra.NewWGRunner(wacc)
+		accs := []*hydra.Account{wacc}
+		if wacc2 != nil && wacc2.Kind == "wg" {
+			accs = append(accs, wacc2) // второй ключ: резерв WireGuard не мешает основной сессии
+		}
+		wgp = hydra.NewWGPool(accs...)
+		r, err := hydra.NewWGPoolRunner(wgp)
 		if err != nil {
 			return err.Error()
 		}
 		runners["wg"] = r
 	}
+	vpnWG = wgp
 	var mS, wS []hydra.Strategy
 	if macc != nil {
 		mS = hydra.MasqueStrategies(macc)
@@ -103,6 +112,9 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == ""
 	cfg.NetAlive = realNetAlive
+	cfg.NetState = realNetState
+	cfg.WLScan = realWLScan
+	cfg.CanRun = func(s hydra.Strategy) bool { return wgp.CanRun(s) } // wgp может быть nil: метод это учитывает
 	cfg.Parallel = currentParallel()
 
 	e := hydra.NewEngine(os.NewFile(uintptr(tunFd), "tun"), cfg)
@@ -162,9 +174,11 @@ func Diagnostics() string {
 	if e := vpnEngine; e != nil {
 		out += e.Stats()
 		out += e.PoolSummary(nk)
+		out += vpnWG.Info()
 	} else {
 		out += "движок не запущен\n"
 	}
+	out += netStateInfo()
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
 	}

@@ -2,6 +2,7 @@ package hydra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -65,6 +66,7 @@ func (e *Engine) startAttempt(ctx context.Context, s Strategy, active bool) *att
 // verify ждёт, пока попытка поднимется, и проверяет её: ответ туннеля, дата-центр, реальный TCP.
 func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 	s := a.s
+	e.noteTry(s.ID)
 	timeout := e.cfg.UpTimeout
 	if e.cfg.Mem.Worked(nk, s.ID) {
 		timeout = timeout * 5 / 3
@@ -77,6 +79,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 	for !up && time.Since(a.start) < timeout {
 		select {
 		case err := <-a.errc:
+			if errors.Is(err, ErrRunnerBusy) {
+				return false, outcome{reason: "остановка"} // не провал стратегии: клиент просто был занят
+			}
 			msg := "туннель не поднялся"
 			if err != nil {
 				msg = err.Error()
@@ -183,11 +188,14 @@ func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]tim
 			if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
 				continue
 			}
+			if e.recentlyTried(s.ID, standbyRetry) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+				continue
+			}
 			ep := s.Params["endpoint"]
 			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
 				continue
 			}
-			if e.cfg.Mem.Doomed(nk, s.ID) {
+			if e.cfg.Mem.Doomed(nk, s.ID) || e.cfg.Mem.EndpointDead(nk, s.ID) {
 				continue
 			}
 			if hostOnly(ep) != pep {
@@ -213,7 +221,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	if n > 4 {
 		n = 4
 	}
-	idx := 0
+	taken := make([]bool, len(cands))
 	res := make(chan verdict, 64)
 	live := 0
 	var all []*attempt
@@ -223,18 +231,34 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		}
 	}()
 
+	// remaining — остались ли непробованные кандидаты (даже те, которые пока нельзя запускать)
+	remaining := func() bool {
+		for _, t := range taken {
+			if !t {
+				return true
+			}
+		}
+		return false
+	}
 	nextCand := func() (Strategy, bool) {
-		for idx < len(cands) {
-			s := cands[idx]
-			idx++
+		for i, s := range cands {
+			if taken[i] {
+				continue
+			}
 			if s.ID == skip {
+				taken[i] = true
 				continue
 			}
 			ep := s.Params["endpoint"]
 			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+				taken[i] = true
 				skipped++
 				continue
 			}
+			if e.cfg.CanRun != nil && !e.cfg.CanRun(s) {
+				continue // например, единственный аккаунт WireGuard занят: попробуем позже
+			}
+			taken[i] = true
 			return s, true
 		}
 		return Strategy{}, false
@@ -280,7 +304,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if live < n && !exhausted {
 				if s, ok := nextCand(); ok {
 					launch(s)
-				} else {
+				} else if !remaining() {
 					exhausted = true
 				}
 			}
@@ -307,7 +331,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if live == 0 {
 				if s, ok := nextCand(); ok {
 					launch(s)
-				} else {
+				} else if !remaining() {
 					return
 				}
 			}
@@ -555,9 +579,10 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 						launchTester(s)
 					} else if time.Since(lastGen) > 5*time.Minute {
 						lastGen = time.Now()
-						h, _, _ := e.poolCounts(nk)
+						h, u, _ := e.poolCounts(nk)
+						present := e.familyPresent(nk)
 						for _, f := range poolFams {
-							if h[f] < poolTargets[f] {
+							if present[f] && h[f] < poolTargets[f] && u[f] == 0 {
 								e.grow(nk)
 								break
 							}

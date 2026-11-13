@@ -48,6 +48,9 @@ type EngineConfig struct {
 	NetAlive     func() bool   // есть ли вообще интернет мимо туннеля (nil — не проверять)
 	DropV6       bool          // в аккаунте нет IPv6: пакеты v6 из TUN отбрасываются
 	Parallel     int           // >1: параллельная гонка стратегий и горячий резерв; 0/1 — по очереди
+	NetState     func() string // "ok" | "whitelist" | "dead": доступен ли зарубежный интернет (nil — не проверять)
+	WLScan       func(ctx context.Context) []string // какие SNI проходят к Cloudflare в режиме белых списков
+	CanRun       func(Strategy) bool                // можно ли сейчас запускать стратегию (например, свободен ли аккаунт WG)
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -85,6 +88,9 @@ type Engine struct {
 	lastFailAt                 time.Time
 	probesTotal, probesLost    int
 	testFail                   chan struct{}
+	tried                      map[string]time.Time // когда стратегию последний раз пробовали
+	inOutage, outageLogged     bool
+	wlLast                     time.Time
 
 	mu      sync.Mutex
 	status  Status
@@ -124,6 +130,7 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
 		testFail: make(chan struct{}, 1),
+		tried:    map[string]time.Time{},
 	}
 }
 
@@ -591,7 +598,23 @@ func (e *Engine) Run(ctx context.Context) error {
 				Logf("🧹 убрал %d придуманных способов, которые в этой сети не работают", n)
 			}
 		}
+		// сеть: есть ли вообще зарубежный интернет (режим белых списков, обрыв)
+		var wlExtra []Strategy
+		if st := e.netState(); st != "ok" {
+			extra, wait := e.outageStep(ctx, st)
+			if wait {
+				continue
+			}
+			wlExtra = extra
+		} else if e.inOutage {
+			e.inOutage, e.outageLogged = false, false
+			e.cfg.Mem.Rehabilitate(nk)
+			Logf("♻ ограничения сняты — зарубежный интернет снова доступен")
+		}
 		cands := e.cfg.Mem.Rank(nk, e.allStrategies(nk))
+		if len(wlExtra) > 0 {
+			cands = append(append([]Strategy(nil), wlExtra...), cands...)
+		}
 		ran, skipped := 0, 0
 		lastReason := ""
 		sawBlocked := false
@@ -683,6 +706,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+// ErrRunnerBusy: клиент туннеля сейчас занят (например, единственный аккаунт WireGuard уже держит сессию).
+var ErrRunnerBusy = errors.New("клиент туннеля занят")
 
 func (e *Engine) noteProbe(ok bool) {
 	e.mu.Lock()

@@ -86,6 +86,9 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 		if t, ok := tested[s.ID]; ok && time.Since(t) < testRetry {
 			return false
 		}
+		if e.recentlyTried(s.ID, testRetry) || e.cfg.Mem.EndpointDead(nk, s.ID) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+			return false
+		}
 		ep := s.Params["endpoint"]
 		if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
 			return false
@@ -132,4 +135,13 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 		}
 	}
 	return Strategy{}, "", false
+}
+
+// familyPresent — какие семейства стратегий вообще есть в списке (например, при протоколе «MASQUE» WireGuard нет).
+func (e *Engine) familyPresent(nk string) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range e.allStrategies(nk) {
+		out[poolFamily(s)] = true
+	}
+	return out
 }

@@ -68,6 +68,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 	// 188.114.96/97.x) отвечают на QUIC, но на рукопожатии получают TLS handshake failure.
 	for _, h := range []string{
 		"162.159.198.1",
+		"162.159.199.2", // запасной официальный адрес MASQUE
 		"2606:4700:103::2", "2606:4700:103::1",
 	} {
 		add(h)
@@ -112,7 +113,7 @@ func MasqueStrategies(acc *Account) []Strategy {
 		}
 	}
 	// другие порты: некоторые провайдеры режут именно UDP 443 (у Zarp рабочими бывали 500 и др.)
-	for _, port := range []string{"500", "1701", "4500"} {
+	for _, port := range []string{"500", "1701", "4500", "8443", "4443", "8095"} {
 		for _, ep := range []string{"162.159.198.2", "162.159.198.1"} {
 			for i := 0; i < 2; i++ {
 				fv := &fakeVariants[i]

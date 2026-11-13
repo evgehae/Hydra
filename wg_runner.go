@@ -144,14 +144,95 @@ func (m *memTun) Close() error {
 }
 
 // NewWGRunner создаёт Runner, который держит туннель WireGuard по конфигурации acc.
+// WGPool — аккаунты WireGuard. Сервер WARP помнит одну сессию на ключ: второе рукопожатие с тем же ключом
+// «уводит» ответы к новому клиенту, и первый туннель замолкает. Поэтому каждый аккаунт держит не более
+// одной сессии одновременно; для горячего резерва нужен второй аккаунт.
+type WGPool struct {
+	mu   sync.Mutex
+	accs []*Account
+	busy []bool
+}
+
+func NewWGPool(accs ...*Account) *WGPool {
+	p := &WGPool{}
+	for _, a := range accs {
+		if a != nil && a.Kind == "wg" {
+			p.accs = append(p.accs, a)
+		}
+	}
+	p.busy = make([]bool, len(p.accs))
+	return p
+}
+
+func (p *WGPool) acquire() (int, *Account, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, b := range p.busy {
+		if !b {
+			p.busy[i] = true
+			return i, p.accs[i], true
+		}
+	}
+	return 0, nil, false
+}
+
+func (p *WGPool) release(i int) {
+	p.mu.Lock()
+	p.busy[i] = false
+	p.mu.Unlock()
+}
+
+// CanRun: для WireGuard — есть ли свободный аккаунт; остальные стратегии ограничений не имеют.
+func (p *WGPool) CanRun(s Strategy) bool {
+	if p == nil || s.Transport != "wg" {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, b := range p.busy {
+		if !b {
+			return true
+		}
+	}
+	return false
+}
+
+// Info — сводка для диагностики.
+func (p *WGPool) Info() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	busy := 0
+	for _, b := range p.busy {
+		if b {
+			busy++
+		}
+	}
+	return fmt.Sprintf("аккаунтов WireGuard: %d, занято сессиями: %d\n", len(p.accs), busy)
+}
+
+// NewWGRunner — раннер WireGuard с одним аккаунтом.
 func NewWGRunner(acc *Account) (Runner, error) {
-	if acc == nil || acc.Kind != "wg" {
+	return NewWGPoolRunner(NewWGPool(acc))
+}
+
+// NewWGPoolRunner — раннер WireGuard, который берёт свободный аккаунт из пула на время работы сессии.
+func NewWGPoolRunner(p *WGPool) (Runner, error) {
+	if p == nil || len(p.accs) == 0 {
 		return nil, errors.New("нет конфигурации WireGuard")
 	}
-	if _, err := WGUAPI(acc, "127.0.0.1:1"); err != nil {
+	if _, err := WGUAPI(p.accs[0], "127.0.0.1:1"); err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context, dev PacketDevice, s Strategy) error {
+		ai, acc, got := p.acquire()
+		if !got {
+			return ErrRunnerBusy
+		}
+		defer p.release(ai) // выполнится последним: сессия закрыта полностью
+		Logf("   аккаунт WireGuard №%d из %d", ai+1, len(p.accs))
 		remote, err := net.ResolveUDPAddr("udp", s.Params["endpoint"])
 		if err != nil {
 			return fmt.Errorf("адрес %s: %w", s.Params["endpoint"], err)
@@ -206,7 +287,11 @@ func NewWGRunner(acc *Account) (Runner, error) {
 				}
 			},
 			Errorf: func(format string, args ...any) {
-				Logf("   wg ✘ %s", fmt.Sprintf(format, args...))
+				l := fmt.Sprintf(format, args...)
+				if strings.Contains(l, "TUN device: EOF") {
+					return // обычное закрытие сессии, не ошибка
+				}
+				Logf("   wg ✘ %s", l)
 			},
 		}
 		d := device.NewDevice(mt, conn.NewDefaultBind(), logger)

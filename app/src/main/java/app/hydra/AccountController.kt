@@ -144,6 +144,27 @@ class AccountController(
         }
     }
 
+    private var wg2Busy = false
+    private var wg2Fails = 0
+
+    /** Второй аккаунт WireGuard: у сервера одна сессия на ключ, без него резерв WireGuard невозможен. */
+    private fun ensureWg2() {
+        if (wg2Busy || wg2Fails >= 3 || wgId.isEmpty()) return
+        val has = try { mobile.Mobile.wireguardExtraID(dir).isNotEmpty() } catch (t: Throwable) { true }
+        if (has) return
+        wg2Busy = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                try {
+                    mobile.Mobile.setDNS(dnsProvider())
+                    mobile.Mobile.registerWireguardExtraReport(dir)
+                } catch (t: Throwable) { "FAIL " + (t.message ?: "") }
+            }
+            if (!r.startsWith("OK")) wg2Fails++
+            wg2Busy = false
+        }
+    }
+
     private var healTries = 0
     private var nextHealAt = 0L
 
@@ -153,7 +174,7 @@ class AccountController(
      */
     fun heal() {
         if (working) return
-        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; return }
+        if (id.isNotEmpty() && wgId.isNotEmpty()) { healTries = 0; ensureWg2(); return }
         val now = System.currentTimeMillis()
         if (now < nextHealAt) return
         healTries++

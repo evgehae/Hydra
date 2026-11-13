@@ -15,7 +15,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.7.0"
+const version = "0.8.0"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -55,6 +55,9 @@ func SetDNS(csv string) {
 func accountPath(dir string) string { return filepath.Join(dir, "account.json") }
 func wgPath(dir string) string      { return filepath.Join(dir, "wg.json") }
 
+// wg2Path — второй аккаунт WireGuard: у сервера одна сессия на ключ, поэтому для горячего резерва нужен свой ключ.
+func wg2Path(dir string) string { return filepath.Join(dir, "wg2.json") }
+
 // AccountID возвращает ID сохранённого аккаунта или "".
 func AccountID(dir string) string {
 	a, err := hydra.LoadAccount(accountPath(dir))
@@ -70,6 +73,18 @@ func RegisterReport(dir string) string { return registerReport(accountPath(dir),
 
 // RegisterWireguardReport создаёт обычную конфигурацию WARP (WireGuard), как wgcf.
 func RegisterWireguardReport(dir string) string { return registerReport(wgPath(dir), true) }
+
+// RegisterWireguardExtraReport регистрирует второй аккаунт WireGuard (для резерва).
+func RegisterWireguardExtraReport(dir string) string { return registerReport(wg2Path(dir), true) }
+
+// WireguardExtraID возвращает ID второго аккаунта WireGuard или "".
+func WireguardExtraID(dir string) string {
+	a, err := hydra.LoadAccount(wg2Path(dir))
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.ID
+}
 
 func registerReport(path string, wg bool) string {
 	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
@@ -186,4 +201,7 @@ func ImportWireguardConfig(dir, text string) string {
 }
 
 // DeleteWireguardConfig удаляет сохранённую конфигурацию WireGuard.
-func DeleteWireguardConfig(dir string) { os.Remove(wgPath(dir)) }
+func DeleteWireguardConfig(dir string) {
+	os.Remove(wgPath(dir))
+	os.Remove(wg2Path(dir))
+}

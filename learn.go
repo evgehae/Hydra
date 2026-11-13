@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"strconv"
 	"time"
 )
@@ -34,7 +35,19 @@ func (e *Engine) allStrategies(nk string) []Strategy {
 var sniPool = []string{
 	"consumer-masque.cloudflareclient.com", "cdnjs.cloudflare.com", "www.cloudflare.com",
 	"one.one.one.one", "developers.cloudflare.com", "dash.cloudflare.com",
+	"speed.cloudflare.com", "cloudflare.dev", "research.cloudflare.com",
+	"www.speedtest.net", "www.microsoft.com", "www.apple.com", "www.bing.com",
+	// российские сайты: имена, которые операторы пропускают даже в режиме белых списков
+	"ya.ru", "yandex.ru", "dzen.ru", "vk.com", "mail.ru", "gosuslugi.ru",
 }
+
+// Порты, на которых слушают серверы WARP (взято из списков сканеров и генераторов конфигов).
+var masquePorts = []string{"443", "8443", "4443", "8095", "500", "1701", "4500"}
+var wgPorts = []string{"2408", "500", "1701", "4500", "854", "859", "864", "878", "880", "890", "891", "894", "903",
+	"908", "928", "934", "939", "942", "943", "945", "946", "955", "968", "987", "988", "1002", "1010", "1014",
+	"1018", "1070", "1074", "1180", "3476", "3581", "3854", "4177", "4198", "4233", "5279", "5956", "7103",
+	"7152", "7156", "7281", "7559", "8319", "8742", "8854", "8886"}
+var keepPool = []int{5, 10, 15, 30}
 
 func family(s Strategy) string {
 	switch {
@@ -76,8 +89,8 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 	for _, s := range all {
 		f := family(s)
 		ep := s.Params["endpoint"]
-		if f == "" || ep == "" || seenEP[f+ep] {
-			continue
+		if f == "" || ep == "" || seenEP[f+ep] || mem.EndpointDead(nk, s.ID) {
+			continue // мёртвые адреса в мутации не участвуют
 		}
 		seenEP[f+ep] = true
 		eps[f] = append(eps[f], ep)
@@ -113,10 +126,19 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			if rnd.Intn(4) == 0 { // настоящий SNI в QUIC Initial — то, что читает DPI
 				q["sni"] = sniPool[rnd.Intn(len(sniPool))]
 			}
+			if rnd.Intn(10) < 3 { // другой порт: операторы нередко режут именно UDP 443
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), masquePorts[rnd.Intn(len(masquePorts))])
+			}
+			if rnd.Intn(4) == 0 { // другой период keepalive: помогает против таймеров NAT оператора
+				q["keep"] = strconv.Itoa(keepPool[rnd.Intn(len(keepPool))])
+			}
 			q["fttl"] = strconv.Itoa(ttl)
 			q["fcount"] = strconv.Itoa(cnt)
 			q["fsize"] = strconv.Itoa(size)
 			id = fmt.Sprintf("h3/%s/g:%s:%s:%dx%ds%d", q["endpoint"], q["sni"], q["fake"], ttl, cnt, size)
+			if k := q["keep"]; k != "" {
+				id += "k" + k
+			}
 		case "h2":
 			q["sni"] = sniPool[rnd.Intn(len(sniPool))]
 			id = fmt.Sprintf("h2/%s/g:%s", q["endpoint"], q["sni"])
@@ -125,6 +147,9 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
+			if rnd.Intn(10) < 4 { // у серверов WARP десятки рабочих UDP-портов
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), wgPorts[rnd.Intn(len(wgPorts))])
+			}
 			sfx := ""
 			if q["rsv"] == "1" {
 				sfx = "r"
@@ -154,9 +179,15 @@ func (e *Engine) learn(nk string) {
 	Logf("🧬 все известные способы не сработали — придумал %d новых вариантов обхода для сети %s", len(gen), nk)
 }
 
-// blame записывает провал стратегии, но только если интернет вообще есть: иначе виновата сеть, а не стратегия.
+// blame записывает провал стратегии, но только если зарубежный интернет вообще есть: иначе виновата сеть
+// (обрыв или режим белых списков), а не стратегия.
 func (e *Engine) blame(nk, id string) bool {
-	if e.cfg.NetAlive != nil && !e.cfg.NetAlive() {
+	if e.cfg.NetState != nil {
+		if st := e.netState(); st != "ok" {
+			Logf("   ⚠ зарубежного интернета нет (%s) — стратегию не виню", st)
+			return false
+		}
+	} else if e.cfg.NetAlive != nil && !e.cfg.NetAlive() {
 		Logf("   ⚠ интернета нет совсем — стратегию не виню")
 		return false
 	}
@@ -164,17 +195,29 @@ func (e *Engine) blame(nk, id string) bool {
 	return true
 }
 
-// waitOnline ждёт, пока интернет снова появится (проверка раз в 3 с или по сигналу о смене сети).
+// waitOnline ждёт, пока зарубежный интернет появится (или станет понятно, что включены белые списки).
+// Проверки редеют: 3 с, затем 10 с, затем 30 с.
 func (e *Engine) waitOnline(ctx context.Context) {
+	iv := 3 * time.Second
+	start := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-e.cfg.NetChanged:
-		case <-time.After(3 * time.Second):
+		case <-time.After(iv):
 		}
-		if e.cfg.NetAlive == nil || e.cfg.NetAlive() {
+		if e.cfg.NetState != nil {
+			if st := e.netState(); st == "ok" || st == "whitelist" {
+				return
+			}
+		} else if e.cfg.NetAlive == nil || e.cfg.NetAlive() {
 			return
+		}
+		if since := time.Since(start); since > 10*time.Minute {
+			iv = 30 * time.Second
+		} else if since > time.Minute {
+			iv = 10 * time.Second
 		}
 	}
 }

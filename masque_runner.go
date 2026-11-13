@@ -135,7 +135,7 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 		Logf("   запускаю клиент MASQUE (usque)…")
 		api.MaintainTunnel(ctx, api.MaintainTunnelConfig{
 			TLSConfig:         tlsCfg,
-			KeepalivePeriod:   30 * time.Second,
+			KeepalivePeriod:   time.Duration(atoiDefault(s.Params["keep"], 30)) * time.Second,
 			InitialPacketSize: 1242,
 			Endpoint:          ep,
 			Device:            dev,

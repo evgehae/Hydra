@@ -40,3 +40,23 @@ func CustomEndpointStrategies(ep string) []Strategy {
 	}
 	return append(out, mk("h2", "std", nil))
 }
+
+// WhitelistStrategies — стратегии для режима белых списков: настоящий SNI подменяется на имя, которое
+// оператор пропускает (российский сайт). HTTP/2 по TCP идёт первым: проход TLS к Cloudflare проверен заранее.
+func WhitelistStrategies(snis []string) []Strategy {
+	if len(snis) > 3 {
+		snis = snis[:3]
+	}
+	var out []Strategy
+	for _, sni := range snis {
+		for _, h := range []string{"162.159.198.2", "162.159.198.1"} {
+			hp := net.JoinHostPort(h, "443")
+			out = append(out, Strategy{ID: "h2/" + hp + "/wl:" + sni, Transport: "masque",
+				Params: map[string]string{"endpoint": hp, "sni": sni, "h2": "1"}})
+		}
+		hp := net.JoinHostPort("162.159.198.2", "443")
+		out = append(out, Strategy{ID: "h3/" + hp + "/wl:" + sni, Transport: "masque",
+			Params: map[string]string{"endpoint": hp, "sni": sni, "h2": "0"}})
+	}
+	return out
+}

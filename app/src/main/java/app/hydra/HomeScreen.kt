@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -30,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +51,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 private val TitleBlue = Color(0xFF3F5BFF)
@@ -67,6 +72,10 @@ fun HomeScreen(
     val needAppsToast = stringResource(R.string.need_apps_toast)
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    var wlText by remember { mutableStateOf<String?>(null) }
+    var wlRelay by remember { mutableStateOf(false) }
+    var wlBusy by remember { mutableStateOf(false) }
+    val whitelist = vpn.message.startsWith("🛑")
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) vpn.start()
@@ -104,6 +113,7 @@ fun HomeScreen(
         !hasAccount -> stringResource(R.string.home_sub_need_account)
         up -> if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.home_private)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
+        whitelist -> stringResource(R.string.wl_sub)
         vpn.state == "reconnecting" || vpn.state == "failed" ->
             if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.vpn_connecting_sub)
         else -> stringResource(R.string.home_not_private)
@@ -232,7 +242,55 @@ fun HomeScreen(
                 }
             }
         }
+        // режим белых списков: оператор пропускает только российские сайты
+        if (whitelist) {
+            Spacer(Modifier.height(16.dp))
+            HCard {
+                Text(stringResource(R.string.wl_title), fontWeight = FontWeight.SemiBold, color = NeonAmber)
+                Text(
+                    stringResource(R.string.wl_text),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            if (!wlBusy) {
+                                wlBusy = true
+                                scope.launch {
+                                    val t = withContext(Dispatchers.IO) { try { mobile.Mobile.whitelistCheck() } catch (e: Throwable) { "н/д" } }
+                                    try { mobile.Mobile.logLine("🔎 проверка белых списков:\n" + t) } catch (e: Throwable) { }
+                                    wlText = t
+                                    wlBusy = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (wlBusy) "…" else stringResource(R.string.wl_check)) }
+                    OutlinedButton(onClick = { wlRelay = true }, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.wl_relay))
+                    }
+                }
+            }
+        }
         Spacer(Modifier.weight(3.2f))
+    }
+    wlText?.let { t ->
+        AlertDialog(
+            onDismissRequest = { wlText = null },
+            title = { Text(stringResource(R.string.wl_title)) },
+            text = { Text(t, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { wlText = null }) { Text(stringResource(R.string.btn_ok)) } }
+        )
+    }
+    if (wlRelay) {
+        AlertDialog(
+            onDismissRequest = { wlRelay = false },
+            title = { Text(stringResource(R.string.wl_relay_title)) },
+            text = { Text(stringResource(R.string.wl_relay_text), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { wlRelay = false }) { Text(stringResource(R.string.btn_ok)) } }
+        )
     }
 }
 

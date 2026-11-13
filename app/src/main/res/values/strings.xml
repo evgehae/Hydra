@@ -251,4 +251,13 @@
     <string name="diag_sys_sub">Networks, battery, Android modes, DNS, operator, strategy memory</string>
     <string name="diag_test_failover">Test hot standby</string>
     <string name="diag_test_failover_sub">Simulates a primary tunnel failure: see the result in the journal (🧪)</string>
+    <string name="wl_title">Whitelist mode</string>
+    <string name="wl_sub">Whitelist mode: Cloudflare is unreachable, waiting</string>
+    <string name="wl_text">The operator only lets Russian sites through, so Cloudflare WARP (like any foreign VPN) cannot connect right now. Hydra keeps checking and will connect when the limits are lifted. Meanwhile it tries Russian site names (SNI) and does not damage the strategy memory.</string>
+    <string name="wl_check">Check network</string>
+    <string name="wl_relay">What can be done</string>
+    <string name="wl_relay_title">How to bypass whitelists</string>
+    <string name="wl_relay_text">If the operator filters by IP address, only a relay helps: a small program on a server whose address is on the whitelist (a Russian host or cloud). It just forwards UDP packets to Cloudflare.\n\nOn the server (Linux), one command:\nsocat UDP4-LISTEN:443,fork,reuseaddr UDP4:162.159.198.2:443\n\nIn the app: Advanced → Custom endpoint → server IP:443.\n\nWhether a given host works depends on the operator and region: check that its address opens in whitelist mode. Without your own server a bypass is possible only if the filter looks at the site name (SNI) rather than the IP: Hydra checks this itself (the Check network button).</string>
+    <string name="diag_wl">Whitelist check</string>
+    <string name="diag_wl_sub">Which addresses and names the operator lets through now</string>
 </resources>
