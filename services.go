@@ -1,0 +1,89 @@
+package hydra
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strings"
+	"time"
+)
+
+var serviceTargets = []struct {
+	name, ip string
+	port     uint16
+}{
+	{"Telegram DC2", "149.154.167.51", 443},
+	{"Telegram DC1/3", "149.154.175.50", 443},
+	{"Telegram DC4", "149.154.167.91", 443},
+	{"Telegram DC5", "91.108.56.130", 443},
+	{"Google", "8.8.8.8", 443},
+	{"Cloudflare", "1.1.1.1", 443},
+	{"GitHub", "140.82.121.4", 443},
+}
+
+// Сервисы, у которых нет постоянных адресов: адрес берём по имени.
+var serviceNames = []struct{ name, host string }{
+	{"YouTube", "www.youtube.com"},
+	{"Видео YouTube (googlevideo)", "redirector.googlevideo.com"},
+	{"WhatsApp", "web.whatsapp.com"},
+	{"Instagram", "www.instagram.com"},
+	{"Discord", "discord.com"},
+}
+
+// resolveV4 возвращает первый IPv4-адрес имени. Запрос идёт обычным DNS вне туннеля.
+func resolveV4(ctx context.Context, host string) (net.IP, error) {
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(cctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range addrs {
+		if ip4 := a.IP.To4(); ip4 != nil {
+			return ip4, nil
+		}
+	}
+	return nil, fmt.Errorf("в ответе нет адреса IPv4")
+}
+
+// ServiceCheck проверяет через действующий туннель, проходит ли TCP до популярных сервисов
+// (SYN-ACK от самого сервиса). Помогает отличить «туннель не пускает» от «сервис режет этот дата-центр».
+// Важно: это проверка достижимости адреса, а не качества. Замедление по имени сайта (SNI) она не видит.
+func (e *Engine) ServiceCheck(ctx context.Context) string {
+	d, _ := e.active.Load().(*attemptDev)
+	st := e.Status()
+	if d == nil || st.State != "up" {
+		return "туннель сейчас не подключён: проверять нечего\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Через туннель %s (дата-центр %s):\n", st.Strategy, st.Colo)
+	okN, total := 0, 0
+	for _, t := range serviceTargets {
+		total++
+		rtt, err := d.tcpProbeTo(ctx, net.ParseIP(t.ip).To4(), t.port, 3*time.Second)
+		if err == nil {
+			okN++
+			fmt.Fprintf(&b, "  ✔ %s (%s:%d) %d мс\n", t.name, t.ip, t.port, rtt.Milliseconds())
+		} else {
+			fmt.Fprintf(&b, "  ✘ %s (%s:%d): %v\n", t.name, t.ip, t.port, err)
+		}
+	}
+	b.WriteString("По именам (адрес получен обычным DNS вне туннеля, провайдер мог подменить ответ):\n")
+	for _, t := range serviceNames {
+		total++
+		ip, err := resolveV4(ctx, t.host)
+		if err != nil {
+			fmt.Fprintf(&b, "  ✘ %s (%s): DNS не дал адрес: %v\n", t.name, t.host, err)
+			continue
+		}
+		rtt, err := d.tcpProbeTo(ctx, ip, 443, 2500*time.Millisecond)
+		if err == nil {
+			okN++
+			fmt.Fprintf(&b, "  ✔ %s (%s → %s) %d мс\n", t.name, t.host, ip.String(), rtt.Milliseconds())
+		} else {
+			fmt.Fprintf(&b, "  ✘ %s (%s → %s): %v\n", t.name, t.host, ip.String(), err)
+		}
+	}
+	fmt.Fprintf(&b, "Доступно %d из %d.\n", okN, total)
+	return b.String()
+}
