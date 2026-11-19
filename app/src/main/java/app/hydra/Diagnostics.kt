@@ -85,7 +85,7 @@ suspend fun runFullDiagnostics(ctx: android.content.Context): List<DiagCheck> = 
     out += try {
         if (base.ip.isNotEmpty()) {
             val host = InetAddress.getByName(base.ip).canonicalHostName
-            DiagCheck("Провайдер сети (имя узла публичного IP)", true, base.ip + " → " + host)
+            DiagCheck("Провайдер сети (имя узла публичного IP)", true, if (host == base.ip) base.ip + ": имя узла не опубликовано" else base.ip + " → " + host)
         } else {
             DiagCheck("Провайдер сети (имя узла публичного IP)", true, "публичный IP не получен")
         }

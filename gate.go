@@ -65,9 +65,9 @@ func (e *Engine) knownBlocked(nk string, s Strategy) bool {
 	return kc != "" && !e.coloAllowed(nk, kc)
 }
 
-// Сервисы «мягкой» проверки: у них нет постоянных адресов, адрес берётся по имени. Результат идёт в память
-// (влияет на порядок стратегий и запускает придумывание новых), но дата-центр из-за них не банится:
-// ответ DNS мог быть подменён провайдером.
+// Сервисы «мягкой» проверки: у них нет постоянных адресов, адрес берётся DNS-запросом внутри туннеля. Результат
+// идёт в память (влияет на порядок стратегий и запускает придумывание новых), но дата-центр из-за них не банится:
+// запрет дата-центров без запасных оставил бы VPN без выхода.
 var svcSoft = []struct{ name, host string }{
 	{"YouTube", "redirector.googlevideo.com"},
 	{"WhatsApp", "web.whatsapp.com"},
@@ -127,7 +127,7 @@ func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out cha
 		if a.ctx.Err() != nil || ctx.Err() != nil {
 			return
 		}
-		ip, err := resolveV4(a.ctx, t.host)
+		ip, err := a.dev.resolveA(a.ctx, t.host, 3*time.Second)
 		if err != nil {
 			Logf("   ? %s: адрес не получен (%v), в память не записываю", t.name, err)
 			continue

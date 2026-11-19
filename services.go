@@ -68,20 +68,23 @@ func (e *Engine) ServiceCheck(ctx context.Context) string {
 			fmt.Fprintf(&b, "  ✘ %s (%s:%d): %v\n", t.name, t.ip, t.port, err)
 		}
 	}
-	b.WriteString("По именам (адрес получен обычным DNS вне туннеля, провайдер мог подменить ответ):\n")
+	b.WriteString("По именам (адрес узнан DNS-запросом внутри туннеля, поэтому блокировка имён на DNS оператора не мешает):\n")
 	for _, t := range serviceNames {
 		total++
-		ip, err := resolveV4(ctx, t.host)
-		if err != nil {
-			fmt.Fprintf(&b, "  ✘ %s (%s): DNS не дал адрес: %v\n", t.name, t.host, err)
+		tip, terr := d.resolveA(ctx, t.host, 3*time.Second)
+		if terr != nil {
+			fmt.Fprintf(&b, "  ✘ %s (%s): %v\n", t.name, t.host, terr)
 			continue
 		}
-		rtt, err := d.tcpProbeTo(ctx, ip, 443, 2500*time.Millisecond)
+		if _, oerr := resolveV4(ctx, t.host); oerr != nil {
+			fmt.Fprintf(&b, "  ℹ %s: DNS оператора не отдаёт адрес (%v), через туннель адрес есть: имя блокируется на DNS оператора, внутри VPN это не мешает\n", t.name, oerr)
+		}
+		rtt, err := d.tcpProbeTo(ctx, tip, 443, 2500*time.Millisecond)
 		if err == nil {
 			okN++
-			fmt.Fprintf(&b, "  ✔ %s (%s → %s) %d мс\n", t.name, t.host, ip.String(), rtt.Milliseconds())
+			fmt.Fprintf(&b, "  ✔ %s (%s → %s) %d мс\n", t.name, t.host, tip.String(), rtt.Milliseconds())
 		} else {
-			fmt.Fprintf(&b, "  ✘ %s (%s → %s): %v\n", t.name, t.host, ip.String(), err)
+			fmt.Fprintf(&b, "  ✘ %s (%s → %s): %v\n", t.name, t.host, tip.String(), err)
 		}
 	}
 	fmt.Fprintf(&b, "Доступно %d из %d.\n", okN, total)

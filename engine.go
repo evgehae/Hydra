@@ -91,7 +91,6 @@ type Engine struct {
 	probesTotal, probesLost    int
 	active                     atomic.Value // *attemptDev: карта, через которую сейчас идёт трафик
 	testFail                   chan struct{}
-	svcBad chan string // «живая» проверка сервиса не прошла: сменить путь
 	tried                      map[string]time.Time // когда стратегию последний раз пробовали
 	inOutage, outageLogged     bool
 	wlLast                     time.Time
@@ -135,7 +134,6 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
 		testFail: make(chan struct{}, 1),
-		svcBad:   make(chan string, 1),
 		tried:    map[string]time.Time{},
 	}
 }
@@ -288,6 +286,10 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 	atomic.AddInt32(&d.recv, 1)
 	if id, colo, ok := ParseColoReply(pkt, d.port); ok {
 		d.e.deliver(id, colo)
+		return nil
+	}
+	if id, res, ok := ParseAReply(pkt, d.port+1); ok {
+		d.e.deliver(id, res)
 		return nil
 	}
 	if st, _ := d.tcpSt.Load().(tcpProbeState); st.dst != nil && ParseTCPSynAckFrom(pkt, st.dst, st.dport, st.sport, st.seq+1) {

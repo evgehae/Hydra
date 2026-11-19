@@ -40,7 +40,10 @@ private fun lastServiceFailures(journal: String): List<String>? {
     val block = journal.substring(i).lines().take(30)
     val end = block.indexOfFirst { it.contains("Доступно") }
     val part = if (end >= 0) block.take(end) else block.take(15)
-    return part.filter { it.contains("✘") }.map { it.trim() }
+    val fails = part.filter { it.contains("✘") }.map { it.trim() }
+    val tg = fails.filter { it.contains("Telegram DC") }
+    // один недоступный дата-центр Telegram из четырёх — не проблема: клиенту хватает остальных
+    return if (tg.size < 4) fails.filterNot { it.contains("Telegram DC") } else fails
 }
 
 private fun operatorName(code: String): String = when (code) {
@@ -246,22 +249,6 @@ fun diagnose(
             "Ничего делать не нужно, если туннель в итоге поднялся. Иначе отправь отчёт.",
             "strategies.go: MasqueStrategies (список адресов); learn.go: генерация адресов")
     }
-    val live = journal.lines().lastOrNull { it.contains("🌐 живая проверка") }
-    if (live != null) {
-        if (live.contains("недоступна")) {
-            add("D43", 1, "Живая проверка через туннель не смогла работать",
-                live.trim(),
-                "Приложение не смогло отправить запрос через свой же туннель (контроль warp=on не прошёл).",
-                "Ничего делать не нужно: работает проверка по адресам. Отправь отчёт, и я поменяю способ живой проверки.",
-                "ServiceProber.kt (Network.openConnection); HydraVpnService.kt (исключение приложения из VPN)")
-        } else if (live.contains("✘")) {
-            add("D42", 2, "Живая проверка: сервис не открывается через туннель",
-                live.trim(),
-                "Туннель работает, но настоящий HTTPS-запрос к сервису не проходит или не отвечает дважды подряд.",
-                "Гидра сама меняет дата-центр и придумывает новые варианты. Если за 5 минут не помогло, отправь отчёт.",
-                "ServiceProber.kt; brain.go: ReportService; race.go: svcBad")
-        }
-    }
     val svc = lastServiceFailures(journal)
     if (svc == null && st == "up") {
         add("D40", 1, "Проверка сервисов через туннель ещё не запускалась",
@@ -275,6 +262,14 @@ fun diagnose(
             "Туннель есть, но до этих адресов TCP не проходит. Если не отвечают только они, их режут по маршруту или адресу.",
             "Гидра подбирает другой дата-центр и стратегию сама. Если не прошло за 5 минут, отправь отчёт.",
             "services.go; gate.go; learn.go (адаптация под сервис — план v22.2)")
+    }
+    val dnsBlocked = journal.lines().lastOrNull { it.contains("DNS оператора не отдаёт адрес") }
+    if (dnsBlocked != null) {
+        add("D44", 1, "Оператор блокирует часть имён на своём DNS",
+            dnsBlocked.trim().take(220),
+            "Обычный DNS оператора не отдаёт адрес сервиса. Внутри VPN приложения спрашивают DNS туннеля (1.1.1.1), поэтому им это не мешает.",
+            "Ничего делать не нужно, пока приложение выбрано в Гидре. Вне VPN этот сервис не откроется.",
+            "services.go: ServiceCheck; brain.go: resolveA")
     }
     return out
 }
@@ -310,10 +305,10 @@ fun buildDoctor(ctx: Context, prefs: Prefs, vpn: VpnController, checks: List<Dia
     sb.append("✔ Самообучение: мутации TTL, числа и размера фейков, SNI, портов, адресов; мёртвые отбрасываются.\n")
     sb.append("✔ Параллельная гонка стратегий и горячий резерв (включается настройкой).\n")
     sb.append("✔ Проверка Telegram, YouTube, WhatsApp, Instagram, Discord через туннель (достижимость адреса по TCP).\n")
-    sb.append("✔ Живая проверка: настоящие HTTPS-запросы к YouTube, видео YouTube и WhatsApp через туннель каждые 5 минут и после смены пути. Видит подмену DNS и обрыв TLS.\n")
-    sb.append("✔ Если сервис мёртв при исправном остальном, Гидра сразу уходит на другой дата-центр (не чаще раза в 5 минут на сервис, не более трёх плохих дата-центров на сеть).\n")
-    sb.append("✔ Скорость туннеля измеряется и влияет на выбор: быстрые стратегии идут первыми.\n")
-    sb.append("⚠ Замедление одного YouTube по имени сайта отдельно не измеряется: видна общая скорость туннеля, а не скорость видео.\n")
+    sb.append("✔ Проверка сервисов: Telegram (4 дата-центра), YouTube, видео YouTube, WhatsApp, Instagram, Discord через туннель. Адрес узнаётся DNS-запросом внутри туннеля, поэтому блокировка имён на DNS оператора не мешает.\n")
+    sb.append("⚠ Настоящий HTTPS-запрос от приложения через свой туннель невозможен: Android не пускает приложение в собственный VPN. Поэтому проверка идёт на уровне TCP.\n")
+    sb.append("⚠ Скорость туннеля отдельно не измеряется (нужен свой TCP в ядре): видны задержка и потери.\n")
+    sb.append("⚠ Сеть из-за YouTube или WhatsApp не меняется: запрет дата-центров без запасных оставил бы VPN без выхода. Сбой запоминается, и Гидра придумывает новые варианты. Меняется путь только при сбое Telegram.\n")
     sb.append("⚠ Свой DNS: обычный DNS внутри туннеля. DoH и DoT не поддерживаются.\n")
     sb.append("✘ Системный частный DNS не настраивается приложением, только определяется.\n")
     sb.append("✔ Память сервисов по сетям: какие из Telegram, YouTube, WhatsApp доходили через какую стратегию. Она влияет на порядок перебора, а при сбое сервиса Гидра сама придумывает новые варианты.\n")

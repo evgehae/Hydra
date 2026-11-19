@@ -437,14 +437,6 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			}
 			lose(why)
 			return
-		case why := <-e.svcBad:
-			Logf("🚫 %s", why)
-			e.noteBadColo(nk, p.colo)
-			if sb != nil && sb.colo != p.colo && failover(why) {
-				continue
-			}
-			lose(why)
-			return
 		case <-e.testFail:
 			Logf("🧪 тест: имитирую отказ основного туннеля %s", p.s.ID)
 			if sb == nil {

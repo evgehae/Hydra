@@ -244,23 +244,3 @@ func GetJournalFull(n int) string {
 	}
 	return hydra.JournalText(n)
 }
-
-// ReportService: приложение сообщает итог «живой» проверки сервиса через туннель (state: "ok" или "dead").
-func ReportService(name, state, detail string) {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e != nil {
-		e.ReportService(name, state == "ok", detail)
-	}
-}
-
-// ReportSpeed: приложение сообщает измеренную через туннель скорость, кбит/с.
-func ReportSpeed(kbps int64) {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e != nil {
-		e.ReportSpeed(kbps)
-	}
-}

@@ -128,11 +128,6 @@ class HydraVpnService : VpnService() {
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
                 if (raw.startsWith("up")) restartFails = 0
-                if (raw.startsWith("up")) {
-                    ServiceProber.tick(this@HydraVpnService, p.getOrElse(1) { "" } + "@" + p.getOrElse(2) { "" })
-                } else {
-                    ServiceProber.reset()
-                }
                 // Wi-Fi ведёт в запрещённый дата-центр: туннель автоматически идёт через мобильную сеть
                 val prefsNow = Prefs(this@HydraVpnService)
                 if (p.getOrElse(4) { "" }.startsWith("⛔") && prefsNow.channel == "auto" && !forceCell) {

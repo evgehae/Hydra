@@ -288,3 +288,96 @@ func ParseTCPSynAckFrom(pkt []byte, from net.IP, fport, dport uint16, wantAck ui
 	}
 	return binary.BigEndian.Uint32(t[8:]) == wantAck
 }
+
+// BuildDNSQueryA строит IPv4-пакет с DNS-запросом A-записи для host к probeDst (1.1.1.1:53).
+// nil, если src не IPv4 или имя некорректно. Запрос идёт внутри туннеля, поэтому DNS оператора его не видит.
+func BuildDNSQueryA(src net.IP, srcPort, id uint16, host string) []byte {
+	s4 := src.To4()
+	if s4 == nil {
+		return nil
+	}
+	dns := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return nil
+		}
+		dns = append(dns, byte(len(label)))
+		dns = append(dns, label...)
+	}
+	dns = append(dns, 0, 0, 1, 0, 1) // тип A, класс IN
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000) // DF
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], s4)
+	copy(p[16:20], probeDst)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], srcPort)
+	binary.BigEndian.PutUint16(p[22:], 53)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	copy(p[28:], dns)
+	return p
+}
+
+// ParseAReply разбирает ответ на BuildDNSQueryA, пришедший на порт dstPort. В res первый IPv4-адрес
+// из ответа либо "rcode=nxdomain" (имени нет), "rcode=err" (ошибка DNS), "rcode=noA" (нет A-записи).
+func ParseAReply(pkt []byte, dstPort uint16) (id uint16, res string, ok bool) {
+	if len(pkt) < 28 || pkt[0]>>4 != 4 {
+		return
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+8+12 || pkt[9] != 17 {
+		return
+	}
+	if !net.IP(pkt[12:16]).Equal(probeDst) {
+		return
+	}
+	udp := pkt[ihl:]
+	if binary.BigEndian.Uint16(udp[0:]) != 53 || binary.BigEndian.Uint16(udp[2:]) != dstPort {
+		return
+	}
+	dns := udp[8:]
+	if ulen := int(binary.BigEndian.Uint16(udp[4:])); ulen >= 8 && ulen-8 <= len(dns) {
+		dns = dns[:ulen-8]
+	}
+	if len(dns) < 12 || dns[2]&0x80 == 0 {
+		return
+	}
+	id = binary.BigEndian.Uint16(dns[0:])
+	if rc := dns[3] & 0x0f; rc == 3 {
+		return id, "rcode=nxdomain", true
+	} else if rc != 0 {
+		return id, "rcode=err", true
+	}
+	qd := int(binary.BigEndian.Uint16(dns[4:]))
+	an := int(binary.BigEndian.Uint16(dns[6:]))
+	off := 12
+	for i := 0; i < qd; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+4 > len(dns) {
+			return id, "rcode=err", true
+		}
+		off += 4
+	}
+	for i := 0; i < an; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+10 > len(dns) {
+			break
+		}
+		typ := binary.BigEndian.Uint16(dns[off:])
+		rdlen := int(binary.BigEndian.Uint16(dns[off+8:]))
+		off += 10
+		if off+rdlen > len(dns) {
+			break
+		}
+		if typ == 1 && rdlen == 4 {
+			return id, net.IP(dns[off : off+4]).String(), true
+		}
+		off += rdlen
+	}
+	return id, "rcode=noA", true
+}
