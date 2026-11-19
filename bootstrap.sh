@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 18 (v22.3).
+# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 19 (v22.4).
 # Кладёт ВСЕ файлы проекта (Go-ядро, Android, ресурсы) и убирает лишние .go/.kt, которых нет в наборе.
-# Внутри: «мозг» (память сервисов по сетям, живая проверка YouTube/WhatsApp через туннель, замер скорости,
-# мгновенная смена пути при мёртвом сервисе, придумывание вариантов) и «Доктор» с профилем сети в отчёте.
+# Внутри: «мозг» (память сервисов по сетям, проверка Telegram/YouTube/WhatsApp, DNS внутри туннеля,
+# придумывание вариантов при сбое сервиса) и «Доктор» с профилем сети в отчёте.
 # Файлы заменяются один раз при смене номера набора, дальше их можно править руками.
 set -e
 
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=18
+NEW=19
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -1327,7 +1327,7 @@ suspend fun runFullDiagnostics(ctx: android.content.Context): List<DiagCheck> = 
     out += try {
         if (base.ip.isNotEmpty()) {
             val host = InetAddress.getByName(base.ip).canonicalHostName
-            DiagCheck("Провайдер сети (имя узла публичного IP)", true, base.ip + " → " + host)
+            DiagCheck("Провайдер сети (имя узла публичного IP)", true, if (host == base.ip) base.ip + ": имя узла не опубликовано" else base.ip + " → " + host)
         } else {
             DiagCheck("Провайдер сети (имя узла публичного IP)", true, "публичный IP не получен")
         }
@@ -1803,7 +1803,10 @@ private fun lastServiceFailures(journal: String): List<String>? {
     val block = journal.substring(i).lines().take(30)
     val end = block.indexOfFirst { it.contains("Доступно") }
     val part = if (end >= 0) block.take(end) else block.take(15)
-    return part.filter { it.contains("✘") }.map { it.trim() }
+    val fails = part.filter { it.contains("✘") }.map { it.trim() }
+    val tg = fails.filter { it.contains("Telegram DC") }
+    // один недоступный дата-центр Telegram из четырёх — не проблема: клиенту хватает остальных
+    return if (tg.size < 4) fails.filterNot { it.contains("Telegram DC") } else fails
 }
 
 private fun operatorName(code: String): String = when (code) {
@@ -2009,22 +2012,6 @@ fun diagnose(
             "Ничего делать не нужно, если туннель в итоге поднялся. Иначе отправь отчёт.",
             "strategies.go: MasqueStrategies (список адресов); learn.go: генерация адресов")
     }
-    val live = journal.lines().lastOrNull { it.contains("🌐 живая проверка") }
-    if (live != null) {
-        if (live.contains("недоступна")) {
-            add("D43", 1, "Живая проверка через туннель не смогла работать",
-                live.trim(),
-                "Приложение не смогло отправить запрос через свой же туннель (контроль warp=on не прошёл).",
-                "Ничего делать не нужно: работает проверка по адресам. Отправь отчёт, и я поменяю способ живой проверки.",
-                "ServiceProber.kt (Network.openConnection); HydraVpnService.kt (исключение приложения из VPN)")
-        } else if (live.contains("✘")) {
-            add("D42", 2, "Живая проверка: сервис не открывается через туннель",
-                live.trim(),
-                "Туннель работает, но настоящий HTTPS-запрос к сервису не проходит или не отвечает дважды подряд.",
-                "Гидра сама меняет дата-центр и придумывает новые варианты. Если за 5 минут не помогло, отправь отчёт.",
-                "ServiceProber.kt; brain.go: ReportService; race.go: svcBad")
-        }
-    }
     val svc = lastServiceFailures(journal)
     if (svc == null && st == "up") {
         add("D40", 1, "Проверка сервисов через туннель ещё не запускалась",
@@ -2038,6 +2025,14 @@ fun diagnose(
             "Туннель есть, но до этих адресов TCP не проходит. Если не отвечают только они, их режут по маршруту или адресу.",
             "Гидра подбирает другой дата-центр и стратегию сама. Если не прошло за 5 минут, отправь отчёт.",
             "services.go; gate.go; learn.go (адаптация под сервис — план v22.2)")
+    }
+    val dnsBlocked = journal.lines().lastOrNull { it.contains("DNS оператора не отдаёт адрес") }
+    if (dnsBlocked != null) {
+        add("D44", 1, "Оператор блокирует часть имён на своём DNS",
+            dnsBlocked.trim().take(220),
+            "Обычный DNS оператора не отдаёт адрес сервиса. Внутри VPN приложения спрашивают DNS туннеля (1.1.1.1), поэтому им это не мешает.",
+            "Ничего делать не нужно, пока приложение выбрано в Гидре. Вне VPN этот сервис не откроется.",
+            "services.go: ServiceCheck; brain.go: resolveA")
     }
     return out
 }
@@ -2073,10 +2068,10 @@ fun buildDoctor(ctx: Context, prefs: Prefs, vpn: VpnController, checks: List<Dia
     sb.append("✔ Самообучение: мутации TTL, числа и размера фейков, SNI, портов, адресов; мёртвые отбрасываются.\n")
     sb.append("✔ Параллельная гонка стратегий и горячий резерв (включается настройкой).\n")
     sb.append("✔ Проверка Telegram, YouTube, WhatsApp, Instagram, Discord через туннель (достижимость адреса по TCP).\n")
-    sb.append("✔ Живая проверка: настоящие HTTPS-запросы к YouTube, видео YouTube и WhatsApp через туннель каждые 5 минут и после смены пути. Видит подмену DNS и обрыв TLS.\n")
-    sb.append("✔ Если сервис мёртв при исправном остальном, Гидра сразу уходит на другой дата-центр (не чаще раза в 5 минут на сервис, не более трёх плохих дата-центров на сеть).\n")
-    sb.append("✔ Скорость туннеля измеряется и влияет на выбор: быстрые стратегии идут первыми.\n")
-    sb.append("⚠ Замедление одного YouTube по имени сайта отдельно не измеряется: видна общая скорость туннеля, а не скорость видео.\n")
+    sb.append("✔ Проверка сервисов: Telegram (4 дата-центра), YouTube, видео YouTube, WhatsApp, Instagram, Discord через туннель. Адрес узнаётся DNS-запросом внутри туннеля, поэтому блокировка имён на DNS оператора не мешает.\n")
+    sb.append("⚠ Настоящий HTTPS-запрос от приложения через свой туннель невозможен: Android не пускает приложение в собственный VPN. Поэтому проверка идёт на уровне TCP.\n")
+    sb.append("⚠ Скорость туннеля отдельно не измеряется (нужен свой TCP в ядре): видны задержка и потери.\n")
+    sb.append("⚠ Сеть из-за YouTube или WhatsApp не меняется: запрет дата-центров без запасных оставил бы VPN без выхода. Сбой запоминается, и Гидра придумывает новые варианты. Меняется путь только при сбое Telegram.\n")
     sb.append("⚠ Свой DNS: обычный DNS внутри туннеля. DoH и DoT не поддерживаются.\n")
     sb.append("✘ Системный частный DNS не настраивается приложением, только определяется.\n")
     sb.append("✔ Память сервисов по сетям: какие из Telegram, YouTube, WhatsApp доходили через какую стратегию. Она влияет на порядок перебора, а при сбое сервиса Гидра сама придумывает новые варианты.\n")
@@ -2763,11 +2758,6 @@ class HydraVpnService : VpnService() {
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
                 if (raw.startsWith("up")) restartFails = 0
-                if (raw.startsWith("up")) {
-                    ServiceProber.tick(this@HydraVpnService, p.getOrElse(1) { "" } + "@" + p.getOrElse(2) { "" })
-                } else {
-                    ServiceProber.reset()
-                }
                 // Wi-Fi ведёт в запрещённый дата-центр: туннель автоматически идёт через мобильную сеть
                 val prefsNow = Prefs(this@HydraVpnService)
                 if (p.getOrElse(4) { "" }.startsWith("⛔") && prefsNow.channel == "auto" && !forceCell) {
@@ -3380,164 +3370,6 @@ class Prefs(ctx: Context) {
 
     fun defaultBlockedColos(): String =
         try { mobile.Mobile.defaultBlockedColos() } catch (t: Throwable) { "DME" }
-}
-HYDRA_EOF
-
-putv "app/src/main/java/app/hydra/ServiceProber.kt" <<'HYDRA_EOF'
-package app.hydra
-
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import java.net.HttpURLConnection
-import java.net.URL
-
-/**
- * «Живая» проверка: настоящие HTTPS-запросы к YouTube и WhatsApp прямо через туннель и замер скорости.
- * В отличие от проверки по адресам (SYN-ACK) она видит и подмену DNS, и обрыв TLS, и медленный туннель.
- * Запросы идут через сеть VPN с её DNS, поэтому ответ DNS провайдера ни на что не влияет.
- * Результат уходит в ядро: оно запоминает его по сети и стратегии и при мёртвом сервисе меняет путь.
- *
- * Защита от ложных срабатываний: перед проверкой контрольный запрос к Cloudflare должен показать warp=on.
- * Если приложение не может ходить через свой туннель, проверка честно пишет «недоступна» и ничего не меняет.
- */
-object ServiceProber {
-    private class Target(val name: String, val url: String)
-
-    private val targets = listOf(
-        Target("YouTube", "https://www.youtube.com/generate_204"),
-        Target("YouTube-видео", "https://redirector.googlevideo.com/generate_204"),
-        Target("WhatsApp", "https://web.whatsapp.com/")
-    )
-
-    private const val UA = "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
-    private const val PERIOD_MS = 5 * 60_000L
-
-    @Volatile private var running = false
-    private var lastKey = ""
-    private var lastAt = 0L
-
-    /** Вызывать из цикла службы, пока туннель поднят. key = стратегия@дата-центр. */
-    fun tick(ctx: Context, key: String) {
-        val now = System.currentTimeMillis()
-        if (running) return
-        if (key == lastKey && now - lastAt < PERIOD_MS) return
-        lastKey = key
-        lastAt = now
-        running = true
-        val app = ctx.applicationContext
-        Thread {
-            try {
-                Thread.sleep(7000) // дать туннелю прогреться
-                if (mobile.Mobile.engineStatus().startsWith("up")) runProbe(app)
-            } catch (t: Throwable) {
-            } finally {
-                running = false
-            }
-        }.start()
-    }
-
-    /** Туннель не поднят: следующая проверка пройдёт сразу после подключения. */
-    fun reset() {
-        lastKey = ""
-    }
-
-    private fun log(s: String) {
-        try { mobile.Mobile.logLine(s) } catch (t: Throwable) { }
-    }
-
-    private fun vpnNetwork(ctx: Context): Network? {
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        for (n in cm.allNetworks) {
-            val c = cm.getNetworkCapabilities(n) ?: continue
-            if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return n
-        }
-        return null
-    }
-
-    /** Контроль: запрос к Cloudflare через туннель должен вернуть warp=on. */
-    private fun control(net: Network): Pair<Boolean, String> = try {
-        val c = net.openConnection(URL("https://cloudflare.com/cdn-cgi/trace")) as HttpURLConnection
-        c.connectTimeout = 6000
-        c.readTimeout = 6000
-        val body = c.inputStream.bufferedReader().use { it.readText() }
-        c.disconnect()
-        val warp = body.lines().firstOrNull { it.startsWith("warp=") }?.substringAfter("=") ?: "нет"
-        Pair(warp == "on" || warp == "plus", "warp=$warp")
-    } catch (e: Exception) {
-        Pair(false, e.javaClass.simpleName + (e.message?.let { ": " + it.take(60) } ?: ""))
-    }
-
-    private class Res(val ok: Boolean, val ms: Long, val note: String)
-
-    /** Любой ответ HTTP (даже 404) значит: имя нашлось, TLS прошёл, сервис отвечает. */
-    private fun probe(net: Network, url: String): Res {
-        val t = System.currentTimeMillis()
-        return try {
-            val c = net.openConnection(URL(url)) as HttpURLConnection
-            c.connectTimeout = 5000
-            c.readTimeout = 6000
-            c.instanceFollowRedirects = false
-            c.setRequestProperty("User-Agent", UA)
-            val code = c.responseCode
-            c.disconnect()
-            Res(true, System.currentTimeMillis() - t, "HTTP $code")
-        } catch (e: Exception) {
-            Res(false, System.currentTimeMillis() - t, e.javaClass.simpleName + (e.message?.let { ": " + it.take(60) } ?: ""))
-        }
-    }
-
-    /** Скорость скачивания через туннель, кбит/с (до 4 секунд); -1 — не измерена. */
-    private fun speedKbps(net: Network): Long = try {
-        val c = net.openConnection(URL("https://speed.cloudflare.com/__down?bytes=1500000")) as HttpURLConnection
-        c.connectTimeout = 5000
-        c.readTimeout = 5000
-        val t = System.currentTimeMillis()
-        var total = 0L
-        c.inputStream.use { ins ->
-            val buf = ByteArray(16384)
-            while (System.currentTimeMillis() - t < 4000) {
-                val n = ins.read(buf)
-                if (n < 0) break
-                total += n
-            }
-        }
-        c.disconnect()
-        val ms = maxOf(1L, System.currentTimeMillis() - t)
-        total * 8 / ms
-    } catch (e: Exception) {
-        -1L
-    }
-
-    private fun runProbe(ctx: Context) {
-        val net = vpnNetwork(ctx)
-        if (net == null) {
-            log("🌐 живая проверка недоступна: сеть VPN не видна приложению")
-            return
-        }
-        val ctl = control(net)
-        if (!ctl.first) {
-            log("🌐 живая проверка недоступна: контрольный запрос не идёт через туннель (" + ctl.second + ")")
-            return
-        }
-        val parts = mutableListOf<String>()
-        for (t in targets) {
-            var r = probe(net, t.url)
-            if (!r.ok) {
-                Thread.sleep(2000)
-                r = probe(net, t.url) // второй шанс: одиночный сбой сервис не хоронит
-            }
-            parts.add(t.name + (if (r.ok) " ✔ " + r.ms + " мс" else " ✘ " + r.note))
-            try { mobile.Mobile.reportService(t.name, if (r.ok) "ok" else "dead", r.note) } catch (e: Throwable) { }
-        }
-        val sp = speedKbps(net)
-        parts.add("скорость " + (if (sp >= 0) "~" + sp + " кбит/с" else "не измерена"))
-        if (sp >= 0) {
-            try { mobile.Mobile.reportSpeed(sp) } catch (e: Throwable) { }
-        }
-        log("🌐 живая проверка через туннель: " + parts.joinToString("; "))
-    }
 }
 HYDRA_EOF
 
@@ -6562,10 +6394,14 @@ putv "$GODIR/brain.go" <<'HYDRA_EOF'
 package hydra
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -6700,7 +6536,6 @@ func (e *Engine) BadColoList(nk string) []string {
 var (
 	svcGrowMu sync.Mutex
 	svcGrowAt = map[string]time.Time{}
-	svcHardAt = map[string]time.Time{}
 )
 
 // svcGrow: сервис не дошёл — придумываем новые варианты под эту сеть (не чаще раза в 10 минут).
@@ -6716,51 +6551,45 @@ func (e *Engine) svcGrow(nk string) {
 	e.grow(nk)
 }
 
-// ReportService принимает результат «живой» проверки из приложения: настоящий HTTPS-запрос к сервису
-// через туннель (с DNS внутри туннеля, поэтому подмена DNS провайдером не мешает). ok=false означает, что
-// запрос не прошёл дважды подряд. Это самый надёжный сигнал: он запоминается и, если сервис мёртв,
-// заставляет сразу уйти на другой дата-центр. Не чаще раза в 5 минут на сервис и не более трёх плохих
-// дата-центров на сеть (если режут везде, значит, дело не в маршруте).
-func (e *Engine) ReportService(name string, ok bool, detail string) {
-	st := e.Status()
-	if st.State != "up" || st.Strategy == "" {
-		return
+// resolveA узнаёт IPv4-адрес имени запросом DNS ВНУТРИ туннеля (к 1.1.1.1). Оператор такой запрос не видит,
+// поэтому подмена или блокировка имён на его DNS не мешает, как не мешает она и приложениям внутри VPN.
+func (d *attemptDev) resolveA(ctx context.Context, host string, timeout time.Duration) (net.IP, error) {
+	e := d.e
+	id := uint16(atomic.AddUint32(&e.nextID, 1))
+	ch := make(chan string, 1)
+	e.mu.Lock()
+	e.waiters[id] = ch
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		delete(e.waiters, id)
+		e.mu.Unlock()
+	}()
+	pkt := BuildDNSQueryA(e.cfg.LocalIP, d.port+1, id, host)
+	if pkt == nil {
+		return nil, errors.New("не удалось построить DNS-запрос")
 	}
-	nk := e.cfg.NetKey()
-	e.cfg.Mem.RecordService(nk, st.Strategy, name+"/live", ok)
-	if ok {
-		Logf("🌐 %s через %s: живая проверка прошла (%s)", name, st.Strategy, detail)
-		return
-	}
-	Logf("🌐 ✘ %s через %s (дата-центр %s): %s", name, st.Strategy, st.Colo, detail)
-	e.svcGrow(nk)
-	if e.badColoCount(nk) >= 3 {
-		return
-	}
-	svcGrowMu.Lock()
-	t, seen := svcHardAt[nk+"|"+name]
-	if seen && time.Since(t) < 5*time.Minute {
-		svcGrowMu.Unlock()
-		return
-	}
-	svcHardAt[nk+"|"+name] = time.Now()
-	svcGrowMu.Unlock()
 	select {
-	case e.svcBad <- name + " не доходит через дата-центр " + st.Colo + " (проверено вживую, остальное работает) — ищу другой путь":
+	case d.probeQ <- pkt:
 	default:
+		return nil, errors.New("очередь проб переполнена")
 	}
-}
-
-// ReportSpeed запоминает скорость туннеля (кбит/с): быстрые стратегии получают приоритет, медленные
-// опускаются. Порог 1500 кбит/с — ниже этого видео и мессенджеры уже мучаются.
-func (e *Engine) ReportSpeed(kbps int64) {
-	st := e.Status()
-	if st.State != "up" || st.Strategy == "" {
-		return
+	select {
+	case res := <-ch:
+		if ip := net.ParseIP(res); ip != nil {
+			if ip4 := ip.To4(); ip4 != nil {
+				return ip4, nil
+			}
+		}
+		if res == "rcode=nxdomain" {
+			return nil, errors.New("DNS через туннель: такого имени нет")
+		}
+		return nil, errors.New("DNS через туннель: " + res)
+	case <-time.After(timeout):
+		return nil, errors.New("DNS через туннель не ответил")
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	nk := e.cfg.NetKey()
-	e.cfg.Mem.RecordService(nk, st.Strategy, "Скорость", kbps >= 1500)
-	Logf("🌐 скорость через %s (дата-центр %s): ~%d кбит/с", st.Strategy, st.Colo, kbps)
 }
 HYDRA_EOF
 
@@ -7220,7 +7049,6 @@ type Engine struct {
 	probesTotal, probesLost    int
 	active                     atomic.Value // *attemptDev: карта, через которую сейчас идёт трафик
 	testFail                   chan struct{}
-	svcBad chan string // «живая» проверка сервиса не прошла: сменить путь
 	tried                      map[string]time.Time // когда стратегию последний раз пробовали
 	inOutage, outageLogged     bool
 	wlLast                     time.Time
@@ -7264,7 +7092,6 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
 		testFail: make(chan struct{}, 1),
-		svcBad:   make(chan string, 1),
 		tried:    map[string]time.Time{},
 	}
 }
@@ -7417,6 +7244,10 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 	atomic.AddInt32(&d.recv, 1)
 	if id, colo, ok := ParseColoReply(pkt, d.port); ok {
 		d.e.deliver(id, colo)
+		return nil
+	}
+	if id, res, ok := ParseAReply(pkt, d.port+1); ok {
+		d.e.deliver(id, res)
 		return nil
 	}
 	if st, _ := d.tcpSt.Load().(tcpProbeState); st.dst != nil && ParseTCPSynAckFrom(pkt, st.dst, st.dport, st.sport, st.seq+1) {
@@ -8527,9 +8358,9 @@ func (e *Engine) knownBlocked(nk string, s Strategy) bool {
 	return kc != "" && !e.coloAllowed(nk, kc)
 }
 
-// Сервисы «мягкой» проверки: у них нет постоянных адресов, адрес берётся по имени. Результат идёт в память
-// (влияет на порядок стратегий и запускает придумывание новых), но дата-центр из-за них не банится:
-// ответ DNS мог быть подменён провайдером.
+// Сервисы «мягкой» проверки: у них нет постоянных адресов, адрес берётся DNS-запросом внутри туннеля. Результат
+// идёт в память (влияет на порядок стратегий и запускает придумывание новых), но дата-центр из-за них не банится:
+// запрет дата-центров без запасных оставил бы VPN без выхода.
 var svcSoft = []struct{ name, host string }{
 	{"YouTube", "redirector.googlevideo.com"},
 	{"WhatsApp", "web.whatsapp.com"},
@@ -8589,7 +8420,7 @@ func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out cha
 		if a.ctx.Err() != nil || ctx.Err() != nil {
 			return
 		}
-		ip, err := resolveV4(a.ctx, t.host)
+		ip, err := a.dev.resolveA(a.ctx, t.host, 3*time.Second)
 		if err != nil {
 			Logf("   ? %s: адрес не получен (%v), в память не записываю", t.name, err)
 			continue
@@ -10627,26 +10458,6 @@ func GetJournalFull(n int) string {
 	}
 	return hydra.JournalText(n)
 }
-
-// ReportService: приложение сообщает итог «живой» проверки сервиса через туннель (state: "ok" или "dead").
-func ReportService(name, state, detail string) {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e != nil {
-		e.ReportService(name, state == "ok", detail)
-	}
-}
-
-// ReportSpeed: приложение сообщает измеренную через туннель скорость, кбит/с.
-func ReportSpeed(kbps int64) {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e != nil {
-		e.ReportSpeed(kbps)
-	}
-}
 HYDRA_EOF
 
 putv "$GODIR/orchestrator.go" <<'HYDRA_EOF'
@@ -11614,6 +11425,99 @@ func ParseTCPSynAckFrom(pkt []byte, from net.IP, fport, dport uint16, wantAck ui
 	}
 	return binary.BigEndian.Uint32(t[8:]) == wantAck
 }
+
+// BuildDNSQueryA строит IPv4-пакет с DNS-запросом A-записи для host к probeDst (1.1.1.1:53).
+// nil, если src не IPv4 или имя некорректно. Запрос идёт внутри туннеля, поэтому DNS оператора его не видит.
+func BuildDNSQueryA(src net.IP, srcPort, id uint16, host string) []byte {
+	s4 := src.To4()
+	if s4 == nil {
+		return nil
+	}
+	dns := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return nil
+		}
+		dns = append(dns, byte(len(label)))
+		dns = append(dns, label...)
+	}
+	dns = append(dns, 0, 0, 1, 0, 1) // тип A, класс IN
+	total := 20 + 8 + len(dns)
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000) // DF
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], s4)
+	copy(p[16:20], probeDst)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], srcPort)
+	binary.BigEndian.PutUint16(p[22:], 53)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(dns)))
+	copy(p[28:], dns)
+	return p
+}
+
+// ParseAReply разбирает ответ на BuildDNSQueryA, пришедший на порт dstPort. В res первый IPv4-адрес
+// из ответа либо "rcode=nxdomain" (имени нет), "rcode=err" (ошибка DNS), "rcode=noA" (нет A-записи).
+func ParseAReply(pkt []byte, dstPort uint16) (id uint16, res string, ok bool) {
+	if len(pkt) < 28 || pkt[0]>>4 != 4 {
+		return
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+8+12 || pkt[9] != 17 {
+		return
+	}
+	if !net.IP(pkt[12:16]).Equal(probeDst) {
+		return
+	}
+	udp := pkt[ihl:]
+	if binary.BigEndian.Uint16(udp[0:]) != 53 || binary.BigEndian.Uint16(udp[2:]) != dstPort {
+		return
+	}
+	dns := udp[8:]
+	if ulen := int(binary.BigEndian.Uint16(udp[4:])); ulen >= 8 && ulen-8 <= len(dns) {
+		dns = dns[:ulen-8]
+	}
+	if len(dns) < 12 || dns[2]&0x80 == 0 {
+		return
+	}
+	id = binary.BigEndian.Uint16(dns[0:])
+	if rc := dns[3] & 0x0f; rc == 3 {
+		return id, "rcode=nxdomain", true
+	} else if rc != 0 {
+		return id, "rcode=err", true
+	}
+	qd := int(binary.BigEndian.Uint16(dns[4:]))
+	an := int(binary.BigEndian.Uint16(dns[6:]))
+	off := 12
+	for i := 0; i < qd; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+4 > len(dns) {
+			return id, "rcode=err", true
+		}
+		off += 4
+	}
+	for i := 0; i < an; i++ {
+		off = skipName(dns, off)
+		if off < 0 || off+10 > len(dns) {
+			break
+		}
+		typ := binary.BigEndian.Uint16(dns[off:])
+		rdlen := int(binary.BigEndian.Uint16(dns[off+8:]))
+		off += 10
+		if off+rdlen > len(dns) {
+			break
+		}
+		if typ == 1 && rdlen == 4 {
+			return id, net.IP(dns[off : off+4]).String(), true
+		}
+		off += rdlen
+	}
+	return id, "rcode=noA", true
+}
 HYDRA_EOF
 
 putv "$GODIR/probe_test.go" <<'HYDRA_EOF'
@@ -12369,14 +12273,6 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			restart = true
 			return
 		case why := <-gateCh:
-			Logf("🚫 %s", why)
-			e.noteBadColo(nk, p.colo)
-			if sb != nil && sb.colo != p.colo && failover(why) {
-				continue
-			}
-			lose(why)
-			return
-		case why := <-e.svcBad:
 			Logf("🚫 %s", why)
 			e.noteBadColo(nk, p.colo)
 			if sb != nil && sb.colo != p.colo && failover(why) {
@@ -13566,20 +13462,23 @@ func (e *Engine) ServiceCheck(ctx context.Context) string {
 			fmt.Fprintf(&b, "  ✘ %s (%s:%d): %v\n", t.name, t.ip, t.port, err)
 		}
 	}
-	b.WriteString("По именам (адрес получен обычным DNS вне туннеля, провайдер мог подменить ответ):\n")
+	b.WriteString("По именам (адрес узнан DNS-запросом внутри туннеля, поэтому блокировка имён на DNS оператора не мешает):\n")
 	for _, t := range serviceNames {
 		total++
-		ip, err := resolveV4(ctx, t.host)
-		if err != nil {
-			fmt.Fprintf(&b, "  ✘ %s (%s): DNS не дал адрес: %v\n", t.name, t.host, err)
+		tip, terr := d.resolveA(ctx, t.host, 3*time.Second)
+		if terr != nil {
+			fmt.Fprintf(&b, "  ✘ %s (%s): %v\n", t.name, t.host, terr)
 			continue
 		}
-		rtt, err := d.tcpProbeTo(ctx, ip, 443, 2500*time.Millisecond)
+		if _, oerr := resolveV4(ctx, t.host); oerr != nil {
+			fmt.Fprintf(&b, "  ℹ %s: DNS оператора не отдаёт адрес (%v), через туннель адрес есть: имя блокируется на DNS оператора, внутри VPN это не мешает\n", t.name, oerr)
+		}
+		rtt, err := d.tcpProbeTo(ctx, tip, 443, 2500*time.Millisecond)
 		if err == nil {
 			okN++
-			fmt.Fprintf(&b, "  ✔ %s (%s → %s) %d мс\n", t.name, t.host, ip.String(), rtt.Milliseconds())
+			fmt.Fprintf(&b, "  ✔ %s (%s → %s) %d мс\n", t.name, t.host, tip.String(), rtt.Milliseconds())
 		} else {
-			fmt.Fprintf(&b, "  ✘ %s (%s → %s): %v\n", t.name, t.host, ip.String(), err)
+			fmt.Fprintf(&b, "  ✘ %s (%s → %s): %v\n", t.name, t.host, tip.String(), err)
 		}
 	}
 	fmt.Fprintf(&b, "Доступно %d из %d.\n", okN, total)
@@ -14997,7 +14896,7 @@ HYDRA_EOF
 # --- убрать лишние .go и .kt, которых нет в этом наборе (старые версии ломают сборку «повторным объявлением») ---
 if [ "$OLD" -lt "$NEW" ]; then
   KEEP_GO=" brain.go colo.go colo_test.go custom.go dns.go dns_test.go engine.go engine_test.go events.go front.go front_test.go gate.go genes.go icmp6.go journal.go learn.go masque_runner.go memory.go mobile/mobile.go mobile/netalive.go mobile/policy.go mobile/vpn_stub.go mobile/vpn_usque.go orchestrator.go orchestrator_test.go outage.go pool.go probe.go probe_test.go quicfake.go quicfake_test.go race.go register.go register_test.go services.go strategies.go strategies_test.go transport.go udprelay.go udprelay_test.go wg.go wg_runner.go wg_test.go "
-  KEEP_KT=" app/src/main/java/app/hydra/AccountController.kt app/src/main/java/app/hydra/AdvancedScreens.kt app/src/main/java/app/hydra/AppsScreen.kt app/src/main/java/app/hydra/BootReceiver.kt app/src/main/java/app/hydra/DiagScreen.kt app/src/main/java/app/hydra/Diagnostics.kt app/src/main/java/app/hydra/DiagnosticsScreen.kt app/src/main/java/app/hydra/Doctor.kt app/src/main/java/app/hydra/HomeScreen.kt app/src/main/java/app/hydra/HydraHero.kt app/src/main/java/app/hydra/HydraVpnService.kt app/src/main/java/app/hydra/MainActivity.kt app/src/main/java/app/hydra/Prefs.kt app/src/main/java/app/hydra/ServiceProber.kt app/src/main/java/app/hydra/SystemInfo.kt app/src/main/java/app/hydra/Theme.kt app/src/main/java/app/hydra/Ui.kt app/src/main/java/app/hydra/VpnController.kt "
+  KEEP_KT=" app/src/main/java/app/hydra/AccountController.kt app/src/main/java/app/hydra/AdvancedScreens.kt app/src/main/java/app/hydra/AppsScreen.kt app/src/main/java/app/hydra/BootReceiver.kt app/src/main/java/app/hydra/DiagScreen.kt app/src/main/java/app/hydra/Diagnostics.kt app/src/main/java/app/hydra/DiagnosticsScreen.kt app/src/main/java/app/hydra/Doctor.kt app/src/main/java/app/hydra/HomeScreen.kt app/src/main/java/app/hydra/HydraHero.kt app/src/main/java/app/hydra/HydraVpnService.kt app/src/main/java/app/hydra/MainActivity.kt app/src/main/java/app/hydra/Prefs.kt app/src/main/java/app/hydra/SystemInfo.kt app/src/main/java/app/hydra/Theme.kt app/src/main/java/app/hydra/Ui.kt app/src/main/java/app/hydra/VpnController.kt "
   for f in "$GODIR"/*.go "$GODIR"/mobile/*.go; do
     [ -e "$f" ] || continue
     rel="${f#"$GODIR"/}"
