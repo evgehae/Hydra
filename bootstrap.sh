@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 17 (v22.3).
+# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 18 (v22.3).
 # Кладёт ВСЕ файлы проекта (Go-ядро, Android, ресурсы) и убирает лишние .go/.kt, которых нет в наборе.
 # Внутри: «мозг» (память сервисов по сетям, живая проверка YouTube/WhatsApp через туннель, замер скорости,
 # мгновенная смена пути при мёртвом сервисе, придумывание вариантов) и «Доктор» с профилем сети в отчёте.
@@ -8,7 +8,7 @@ set -e
 
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=17
+NEW=18
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -3365,7 +3365,7 @@ class Prefs(ctx: Context) {
     fun migrate() {
         if (sp.getInt("defaults_ver", 0) < 2) {
             val cur = sp.getString("colo_block", null)
-            if (cur != null && cur.startsWith("DME,LED")) sp.edit().remove("colo_block").apply()
+            if (cur != null && cur.replace(" ", "").startsWith("DME,LED")) sp.edit().remove("colo_block").apply()
             sp.edit().putInt("defaults_ver", 2).apply()
         }
     }
@@ -3376,17 +3376,6 @@ class Prefs(ctx: Context) {
         const val DEFAULT_ROUTES =
             "10.0.0.0/8,100.64.0.0/10,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.168.0.0/16," +
             "224.0.0.0/24,240.0.0.0/4,239.255.255.250/32,255.255.255.255/32,17.249.0.0/16"
-    }
-
-    /** Однократная миграция настроек: прежнее умолчание (DME, LED, SVX…) заменяется новым — только DME. */
-    fun migrate() {
-        if (sp.getInt("defaults_ver", 0) < 2) {
-            val cur = sp.getString("colo_block", null)?.replace(" ", "")
-            if (cur == "DME,LED,SVX,KJA,OVB,KHV,VVO,KZN" || cur == "DME,LED,SVX,KJA,OVB,KHV,VVO") {
-                sp.edit().remove("colo_block").apply()
-            }
-            sp.edit().putInt("defaults_ver", 2).apply()
-        }
     }
 
     fun defaultBlockedColos(): String =
