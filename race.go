@@ -124,8 +124,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 		return false, e.fail(nk, s, msg)
 	}
 	Logf("   %s: туннель ответил за %d мс, дата-центр Cloudflare: %s", s.ID, rtt.Milliseconds(), colo)
-	if !e.policy().Allows(colo) {
-		Logf("   ✘ %s: дата-центр %s запрещён настройками", s.ID, colo)
+	e.cfg.Mem.NoteColo(nk, s.Params["endpoint"], colo)
+	if !e.coloAllowed(nk, colo) {
+		Logf("   ✘ %s: дата-центр %s запрещён (настройками или потому, что через него не доходит Telegram)", s.ID, colo)
 		e.cfg.Mem.Record(nk, s.ID, false, 0)
 		e.emit("colo_blocked", s.ID, colo)
 		return false, outcome{coloBlocked: colo, reason: "дата-центр " + colo + " запрещён"}
@@ -147,6 +148,7 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 		}
 	}
 	e.cfg.Mem.Record(nk, s.ID, true, time.Since(a.start))
+	e.cfg.Mem.RecordGenes(nk, s, true)
 	a.colo, a.rtt = colo, rtt
 	return true, outcome{}
 }
@@ -188,7 +190,7 @@ func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]tim
 			if t, ok := tried[s.ID]; ok && time.Since(t) < standbyRetry {
 				continue
 			}
-			if e.recentlyTried(s.ID, standbyRetry) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+			if e.recentlyTried(s.ID, standbyRetry) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) || e.knownBlocked(nk, s) {
 				continue
 			}
 			ep := s.Params["endpoint"]
@@ -253,6 +255,12 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
 				taken[i] = true
 				skipped++
+				continue
+			}
+			if e.knownBlocked(nk, s) {
+				taken[i] = true // этот адрес в этой сети попадает в запрещённый дата-центр: не тратим время
+				skipped++
+				sawBlocked = true
 				continue
 			}
 			if e.cfg.CanRun != nil && !e.cfg.CanRun(s) {
@@ -340,6 +348,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 
 	// ---- победитель ----
 	p.dev.promote()
+	e.active.Store(p.dev)
 	msg := ""
 	if e.soft {
 		msg = "режим «всё равно»: другого дата-центра нет"
@@ -353,10 +362,14 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 
 	var sb *attempt
 	tried := map[string]time.Time{}
-	bad, sbBad, ticks := 0, 0, 0
+	bad, sbBad, ticks, tcpBad := 0, 0, 0, 0
 	nextSb := time.Now().Add(3 * time.Second)
 	lastLearn := time.Time{}
 	lastBeat := time.Now()
+	gateCh := make(chan string, 1)
+	if e.cfg.ServiceGate {
+		go e.serviceGate(ctx, nk, p, gateCh)
+	}
 	testing := 0
 	testedAt := map[string]time.Time{}
 	lastTest := time.Now().Add(-time.Hour)
@@ -385,9 +398,13 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		sb = nil
 		sbBad, bad = 0, 0
 		p.dev.promote()
+		e.active.Store(p.dev)
 		colo = p.colo
 		e.setStatus(Status{State: "up", Strategy: p.s.ID, Colo: colo, RTT: p.rtt, Message: msg})
 		e.emit("connected", p.s.ID, colo)
+		if e.cfg.ServiceGate {
+			go e.serviceGate(ctx, nk, p, gateCh)
+		}
 		Logf("⚡ резерв принял нагрузку без разрыва: %s → %s (%s)", old.s.ID, p.s.ID, reason)
 		e.noteLoss(reason, true)
 		nextSb = time.Now().Add(5 * time.Second)
@@ -411,6 +428,22 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			Logf("↻ сеть сменилась — переподключаюсь")
 			newSkip = ""
 			restart = true
+			return
+		case why := <-gateCh:
+			Logf("🚫 %s", why)
+			e.noteBadColo(nk, p.colo)
+			if sb != nil && sb.colo != p.colo && failover(why) {
+				continue
+			}
+			lose(why)
+			return
+		case why := <-e.svcBad:
+			Logf("🚫 %s", why)
+			e.noteBadColo(nk, p.colo)
+			if sb != nil && sb.colo != p.colo && failover(why) {
+				continue
+			}
+			lose(why)
 			return
 		case <-e.testFail:
 			Logf("🧪 тест: имитирую отказ основного туннеля %s", p.s.ID)
@@ -477,7 +510,15 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				e.noteProbe(err == nil)
 			}
 			if err == nil && e.cfg.TCPCheck && ticks%5 == 0 {
-				_, err = p.dev.tcpProbe(p.ctx, e.cfg.TCPTimeout)
+				// одна неудачная TCP-проба при живой UDP-пробе — не отказ; считаем только две подряд
+				if _, terr := p.dev.tcpProbe(p.ctx, e.cfg.TCPTimeout); terr != nil {
+					tcpBad++
+					if tcpBad >= 2 {
+						err = terr
+					}
+				} else {
+					tcpBad = 0
+				}
 			}
 			limit := e.cfg.BadProbes
 			if sb != nil && limit > 2 {
@@ -502,7 +543,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				if c != colo {
 					Logf("   дата-центр сменился: %s → %s", colo, c)
 					colo = c
-					if !e.policy().Allows(c) {
+					if !e.coloAllowed(nk, c) {
 						e.cfg.Mem.Record(nk, p.s.ID, false, 0)
 						e.emit("colo_blocked", p.s.ID, c)
 						Logf("✘ дата-центр %s запрещён", c)
@@ -531,7 +572,11 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				}
 			}
 			if sb != nil {
-				if _, _, perr := sb.dev.probe(sb.ctx, 1500*time.Millisecond); perr != nil {
+				_, _, perr := sb.dev.probe(sb.ctx, 3*time.Second)
+				if perr != nil && sb.ctx.Err() == nil {
+					_, _, perr = sb.dev.probe(sb.ctx, 3*time.Second) // на мобильной сети пробы к резерву бывают медленными
+				}
+				if perr != nil {
 					sbBad++
 					Logf("   резерв %s не ответил на пробу (%d из %d)", sb.s.ID, sbBad, e.cfg.BadProbes)
 					if sbBad >= e.cfg.BadProbes {

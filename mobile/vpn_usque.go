@@ -19,6 +19,7 @@ var (
 	vpnEngine *hydra.Engine
 	vpnMem    *hydra.Memory
 	vpnWG     *hydra.WGPool
+	journalOnce sync.Once
 	vpnCancel context.CancelFunc
 )
 
@@ -27,6 +28,7 @@ var (
 func StartTunnel(dir string, tunFd int) string {
 	vpnMu.Lock()
 	defer vpnMu.Unlock()
+	journalOnce.Do(func() { hydra.SetJournalFile(filepath.Join(dir, "journal.log")) })
 	if vpnEngine != nil {
 		return "уже запущено"
 	}
@@ -67,13 +69,31 @@ func StartTunnel(dir string, tunFd int) string {
 			mS = append(hydra.CustomEndpointStrategies(cep), mS...) // свой адрес — первым
 		}
 		if sni != "" {
-			for i := range mS {
-				mS[i].Params["sni"] = sni
+			// свой SNI добавляется как дополнительные стратегии (первыми), а не подменяет все: так
+			// остальное многообразие параметров, которым Гидра учится, не пропадает
+			n := 8
+			if n > len(mS) {
+				n = len(mS)
 			}
+			var extra []hydra.Strategy
+			for _, s0 := range mS[:n] {
+				q := map[string]string{}
+				for k, v := range s0.Params {
+					q[k] = v
+				}
+				q["sni"] = sni
+				extra = append(extra, hydra.Strategy{ID: s0.ID + "@" + sni, Transport: s0.Transport, Params: q})
+			}
+			mS = append(extra, mS...)
 		}
 	}
 	if wacc != nil {
 		wS = hydra.WGStrategies(wacc)
+	}
+	onlyMasque := currentProtocol() == "masque" && len(mS) > 0
+	onlyWG := currentProtocol() == "wg" && len(wS) > 0
+	allow := func(s hydra.Strategy) bool {
+		return !(onlyMasque && s.Transport != "masque") && !(onlyWG && s.Transport != "wg")
 	}
 	switch currentProtocol() {
 	case "masque":
@@ -110,8 +130,10 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.NetKey = currentNetKey
 	cfg.NetChanged = netEvents
 	cfg.SoftFallback = currentFallback()
-	cfg.DropV6 = stripMask(acc.AddrV6) == ""
+	cfg.DropV6 = stripMask(acc.AddrV6) == "" || !currentIPv6()
+	cfg.ServiceGate = currentGate()
 	cfg.NetAlive = realNetAlive
+	cfg.Allow = allow
 	cfg.NetState = realNetState
 	cfg.WLScan = realWLScan
 	cfg.CanRun = func(s hydra.Strategy) bool { return wgp.CanRun(s) } // wgp может быть nil: метод это учитывает
@@ -175,12 +197,19 @@ func Diagnostics() string {
 		out += e.Stats()
 		out += e.PoolSummary(nk)
 		out += vpnWG.Info()
+		out += vpnMem.Reasons(nk)
 	} else {
 		out += "движок не запущен\n"
 	}
 	out += netStateInfo()
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
+		out += "🧠 что Гидра знает об этой сети (" + nk + "): какие сервисы доходят через какие стратегии\n" + m.ServiceMatrix(nk)
+		if e := vpnEngine; e != nil {
+			if bl := e.BadColoList(nk); len(bl) > 0 {
+				out += "  плохие дата-центры (Telegram не доходит): " + strings.Join(bl, ", ") + "\n"
+			}
+		}
 	}
 	return out
 }
@@ -192,5 +221,46 @@ func TestFailover() {
 	vpnMu.Unlock()
 	if e != nil {
 		e.TestFailover()
+	}
+}
+
+// ServiceCheck проверяет через действующий туннель доступность Telegram и других сервисов.
+func ServiceCheck() string {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e == nil {
+		return "Гидра не запущена\n"
+	}
+	res := e.ServiceCheck(context.Background())
+	hydra.Logf("🔎 проверка сервисов через туннель:\n%s", res)
+	return res
+}
+
+// GetJournalFull возвращает журнал из файла (с прошлыми запусками); если файла нет — из памяти.
+func GetJournalFull(n int) string {
+	if s := hydra.JournalFileTail(n); s != "" {
+		return s
+	}
+	return hydra.JournalText(n)
+}
+
+// ReportService: приложение сообщает итог «живой» проверки сервиса через туннель (state: "ok" или "dead").
+func ReportService(name, state, detail string) {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e != nil {
+		e.ReportService(name, state == "ok", detail)
+	}
+}
+
+// ReportSpeed: приложение сообщает измеренную через туннель скорость, кбит/с.
+func ReportSpeed(kbps int64) {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e != nil {
+		e.ReportSpeed(kbps)
 	}
 }

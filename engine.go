@@ -51,6 +51,8 @@ type EngineConfig struct {
 	NetState     func() string // "ok" | "whitelist" | "dead": доступен ли зарубежный интернет (nil — не проверять)
 	WLScan       func(ctx context.Context) []string // какие SNI проходят к Cloudflare в режиме белых списков
 	CanRun       func(Strategy) bool                // можно ли сейчас запускать стратегию (например, свободен ли аккаунт WG)
+	Allow        func(Strategy) bool                // разрешена ли стратегия выбранным протоколом (nil — все)
+	ServiceGate  bool                               // после подключения проверять Telegram и обходить дата-центры, где он недоступен
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -87,10 +89,13 @@ type Engine struct {
 	lastFail                   string
 	lastFailAt                 time.Time
 	probesTotal, probesLost    int
+	active                     atomic.Value // *attemptDev: карта, через которую сейчас идёт трафик
 	testFail                   chan struct{}
+	svcBad chan string // «живая» проверка сервиса не прошла: сменить путь
 	tried                      map[string]time.Time // когда стратегию последний раз пробовали
 	inOutage, outageLogged     bool
 	wlLast                     time.Time
+	badColo                    map[string]time.Time // дата-центры, через которые не доходит Telegram
 
 	mu      sync.Mutex
 	status  Status
@@ -130,6 +135,7 @@ func NewEngine(tun io.ReadWriteCloser, cfg EngineConfig) *Engine {
 		waiters: map[uint16]chan string{},
 		status:  Status{State: "connecting"},
 		testFail: make(chan struct{}, 1),
+		svcBad:   make(chan string, 1),
 		tried:    map[string]time.Time{},
 	}
 }
@@ -174,6 +180,9 @@ func (e *Engine) readTun() {
 			return
 		}
 		if e.cfg.DropV6 && n > 0 && buf[0]>>4 == 6 {
+			if r := buildICMPv6Unreach(buf[:n]); r != nil {
+				e.tun.Write(r) // приложение сразу получит отказ и перейдёт на IPv4
+			}
 			continue
 		}
 		atomic.AddUint64(&e.tx, uint64(n))
@@ -200,6 +209,14 @@ type attemptDev struct {
 	recv    int32         // сколько пакетов клиент туннеля отдал нам
 	wake    chan struct{} // будит ReadPacket, когда карта становится активной
 	stats   atomic.Value  // func() string: дополнительные счётчики клиента туннеля (например WireGuard)
+	tcpMu   sync.Mutex    // одновременно идёт одна TCP-проба
+	tcpSt   atomic.Value  // tcpProbeState
+}
+
+type tcpProbeState struct {
+	dst          net.IP
+	dport, sport uint16
+	seq          uint32
 }
 
 // SetStats принимает от клиента туннеля функцию с его счётчиками для диагностики.
@@ -273,7 +290,7 @@ func (d *attemptDev) WritePacket(pkt []byte) error {
 		d.e.deliver(id, colo)
 		return nil
 	}
-	if ParseTCPSynAck(pkt, d.tcpPort, atomic.LoadUint32(&d.tcpSeq)+1) {
+	if st, _ := d.tcpSt.Load().(tcpProbeState); st.dst != nil && ParseTCPSynAckFrom(pkt, st.dst, st.dport, st.sport, st.seq+1) {
 		select {
 		case d.tcpAck <- struct{}{}:
 		default:
@@ -340,38 +357,60 @@ func (d *attemptDev) probe(ctx context.Context, timeout time.Duration) (time.Dur
 
 // tcpProbe: SYN на 1.1.1.1:443 через эту карту, ждём SYN-ACK.
 func (d *attemptDev) tcpProbe(ctx context.Context, timeout time.Duration) (time.Duration, error) {
+	return d.tcpProbeTo(ctx, probeDst, 443, timeout)
+}
+
+// tcpProbeTo: SYN на любой адрес и порт через эту карту. Каждая проба берёт новый порт, а SYN
+// повторяется один раз на полпути: единичная потеря пакета не должна считаться отказом.
+func (d *attemptDev) tcpProbeTo(ctx context.Context, dst net.IP, dport uint16, timeout time.Duration) (time.Duration, error) {
+	d.tcpMu.Lock()
+	defer d.tcpMu.Unlock()
 	e := d.e
+	sport := uint16(41000 + rand.Intn(20000))
 	seq := rand.Uint32()
-	atomic.StoreUint32(&d.tcpSeq, seq)
+	d.tcpSt.Store(tcpProbeState{dst: dst, dport: dport, sport: sport, seq: seq})
 	select {
 	case <-d.tcpAck:
 	default:
 	}
-	id := uint16(atomic.AddUint32(&e.nextID, 1))
-	syn := BuildTCPSyn(e.cfg.LocalIP, d.tcpPort, seq, id)
-	if syn == nil {
-		return 0, errors.New("нет IPv4-адреса туннеля")
+	send := func() error {
+		id := uint16(atomic.AddUint32(&e.nextID, 1))
+		syn := BuildTCPSynTo(e.cfg.LocalIP, dst, sport, dport, seq, id)
+		if syn == nil {
+			return errors.New("нет IPv4-адреса туннеля")
+		}
+		select {
+		case d.probeQ <- syn:
+			return nil
+		default:
+			return errors.New("очередь проб переполнена")
+		}
 	}
 	t0 := time.Now()
-	select {
-	case d.probeQ <- syn:
-	default:
-		return 0, errors.New("очередь проб переполнена")
+	if err := send(); err != nil {
+		return 0, err
 	}
-	select {
-	case <-d.tcpAck:
-		rtt := time.Since(t0)
-		if rst := BuildTCPRst(e.cfg.LocalIP, d.tcpPort, seq+1, id+1); rst != nil {
-			select {
-			case d.probeQ <- rst:
-			default:
+	retry := time.After(timeout / 2)
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-d.tcpAck:
+			rtt := time.Since(t0)
+			if rst := BuildTCPRstTo(e.cfg.LocalIP, dst, sport, dport, seq+1, uint16(atomic.AddUint32(&e.nextID, 1))); rst != nil {
+				select {
+				case d.probeQ <- rst:
+				default:
+				}
 			}
+			return rtt, nil
+		case <-retry:
+			retry = nil
+			_ = send()
+		case <-deadline:
+			return 0, errors.New("нет SYN-ACK")
+		case <-ctx.Done():
+			return 0, ctx.Err()
 		}
-		return rtt, nil
-	case <-time.After(timeout):
-		return 0, errors.New("нет SYN-ACK")
-	case <-ctx.Done():
-		return 0, ctx.Err()
 	}
 }
 
@@ -398,6 +437,8 @@ func (e *Engine) fail(nk string, s Strategy, msg string) outcome {
 	if !e.blame(nk, s.ID) {
 		return outcome{reason: "нет интернета", offline: true}
 	}
+	e.cfg.Mem.RecordGenes(nk, s, false)
+	e.cfg.Mem.NoteReason(nk, poolFamily(s), classifyFail(msg))
 	e.emit("failed", s.ID, msg)
 	return outcome{reason: msg}
 }
@@ -423,6 +464,7 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	actx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	dev := newAttemptDev(e, actx.Done(), true)
+	e.active.Store(dev)
 	errc := make(chan error, 1)
 	go func() { errc <- e.cfg.Runner(actx, dev, s) }()
 

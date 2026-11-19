@@ -139,6 +139,7 @@ func (e *Engine) BadColoList(nk string) []string {
 var (
 	svcGrowMu sync.Mutex
 	svcGrowAt = map[string]time.Time{}
+	svcHardAt = map[string]time.Time{}
 )
 
 // svcGrow: сервис не дошёл — придумываем новые варианты под эту сеть (не чаще раза в 10 минут).
@@ -152,4 +153,51 @@ func (e *Engine) svcGrow(nk string) {
 	svcGrowMu.Unlock()
 	Logf("🧠 часть сервисов не дошла — придумываю новые варианты под сеть %s", nk)
 	e.grow(nk)
+}
+
+// ReportService принимает результат «живой» проверки из приложения: настоящий HTTPS-запрос к сервису
+// через туннель (с DNS внутри туннеля, поэтому подмена DNS провайдером не мешает). ok=false означает, что
+// запрос не прошёл дважды подряд. Это самый надёжный сигнал: он запоминается и, если сервис мёртв,
+// заставляет сразу уйти на другой дата-центр. Не чаще раза в 5 минут на сервис и не более трёх плохих
+// дата-центров на сеть (если режут везде, значит, дело не в маршруте).
+func (e *Engine) ReportService(name string, ok bool, detail string) {
+	st := e.Status()
+	if st.State != "up" || st.Strategy == "" {
+		return
+	}
+	nk := e.cfg.NetKey()
+	e.cfg.Mem.RecordService(nk, st.Strategy, name+"/live", ok)
+	if ok {
+		Logf("🌐 %s через %s: живая проверка прошла (%s)", name, st.Strategy, detail)
+		return
+	}
+	Logf("🌐 ✘ %s через %s (дата-центр %s): %s", name, st.Strategy, st.Colo, detail)
+	e.svcGrow(nk)
+	if e.badColoCount(nk) >= 3 {
+		return
+	}
+	svcGrowMu.Lock()
+	t, seen := svcHardAt[nk+"|"+name]
+	if seen && time.Since(t) < 5*time.Minute {
+		svcGrowMu.Unlock()
+		return
+	}
+	svcHardAt[nk+"|"+name] = time.Now()
+	svcGrowMu.Unlock()
+	select {
+	case e.svcBad <- name + " не доходит через дата-центр " + st.Colo + " (проверено вживую, остальное работает) — ищу другой путь":
+	default:
+	}
+}
+
+// ReportSpeed запоминает скорость туннеля (кбит/с): быстрые стратегии получают приоритет, медленные
+// опускаются. Порог 1500 кбит/с — ниже этого видео и мессенджеры уже мучаются.
+func (e *Engine) ReportSpeed(kbps int64) {
+	st := e.Status()
+	if st.State != "up" || st.Strategy == "" {
+		return
+	}
+	nk := e.cfg.NetKey()
+	e.cfg.Mem.RecordService(nk, st.Strategy, "Скорость", kbps >= 1500)
+	Logf("🌐 скорость через %s (дата-центр %s): ~%d кбит/с", st.Strategy, st.Colo, kbps)
 }

@@ -28,6 +28,10 @@ type Memory struct {
 	Nets map[string]map[string]*stat `json:"nets"`
 	// Gen — стратегии, которые Гидра придумала сама, по сетям.
 	Gen map[string][]Strategy `json:"gen"`
+	EPColo map[string]coloRec `json:"epcolo"` // в какой дата-центр попадает адрес в этой сети
+	Genes map[string]*stat `json:"genes"` // как срабатывали значения параметров стратегий по сетям
+	Why   map[string]int   `json:"why"`   // причины сбоев по сетям и семействам
+	Svc map[string]*stat `json:"svc"` // дошли ли сервисы (Telegram, YouTube, WhatsApp) через стратегию: сеть|стратегия|сервис
 	Ver int                   `json:"ver"` // версия формата: <2 — в памяти могли быть сбои из-за белых списков
 }
 
@@ -299,7 +303,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
 		if st == nil {
-			return m.priorLocked(net, s.ID)
+			return m.priorLocked(net, s.ID) + m.svcBonusLocked(net, s.ID)
 		}
 		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
 		pen := math.Min(st.EWMAms/5000, 0.3)
@@ -307,7 +311,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 		if time.Since(st.LastOK) < 24*time.Hour {
 			bonus = 0.1
 		}
-		return rate - pen + bonus
+		return rate - pen + bonus + m.svcBonusLocked(net, s.ID)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
 	return out
@@ -344,4 +348,34 @@ func (m *Memory) Summary(net string, n int) string {
 		out += fmt.Sprintf("  %s: успехов %d, сбоев %d, ~%.0f мс, последний успех %s\n", r.id, r.st.OK, r.st.Fail, r.st.EWMAms, last)
 	}
 	return out
+}
+
+type coloRec struct {
+	Colo string    `json:"c"`
+	At   time.Time `json:"t"`
+}
+
+// NoteColo запоминает, в какой дата-центр попал адрес.
+func (m *Memory) NoteColo(nk, ep, colo string) {
+	if ep == "" || colo == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.EPColo == nil {
+		m.EPColo = map[string]coloRec{}
+	}
+	m.EPColo[nk+"|"+ep] = coloRec{colo, time.Now()}
+	m.saveSoonLocked()
+}
+
+// KnownColo — дата-центр, в который адрес попадал в этой сети в последние 6 часов ("" — неизвестно).
+func (m *Memory) KnownColo(nk, ep string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.EPColo[nk+"|"+ep]
+	if !ok || time.Since(r.At) > 6*time.Hour {
+		return ""
+	}
+	return r.Colo
 }

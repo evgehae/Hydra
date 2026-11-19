@@ -81,6 +81,17 @@ suspend fun runFullDiagnostics(ctx: android.content.Context): List<DiagCheck> = 
     out += DiagCheck(ctx.getString(R.string.chk_v6), v6.first, v6.second)
     val web = tcpCheck("www.google.com", 443)
     out += DiagCheck(ctx.getString(R.string.chk_web), web.first, web.second)
+    // кто провайдер этой сети: имя узла публичного IP (справочная строка, всегда «ОК»)
+    out += try {
+        if (base.ip.isNotEmpty()) {
+            val host = InetAddress.getByName(base.ip).canonicalHostName
+            DiagCheck("Провайдер сети (имя узла публичного IP)", true, base.ip + " → " + host)
+        } else {
+            DiagCheck("Провайдер сети (имя узла публичного IP)", true, "публичный IP не получен")
+        }
+    } catch (e: Exception) {
+        DiagCheck("Провайдер сети (имя узла публичного IP)", true, "не определён: " + (e.message ?: e.javaClass.simpleName))
+    }
     // результаты попадают и в журнал, чтобы они были в отчёте
     try {
         mobile.Mobile.logLine("🔎 полная диагностика (мимо VPN):")
@@ -129,6 +140,7 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
     val sb = StringBuilder()
     sb.append("Hydra report ").append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())).append('\n')
     sb.append("core: ").append(try { mobile.Mobile.version() } catch (t: Throwable) { "n/a" }).append('\n')
+    sb.append(try { buildDoctor(ctx, prefs, vpn, checks) } catch (t: Throwable) { "\n=== ДИАГНОЗ: сбой разбора (" + t + ") ===\n" })
     sb.append("\n--- состояние ---\n")
     sb.append("state: ").append(vpn.state).append(", strategy: ").append(vpn.strategy).append(", colo: ").append(vpn.colo)
         .append(", rtt: ").append(vpn.rttMs).append(" ms, rx/tx: ").append(fmtBytes(vpn.rxBytes)).append(" / ").append(fmtBytes(vpn.txBytes)).append('\n')
@@ -142,6 +154,8 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
         .append(", customDns=").append(if (prefs.customDnsOn) prefs.customDns else "off")
         .append(", excludedRoutes=").append(prefs.excludedRoutes.split(',').size)
         .append(", splitOnlySelected=").append(prefs.splitOnlySelected).append(", splitApps=").append(prefs.splitApps.size).append('\n')
+    sb.append("selected apps: ").append(prefs.splitApps.sorted().joinToString(", ").ifEmpty { "—" }).append('\n')
+    sb.append("telegram selected: ").append(prefs.splitApps.any { it.contains("telegram", true) }).append('\n')
     sb.append("\n--- движок и память ---\n")
     sb.append(try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "н/д\n" })
     sb.append("\n--- система ---\n")
@@ -151,7 +165,7 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
         checks.forEach { sb.append(if (it.ok) "OK   " else "FAIL ").append(it.name).append(": ").append(it.detail).append('\n') }
     }
     sb.append("\n--- журнал ---\n")
-    sb.append(try { mobile.Mobile.getJournal(1500) } catch (t: Throwable) { "" })
+    sb.append(try { mobile.Mobile.getJournalFull(4000) } catch (t: Throwable) { try { mobile.Mobile.getJournal(1500) } catch (t2: Throwable) { "" } })
     return sb.toString()
 }
 

@@ -128,6 +128,20 @@ class HydraVpnService : VpnService() {
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
                 if (raw.startsWith("up")) restartFails = 0
+                if (raw.startsWith("up")) {
+                    ServiceProber.tick(this@HydraVpnService, p.getOrElse(1) { "" } + "@" + p.getOrElse(2) { "" })
+                } else {
+                    ServiceProber.reset()
+                }
+                // Wi-Fi ведёт в запрещённый дата-центр: туннель автоматически идёт через мобильную сеть
+                val prefsNow = Prefs(this@HydraVpnService)
+                if (p.getOrElse(4) { "" }.startsWith("⛔") && prefsNow.channel == "auto" && !forceCell) {
+                    val wp = curWifiPrint()
+                    if (wp.isNotEmpty() && hasCellNet()) {
+                        enableAutoCell(wp)
+                        return
+                    }
+                }
                 val now = System.currentTimeMillis()
                 if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt) {
                     restartFails++
@@ -143,6 +157,33 @@ class HydraVpnService : VpnService() {
 
     private fun cm() = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
 
+    /** Отпечаток текущего Wi-Fi или "" (если Wi-Fi нет). */
+    private fun curWifiPrint(): String = try {
+        var r = ""
+        for (n in cm().allNetworks) {
+            val c = cm().getNetworkCapabilities(n) ?: continue
+            if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+            if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) r = wifiPrint(n)
+        }
+        r
+    } catch (t: Throwable) { "" }
+
+    private fun hasCellNet(): Boolean = try {
+        cm().allNetworks.any {
+            val c = cm().getNetworkCapabilities(it)
+            c != null && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) && c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        }
+    } catch (t: Throwable) { false }
+
+    private fun enableAutoCell(wp: String) {
+        Prefs(this).addCellWifi(wp)
+        jlog("📡 Этот Wi-Fi ведёт в запрещённый дата-центр: туннель переключается на мобильную сеть (на 12 часов для этого Wi-Fi)")
+        handler.removeCallbacks(statusUpdater)
+        try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        closeTun()
+        handler.postDelayed({ startVpn() }, 1200)
+    }
+
     private fun startVpn() {
         val running = try { !mobile.Mobile.engineStatus().startsWith("off") } catch (t: Throwable) { false }
         if (running) return
@@ -150,13 +191,16 @@ class HydraVpnService : VpnService() {
         handler.removeCallbacks(statusUpdater)
         handler.postDelayed(statusUpdater, 3000)
         val prefs = Prefs(this)
-        forceCell = prefs.channel == "cell"
+        prefs.migrate()
+        forceCell = prefs.channel == "cell" || (prefs.channel == "auto" && prefs.cellWifiActive(curWifiPrint()))
         try {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
             mobile.Mobile.setParallel(if (prefs.parallel) 3L else 1L)
+            mobile.Mobile.setIPv6(prefs.ipv6)
+            mobile.Mobile.setServiceGate(prefs.tgGate)
             jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=${prefs.parallel}, свой DNS=${if (prefs.customDnsOn) prefs.customDns else "нет"}")
             mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
@@ -249,7 +293,7 @@ class HydraVpnService : VpnService() {
                 } catch (e: Exception) { }
             }
         }
-        if (v6.isNotEmpty()) {
+        if (v6.isNotEmpty() && prefs.ipv6) {
             b.addAddress(v6, 128)
             b.addRoute("::", 0)
             b.addDnsServer("2606:4700:4700::1111")
