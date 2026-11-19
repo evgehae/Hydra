@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 16 (v22.3).
+# WARP CLAUDE (Гидра) — полная синхронизация проекта, набор 17 (v22.3).
 # Кладёт ВСЕ файлы проекта (Go-ядро, Android, ресурсы) и убирает лишние .go/.kt, которых нет в наборе.
 # Внутри: «мозг» (память сервисов по сетям, живая проверка YouTube/WhatsApp через туннель, замер скорости,
 # мгновенная смена пути при мёртвом сервисе, придумывание вариантов) и «Доктор» с профилем сети в отчёте.
@@ -8,7 +8,7 @@ set -e
 
 STAMP=.hydra_bootstrap
 OLD="$(cat "$STAMP" 2>/dev/null || echo 0)"
-NEW=16
+NEW=17
 putv() {
   f="$1"
   mkdir -p "$(dirname "$f")"
@@ -6981,7 +6981,10 @@ func TestRaceSkipsBlockedColo(t *testing.T) {
 func TestRaceAllBlocked(t *testing.T) {
 	ft := coloTransport(map[string]string{"a": "DME", "b": "LED"}, "a", "b")
 	mem, _ := LoadMemory("")
-	o := New(fastCfg(), mem, []Transport{ft}, nil)
+	cfg := fastCfg()
+	// по умолчанию запрещена только Москва (DME), поэтому здесь явно запрещаем оба дата-центра теста
+	cfg.Colo = &ColoPolicy{Block: []string{"DME", "LED"}}
+	o := New(cfg, mem, []Transport{ft}, nil)
 	_, _, err := o.race(context.Background(), "wifi:home", "")
 	if err == nil || !strings.Contains(err.Error(), "DME") {
 		t.Fatalf("ждали ошибку про запрещённые дата-центры, получили %v", err)
