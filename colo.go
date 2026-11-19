@@ -18,9 +18,9 @@ type ColoPolicy struct {
 	Allow []string
 }
 
-// DefaultColoPolicy: никакой Москвы (DME) и остальных российских точек Cloudflare.
+// DefaultColoPolicy: по умолчанию запрещена только Москва (DME); остальные точки можно добавить в настройках.
 func DefaultColoPolicy() *ColoPolicy {
-	return &ColoPolicy{Block: []string{"DME", "LED", "SVX", "KJA", "OVB", "KHV", "VVO", "KZN"}}
+	return &ColoPolicy{Block: []string{"DME"}}
 }
 
 func normColo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }

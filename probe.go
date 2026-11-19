@@ -225,3 +225,66 @@ func ParseTCPSynAck(pkt []byte, dport uint16, wantAck uint32) bool {
 	}
 	return binary.BigEndian.Uint32(t[8:]) == wantAck
 }
+
+// buildTCPTo строит TCP-пакет к произвольному адресу и порту (проверка доступности сервисов через туннель).
+func buildTCPTo(src, dst net.IP, sport, dport uint16, seq, ack uint32, flags byte, id uint16, withMSS bool) []byte {
+	s4, d4 := src.To4(), dst.To4()
+	if s4 == nil || d4 == nil {
+		return nil
+	}
+	tcpLen := 20
+	if withMSS {
+		tcpLen = 24
+	}
+	total := 20 + tcpLen
+	p := make([]byte, total)
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(total))
+	binary.BigEndian.PutUint16(p[4:], id)
+	binary.BigEndian.PutUint16(p[6:], 0x4000)
+	p[8] = 64
+	p[9] = 6
+	copy(p[12:16], s4)
+	copy(p[16:20], d4)
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	t := p[20:]
+	binary.BigEndian.PutUint16(t[0:], sport)
+	binary.BigEndian.PutUint16(t[2:], dport)
+	binary.BigEndian.PutUint32(t[4:], seq)
+	binary.BigEndian.PutUint32(t[8:], ack)
+	t[12] = byte(tcpLen/4) << 4
+	t[13] = flags
+	binary.BigEndian.PutUint16(t[14:], 65535)
+	if withMSS {
+		t[20], t[21], t[22], t[23] = 2, 4, 0x04, 0xD8 // MSS 1240
+	}
+	binary.BigEndian.PutUint16(t[16:], tcpChecksum(s4, d4, t))
+	return p
+}
+
+func BuildTCPSynTo(src, dst net.IP, sport, dport uint16, seq uint32, id uint16) []byte {
+	return buildTCPTo(src, dst, sport, dport, seq, 0, 0x02, id, true)
+}
+
+func BuildTCPRstTo(src, dst net.IP, sport, dport uint16, seq uint32, id uint16) []byte {
+	return buildTCPTo(src, dst, sport, dport, seq, 0, 0x04, id, false)
+}
+
+// ParseTCPSynAckFrom: это SYN-ACK от from:fport на наш порт dport с ожидаемым ack?
+func ParseTCPSynAckFrom(pkt []byte, from net.IP, fport, dport uint16, wantAck uint32) bool {
+	if len(pkt) < 40 || pkt[0]>>4 != 4 || pkt[9] != 6 {
+		return false
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+20 || !net.IP(pkt[12:16]).Equal(from) {
+		return false
+	}
+	t := pkt[ihl:]
+	if binary.BigEndian.Uint16(t[0:]) != fport || binary.BigEndian.Uint16(t[2:]) != dport {
+		return false
+	}
+	if t[13]&0x12 != 0x12 { // SYN+ACK
+		return false
+	}
+	return binary.BigEndian.Uint32(t[8:]) == wantAck
+}

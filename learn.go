@@ -28,7 +28,12 @@ func clampInt(v, lo, hi int) int {
 // allStrategies — встроенные стратегии плюс придуманные для этой сети.
 func (e *Engine) allStrategies(nk string) []Strategy {
 	out := append([]Strategy(nil), e.cfg.Strategies...)
-	return append(out, e.cfg.Mem.Generated(nk)...)
+	for _, s := range e.cfg.Mem.Generated(nk) {
+		if e.cfg.Allow == nil || e.cfg.Allow(s) { // придуманные стратегии чужого протокола не подмешиваем
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // sniPool — SNI, которые принимает сервер MASQUE Cloudflare (сертификат проверяется по ключу, а не по имени).
@@ -48,6 +53,8 @@ var wgPorts = []string{"2408", "500", "1701", "4500", "854", "859", "864", "878"
 	"1018", "1070", "1074", "1180", "3476", "3581", "3854", "4177", "4198", "4233", "5279", "5956", "7103",
 	"7152", "7156", "7281", "7559", "8319", "8742", "8854", "8886"}
 var keepPool = []int{5, 10, 15, 30}
+var keepPoolS = []string{"5", "10", "15", "30"}
+var noisePool = []string{"0", "5", "10", "15"}
 
 func family(s Strategy) string {
 	switch {
@@ -121,16 +128,20 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 				size = fakeSizePool[rnd.Intn(len(fakeSizePool))]
 			}
 			if rnd.Intn(10) < 3 {
-				q["fake"] = fakeSNIPool[rnd.Intn(len(fakeSNIPool))]
+				q["fake"] = mem.PickGene(nk, "h3.fake", fakeSNIPool, rnd)
 			}
 			if rnd.Intn(4) == 0 { // настоящий SNI в QUIC Initial — то, что читает DPI
-				q["sni"] = sniPool[rnd.Intn(len(sniPool))]
+				q["sni"] = mem.PickGene(nk, "h3.sni", sniPool, rnd)
 			}
 			if rnd.Intn(10) < 3 { // другой порт: операторы нередко режут именно UDP 443
-				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), masquePorts[rnd.Intn(len(masquePorts))])
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), mem.PickGene(nk, "h3.port", masquePorts, rnd))
 			}
 			if rnd.Intn(4) == 0 { // другой период keepalive: помогает против таймеров NAT оператора
-				q["keep"] = strconv.Itoa(keepPool[rnd.Intn(len(keepPool))])
+				q["keep"] = mem.PickGene(nk, "h3.keep", keepPoolS, rnd)
+			}
+			if rnd.Intn(3) == 0 { // шумовые пакеты перед рукопожатием (идея из генераторов конфигов)
+				q["noise"] = mem.PickGene(nk, "h3.noise", noisePool, rnd)
+				q["nmin"], q["nmax"] = "5", "10"
 			}
 			q["fttl"] = strconv.Itoa(ttl)
 			q["fcount"] = strconv.Itoa(cnt)
@@ -139,8 +150,11 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			if k := q["keep"]; k != "" {
 				id += "k" + k
 			}
+			if nz := q["noise"]; nz != "" && nz != "0" {
+				id += "n" + nz
+			}
 		case "h2":
-			q["sni"] = sniPool[rnd.Intn(len(sniPool))]
+			q["sni"] = mem.PickGene(nk, "h2.sni", sniPool, rnd)
 			id = fmt.Sprintf("h2/%s/g:%s", q["endpoint"], q["sni"])
 		case "wg":
 			jc := clampInt(atoiDefault(q["jc"], 4)+rnd.Intn(5)-2, 1, 16)
@@ -148,7 +162,7 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
 			if rnd.Intn(10) < 4 { // у серверов WARP десятки рабочих UDP-портов
-				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), wgPorts[rnd.Intn(len(wgPorts))])
+				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), mem.PickGene(nk, "wg.port", wgPorts, rnd))
 			}
 			sfx := ""
 			if q["rsv"] == "1" {

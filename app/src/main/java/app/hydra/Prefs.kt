@@ -79,10 +79,44 @@ class Prefs(ctx: Context) {
         get() = sp.getString("excl_routes", null) ?: DEFAULT_ROUTES
         set(v) { sp.edit().putString("excl_routes", v).apply() }
 
+    /** IPv6 через туннель (по умолчанию выключен: приложения сразу идут по IPv4). */
+    var ipv6: Boolean
+        get() = sp.getBoolean("ipv6", false)
+        set(v) { sp.edit().putBoolean("ipv6", v).apply() }
+
+    /** После подключения проверять Telegram; негодные дата-центры обходятся. */
+    var tgGate: Boolean
+        get() = sp.getBoolean("tg_gate", true)
+        set(v) { sp.edit().putBoolean("tg_gate", v).apply() }
+
+    /** Wi-Fi, который ведёт в запрещённый дата-центр: туннель идёт через мобильную сеть (12 часов). */
+    fun cellWifiActive(print: String): Boolean {
+        if (print.isEmpty()) return false
+        val now = System.currentTimeMillis()
+        return (sp.getString("cell_wifi", "") ?: "").split(";").any {
+            val p = it.split("@")
+            p.size == 2 && p[0] == print && now - (p[1].toLongOrNull() ?: 0L) < 12L * 3600_000L
+        }
+    }
+
+    fun addCellWifi(print: String) {
+        val cur = (sp.getString("cell_wifi", "") ?: "").split(";").filter { it.isNotEmpty() && !it.startsWith("$print@") }
+        sp.edit().putString("cell_wifi", (cur + "$print@${System.currentTimeMillis()}").joinToString(";")).apply()
+    }
+
     /** Параллельная гонка стратегий и горячий резерв. */
     var parallel: Boolean
         get() = sp.getBoolean("parallel", true)
         set(v) { sp.edit().putBoolean("parallel", v).apply() }
+
+    /** Однократная миграция: прежнее умолчание «DME,LED,SVX,…» заменяется на «DME». */
+    fun migrate() {
+        if (sp.getInt("defaults_ver", 0) < 2) {
+            val cur = sp.getString("colo_block", null)
+            if (cur != null && cur.startsWith("DME,LED")) sp.edit().remove("colo_block").apply()
+            sp.edit().putInt("defaults_ver", 2).apply()
+        }
+    }
 
     fun resetAll() { sp.edit().clear().apply() }
 
@@ -90,6 +124,17 @@ class Prefs(ctx: Context) {
         const val DEFAULT_ROUTES =
             "10.0.0.0/8,100.64.0.0/10,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.168.0.0/16," +
             "224.0.0.0/24,240.0.0.0/4,239.255.255.250/32,255.255.255.255/32,17.249.0.0/16"
+    }
+
+    /** Однократная миграция настроек: прежнее умолчание (DME, LED, SVX…) заменяется новым — только DME. */
+    fun migrate() {
+        if (sp.getInt("defaults_ver", 0) < 2) {
+            val cur = sp.getString("colo_block", null)?.replace(" ", "")
+            if (cur == "DME,LED,SVX,KJA,OVB,KHV,VVO,KZN" || cur == "DME,LED,SVX,KJA,OVB,KHV,VVO") {
+                sp.edit().remove("colo_block").apply()
+            }
+            sp.edit().putInt("defaults_ver", 2).apply()
+        }
     }
 
     fun defaultBlockedColos(): String =

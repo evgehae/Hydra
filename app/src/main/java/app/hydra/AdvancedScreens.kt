@@ -53,6 +53,8 @@ fun AdvancedScreen(
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var parallel by remember { mutableStateOf(prefs.parallel) }
+    var ipv6 by remember { mutableStateOf(prefs.ipv6) }
+    var tgGate by remember { mutableStateOf(prefs.tgGate) }
     var dlg by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
 
@@ -110,6 +112,16 @@ fun AdvancedScreen(
         SettingSwitchRow(stringResource(R.string.adv_parallel), stringResource(R.string.adv_parallel_sub), parallel) {
             parallel = it
             prefs.parallel = it
+            vpn.restartIfActive()
+        }
+        SettingSwitchRow(stringResource(R.string.adv_ipv6), stringResource(R.string.adv_ipv6_sub), ipv6) {
+            ipv6 = it
+            prefs.ipv6 = it
+            vpn.restartIfActive()
+        }
+        SettingSwitchRow(stringResource(R.string.adv_tg), stringResource(R.string.adv_tg_sub), tgGate) {
+            tgGate = it
+            prefs.tgGate = it
             vpn.restartIfActive()
         }
         SettingRow(stringResource(R.string.conn_proto), subtitle = stringResource(R.string.proto_hint),

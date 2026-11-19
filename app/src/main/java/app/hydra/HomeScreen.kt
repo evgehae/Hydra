@@ -1,7 +1,9 @@
 package app.hydra
 
 import android.app.Activity
+import android.content.Intent
 import android.net.VpnService
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -272,6 +274,26 @@ fun HomeScreen(
                         Text(stringResource(R.string.wl_relay))
                     }
                 }
+            }
+        }
+        // строгий частный DNS (DoT) часто не работает через VPN: из-за него не открываются сайты и Telegram
+        val pdnsHost = try {
+            if (Settings.Global.getString(ctx.contentResolver, "private_dns_mode") == "hostname")
+                Settings.Global.getString(ctx.contentResolver, "private_dns_specifier") ?: "" else ""
+        } catch (t: Throwable) { "" }
+        if (pdnsHost.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            HCard {
+                Text(stringResource(R.string.pdns_title), fontWeight = FontWeight.SemiBold, color = NeonAmber)
+                Text(
+                    stringResource(R.string.pdns_text, pdnsHost),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+                OutlinedButton(onClick = {
+                    try { ctx.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) } catch (t: Throwable) { }
+                }) { Text(stringResource(R.string.pdns_open)) }
             }
         }
         Spacer(Modifier.weight(3.2f))

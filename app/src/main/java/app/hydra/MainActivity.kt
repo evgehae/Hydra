@@ -68,6 +68,8 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightStatusBars = false
         }
         val prefs = Prefs(this)
+        prefs.migrate()
+        prefs.migrate()
         setContent {
             HydraTheme {
                 HydraBackground {

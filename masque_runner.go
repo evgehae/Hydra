@@ -114,16 +114,19 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 		var ep net.Addr = &net.UDPAddr{IP: ip, Port: port}
 		if h2 {
 			ep = &net.TCPAddr{IP: ip, Port: port}
-		} else if fsni := s.Params["fake"]; fsni != "" {
+		} else if fsni := s.Params["fake"]; fsni != "" || atoiDefault(s.Params["noise"], 0) > 0 {
 			// фейковые QUIC-пакеты с малым TTL перед рукопожатием (как у Zarp)
 			var fk FakeSpec
 			fk.TTL = atoiDefault(s.Params["fttl"], 5)
-			for i := 0; i < atoiDefault(s.Params["fcount"], 6); i++ {
+			fk.Noise = atoiDefault(s.Params["noise"], 0)
+			fk.NoiseMin = atoiDefault(s.Params["nmin"], 5)
+			fk.NoiseMax = atoiDefault(s.Params["nmax"], 10)
+			for i := 0; fsni != "" && i < atoiDefault(s.Params["fcount"], 6); i++ {
 				if p, err := BuildFakeQUICInitial(fsni, atoiDefault(s.Params["fsize"], 1357)); err == nil {
 					fk.Payloads = append(fk.Payloads, p)
 				}
 			}
-			if len(fk.Payloads) > 0 {
+			if len(fk.Payloads) > 0 || fk.Noise > 0 {
 				relay, err := StartUDPRelay(&net.UDPAddr{IP: ip, Port: port}, fk)
 				if err != nil {
 					return err

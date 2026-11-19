@@ -40,12 +40,12 @@ func (e *Engine) poolCounts(nk string) (healthy, untested, dead map[string]int) 
 		f := poolFamily(s)
 		ok, fail, _, lf, found := e.cfg.Mem.Stat(nk, s.ID)
 		switch {
-		case !found || ok+fail == 0:
-			untested[f]++
 		case healthyStat(ok, fail):
 			healthy[f]++
-		case ok == 0 && fail >= 3 && time.Since(lf) < quarantineFor:
+		case found && ok == 0 && fail >= 3 && time.Since(lf) < quarantineFor:
 			dead[f]++
+		default:
+			untested[f]++ // не проверена или «слабая» (пара сбоев без успеха): требует проверки
 		}
 	}
 	return
@@ -86,7 +86,7 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 		if t, ok := tested[s.ID]; ok && time.Since(t) < testRetry {
 			return false
 		}
-		if e.recentlyTried(s.ID, testRetry) || e.cfg.Mem.EndpointDead(nk, s.ID) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) {
+		if e.recentlyTried(s.ID, testRetry) || e.cfg.Mem.EndpointDead(nk, s.ID) || (e.cfg.CanRun != nil && !e.cfg.CanRun(s)) || e.knownBlocked(nk, s) {
 			return false
 		}
 		ep := s.Params["endpoint"]
@@ -105,8 +105,8 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 	}
 	if best != "" {
 		for _, s := range all {
-			ok, fail, _, _, found := e.cfg.Mem.Stat(nk, s.ID)
-			if poolFamily(s) == best && elig(s) && (!found || ok+fail == 0) {
+			ok, fail, _, _, _ := e.cfg.Mem.Stat(nk, s.ID)
+			if poolFamily(s) == best && elig(s) && !healthyStat(ok, fail) {
 				return s, "нехватка " + best, true
 			}
 		}

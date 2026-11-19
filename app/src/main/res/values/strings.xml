@@ -260,4 +260,13 @@
     <string name="wl_relay_text">If the operator filters by IP address, only a relay helps: a small program on a server whose address is on the whitelist (a Russian host or cloud). It just forwards UDP packets to Cloudflare.\n\nOn the server (Linux), one command:\nsocat UDP4-LISTEN:443,fork,reuseaddr UDP4:162.159.198.2:443\n\nIn the app: Advanced → Custom endpoint → server IP:443.\n\nWhether a given host works depends on the operator and region: check that its address opens in whitelist mode. Without your own server a bypass is possible only if the filter looks at the site name (SNI) rather than the IP: Hydra checks this itself (the Check network button).</string>
     <string name="diag_wl">Whitelist check</string>
     <string name="diag_wl_sub">Which addresses and names the operator lets through now</string>
+    <string name="diag_svc">Services through the tunnel</string>
+    <string name="diag_svc_sub">Telegram, Google, GitHub: does TCP pass through the current tunnel and data center</string>
+    <string name="pdns_title">Private DNS is on</string>
+    <string name="pdns_text">Strict private DNS (%1$s) often does not work through a VPN: sites and Telegram may fail to open. Turn it off or choose Automatic: Settings → Connection and sharing → Private DNS.</string>
+    <string name="pdns_open">Open settings</string>
+    <string name="adv_ipv6">IPv6 through the tunnel</string>
+    <string name="adv_ipv6_sub">Off: apps go straight over IPv4 (faster, no stalls). Turn on if you need an IPv6-only resource.</string>
+    <string name="adv_tg">Check Telegram after connecting</string>
+    <string name="adv_tg_sub">If the internet works but Telegram does not, Hydra picks another data center by itself.</string>
 </resources>

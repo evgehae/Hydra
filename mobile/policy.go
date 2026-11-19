@@ -14,6 +14,8 @@ var (
 	polSoft  = false
 	polProto = "auto"
 	netKey   = "default"
+	polV6    = false // IPv6 через туннель (по умолчанию выключен: IPv4 надёжнее, приложения сразу переходят на него)
+	polGate  = true  // проверять Telegram после подключения
 	polPar   = 3  // сколько стратегий пробовать одновременно (0/1 — по очереди)
 	polSNI   = "" // свой SNI для туннеля MASQUE ("" — по умолчанию)
 	polEP    = "" // свой адрес сервера "IP" или "IP:порт" ("" — не задан)
@@ -119,3 +121,29 @@ func currentParallel() int {
 
 // LogLine дописывает строку в журнал Гидры (для результатов диагностики из приложения).
 func LogLine(s string) { hydra.Logf("%s", s) }
+
+// SetIPv6 включает или выключает IPv6 через туннель (выключен — приложения сразу получают отказ и идут по IPv4).
+func SetIPv6(on bool) {
+	polMu.Lock()
+	polV6 = on
+	polMu.Unlock()
+}
+
+func currentIPv6() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polV6
+}
+
+// SetServiceGate: после подключения проверять, доходит ли Telegram, и обходить дата-центры, где он недоступен.
+func SetServiceGate(on bool) {
+	polMu.Lock()
+	polGate = on
+	polMu.Unlock()
+}
+
+func currentGate() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polGate
+}

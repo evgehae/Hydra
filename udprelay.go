@@ -2,10 +2,12 @@ package hydra
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // UDPRelay — локальный «переходник» для QUIC. Клиент MASQUE шлёт датаграммы на
@@ -25,6 +27,8 @@ type FakeSpec struct {
 	Reserved    [3]byte
 	// CountWG: считать сообщения WireGuard по типам (для диагностики).
 	CountWG bool
+	// Noise: столько случайных коротких датаграмм (NoiseMin–NoiseMax байт) уходит перед рукопожатием.
+	Noise, NoiseMin, NoiseMax int
 }
 
 type UDPRelay struct {
@@ -138,25 +142,46 @@ func (r *UDPRelay) peer(from *net.UDPAddr) *net.UDPConn {
 }
 
 func (r *UDPRelay) sendFakes(c *net.UDPConn) {
-	if len(r.fake.Payloads) == 0 {
+	if len(r.fake.Payloads) == 0 && r.fake.Noise <= 0 {
 		return
 	}
-	if r.fake.TTL > 0 {
-		if err := setTTL(c, r.fake.TTL); err != nil {
-			Logf("   ⚠ не удалось выставить TTL=%d (%v) — фейки не отправляю", r.fake.TTL, err)
-			return
+	if len(r.fake.Payloads) > 0 {
+		if r.fake.TTL > 0 {
+			if err := setTTL(c, r.fake.TTL); err != nil {
+				Logf("   фейковые пакеты: не удалось задать TTL: %v", err)
+				return
+			}
 		}
-	}
-	total := 0
-	for _, p := range r.fake.Payloads {
-		if _, err := c.Write(p); err == nil {
-			total += len(p)
+		total := 0
+		for _, p := range r.fake.Payloads {
+			if _, err := c.Write(p); err == nil {
+				total += len(p)
+			}
 		}
+		if r.fake.TTL > 0 {
+			setTTL(c, 64)
+		}
+		Logf("   фейковых пакетов: %d, %d байт, TTL=%d → %s", len(r.fake.Payloads), total, r.fake.TTL, c.RemoteAddr())
 	}
-	if r.fake.TTL > 0 {
-		setTTL(c, 64)
+	if r.fake.Noise > 0 {
+		lo, hi := r.fake.NoiseMin, r.fake.NoiseMax
+		if lo < 1 {
+			lo = 5
+		}
+		if hi < lo {
+			hi = lo
+		}
+		sent := 0
+		for i := 0; i < r.fake.Noise; i++ {
+			b := make([]byte, lo+rand.Intn(hi-lo+1))
+			rand.Read(b)
+			if _, err := c.Write(b); err == nil {
+				sent++
+			}
+			time.Sleep(time.Duration(1+rand.Intn(2)) * time.Millisecond)
+		}
+		Logf("   шумовых пакетов: %d (%d–%d байт)", sent, lo, hi)
 	}
-	Logf("   фейковых пакетов: %d, %d байт, TTL=%d → %s", len(r.fake.Payloads), total, r.fake.TTL, r.remote)
 }
 
 func setTTL(c *net.UDPConn, ttl int) error {

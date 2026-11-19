@@ -50,6 +50,8 @@ fun DiagnosticsScreen(
     var showQuick by remember { mutableStateOf(false) }
     var showSys by remember { mutableStateOf(false) }
     var wlRunning by remember { mutableStateOf(false) }
+    var svcRunning by remember { mutableStateOf(false) }
+    var svcText by remember { mutableStateOf<String?>(null) }
     var wlText by remember { mutableStateOf<String?>(null) }
 
     val onWord = stringResource(R.string.diag_on)
@@ -131,6 +133,20 @@ fun DiagnosticsScreen(
         )
         SettingRow(stringResource(R.string.diag_errors), stringResource(R.string.diag_errors_sub), onClick = onErrors)
         SettingRow(stringResource(R.string.journal_title), onClick = onJournal)
+        SettingRow(
+            stringResource(R.string.diag_svc),
+            stringResource(R.string.diag_svc_sub),
+            value = if (svcRunning) "…" else null,
+            onClick = {
+                if (!svcRunning) {
+                    svcRunning = true
+                    scope.launch {
+                        svcText = withContext(Dispatchers.IO) { try { mobile.Mobile.serviceCheck() } catch (e: Throwable) { "н/д" } }
+                        svcRunning = false
+                    }
+                }
+            }
+        )
         SettingRow(
             stringResource(R.string.diag_wl),
             stringResource(R.string.diag_wl_sub),
@@ -252,6 +268,19 @@ fun DiagnosticsScreen(
                 }
             },
             confirmButton = { androidx.compose.material3.TextButton(onClick = { wlText = null }) { Text(stringResource(R.string.btn_ok)) } }
+        )
+    }
+    svcText?.let { t ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { svcText = null },
+            title = { Text(stringResource(R.string.diag_svc)) },
+            text = {
+                SelectionContainer {
+                    Text(t, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 15.sp,
+                        modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()))
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { svcText = null }) { Text(stringResource(R.string.btn_ok)) } }
         )
     }
 }

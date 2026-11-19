@@ -28,7 +28,7 @@ func coloTransport(colos map[string]string, order ...string) *fakeTransport {
 
 func TestColoPolicy(t *testing.T) {
 	p := DefaultColoPolicy()
-	for _, c := range []string{"DME", "dme", " LED "} {
+	for _, c := range []string{"DME", "dme", " DME "} {
 		if p.Allows(c) {
 			t.Fatalf("%q должен быть запрещён", c)
 		}
