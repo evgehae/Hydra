@@ -69,7 +69,6 @@ class MainActivity : ComponentActivity() {
         }
         val prefs = Prefs(this)
         prefs.migrate()
-        prefs.migrate()
         setContent {
             HydraTheme {
                 HydraBackground {

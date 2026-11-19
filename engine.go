@@ -68,6 +68,7 @@ type Status struct {
 }
 
 type Engine struct {
+	rx, tx uint64 // байты из туннеля в приложения / из приложений в туннель; первыми в структуре: 64-битные атомарные операции на 32-битных ARM требуют выравнивания
 	cfg     EngineConfig
 	tun     io.ReadWriteCloser
 	out     chan []byte // пакеты из TUN (от приложений)
@@ -79,7 +80,6 @@ type Engine struct {
 	nextID  uint32
 	events  chan Event
 	tunDead chan struct{}
-	rx, tx  uint64 // байты из туннеля в приложения / из приложений в туннель
 	once    sync.Once
 	soft    bool
 

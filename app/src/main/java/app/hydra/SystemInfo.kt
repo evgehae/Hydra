@@ -24,6 +24,13 @@ fun systemReport(ctx: Context): String {
     line("приложение", safe { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?" })
     line("устройство", "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), ${Build.HARDWARE}")
     line("система", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), патч ${Build.VERSION.SECURITY_PATCH}, сборка ${Build.DISPLAY}")
+    line("архитектура процессора (ABI)", Build.SUPPORTED_ABIS.joinToString(", "))
+    line("экран", safe {
+        "сенсорный=" + ctx.packageManager.hasSystemFeature("android.hardware.touchscreen") +
+            ", телевизор (leanback)=" + ctx.packageManager.hasSystemFeature("android.software.leanback")
+    })
+    val crash = safe { java.io.File(ctx.filesDir, "last_crash.txt").takeIf { it.exists() }?.readText()?.take(3000) ?: "" }
+    if (crash.isNotEmpty()) line("последний вылет приложения", "\n" + crash)
     line("язык / часовой пояс", Locale.getDefault().toString() + " / " + TimeZone.getDefault().id)
     line("время на телефоне", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(java.util.Date()))
     line("телефон включён", (SystemClock.elapsedRealtime() / 60000).toString() + " мин")

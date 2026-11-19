@@ -208,12 +208,14 @@ func BuildSTUNLike() []byte {
 func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
 	var out [][]byte
 	switch sig {
-	case "quic":
+	case "quic", "qv":
 		out = append(out, BuildQUICLike())
 	case "stun":
 		out = append(out, BuildSTUNLike())
 	}
-	if sig != "" {
+	// "qv" — точная копия захвата Варвары на Билайне: QUIC-подобный пакет (108 байт) и сразу 4 мусорных пакета
+	// по 50–80 байт, без лишних пакетов между ними; всего 5 пакетов до рукопожатия, а не 8, как у "quic".
+	if sig != "" && sig != "qv" {
 		out = append(out, GenJunk(4, 80, 120)...)
 	}
 	return append(out, GenJunk(jc, jmin, jmax)...)
@@ -272,7 +274,8 @@ func WGStrategies(acc *Account) []Strategy {
 		}
 	}
 	// 1) адрес из аккаунта и проверенный у Варвары 162.159.192.3 — с разными прологами
-	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3"}
+	// 162.159.192.4 работал на Билайне, 188.114.96.41 — адрес из захвата Варвары
+	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3", "162.159.192.4", "188.114.96.41"}
 	for _, h := range first {
 		add(h)
 	}
@@ -281,6 +284,11 @@ func WGStrategies(acc *Account) []Strategy {
 		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
 		if rsv {
 			out = append(out, mkr(ep, "quic", 3, 41, 78, "q3"))
+		}
+		// точный образ Варвары: QUIC-подобный пакет + 4 мусорных по 50–80 байт
+		out = append(out, mk(ep, "qv", 4, 50, 80, "v4"))
+		if rsv {
+			out = append(out, mkr(ep, "qv", 4, 50, 80, "v4"))
 		}
 		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
 		out = append(out, mk(ep, "", 4, 40, 70, "j4"))

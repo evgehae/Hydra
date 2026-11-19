@@ -269,6 +269,9 @@ func (m *Memory) priorLocked(net, id string) float64 {
 	if i := strings.Index(net, ":"); i > 0 {
 		class = net[:i]
 	}
+	if class == "cell" {
+		return 0.5 // у разных операторов разные ограничения: опыт МТС ничего не говорит о Билайне
+	}
 	ok, fail := 0, 0
 	for k, ns := range m.Nets {
 		if k == net || !strings.HasPrefix(k, class+":") {
@@ -300,10 +303,15 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := append([]Strategy(nil), all...)
+	agg := m.classAggLocked(net)
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
+		adj := classAdj(agg, s.ID, st)
+		if sb := seedBonus(net, s.ID); sb > 0 && (st == nil || st.OK > 0 || st.Fail < 3) {
+			adj += sb
+		}
 		if st == nil {
-			return m.priorLocked(net, s.ID) + m.svcBonusLocked(net, s.ID)
+			return m.priorLocked(net, s.ID) + m.svcBonusLocked(net, s.ID) + adj
 		}
 		rate := float64(st.OK+1) / float64(st.OK+st.Fail+2)
 		pen := math.Min(st.EWMAms/5000, 0.3)
@@ -311,7 +319,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 		if time.Since(st.LastOK) < 24*time.Hour {
 			bonus = 0.1
 		}
-		return rate - pen + bonus + m.svcBonusLocked(net, s.ID)
+		return rate - pen + bonus + m.svcBonusLocked(net, s.ID) + adj
 	}
 	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
 	return out

@@ -198,3 +198,108 @@ func (d *attemptDev) resolveA(ctx context.Context, host string, timeout time.Dur
 		return nil, ctx.Err()
 	}
 }
+
+// ---------- обучение по классам стратегий ----------
+// Результат одной стратегии говорит и о её «родне»: о других адресах того же варианта и о соседях по подсети.
+// Если вариант j4 заработал на 162.159.192.3, то j4 на 162.159.192.4 надо пробовать сразу. Если десять адресов
+// подряд не ответили на один вариант, одиннадцатый тоже не ответит: время тратится на другие.
+
+type clsStat struct{ ok, fail int }
+
+// stratKeys возвращает семейство ("wg"), вариант ("wg/j4") и подсеть адреса ("wg/162.159.192").
+func stratKeys(id string) (fam, variant, subnet string) {
+	parts := strings.Split(id, "/")
+	fam = parts[0]
+	if len(parts) < 3 {
+		return
+	}
+	variant = fam + "/" + parts[len(parts)-1]
+	host := parts[1]
+	if i := strings.LastIndex(host, ":"); i > 0 && strings.Count(host, ":") == 1 {
+		host = host[:i]
+	}
+	if p := strings.Split(host, "."); len(p) == 4 {
+		subnet = fam + "/" + p[0] + "." + p[1] + "." + p[2]
+	}
+	return
+}
+
+// classAggLocked суммирует успехи и сбои по классам для сети net. Вызывать под m.mu.
+func (m *Memory) classAggLocked(net string) map[string]*clsStat {
+	agg := map[string]*clsStat{}
+	add := func(k string, st *stat) {
+		c := agg[k]
+		if c == nil {
+			c = &clsStat{}
+			agg[k] = c
+		}
+		c.ok += st.OK
+		c.fail += st.Fail
+	}
+	for id, st := range m.Nets[net] {
+		fam, variant, subnet := stratKeys(id)
+		add("f|"+fam, st)
+		if variant != "" {
+			add("v|"+variant, st)
+		}
+		if subnet != "" {
+			add("s|"+subnet, st)
+		}
+	}
+	return agg
+}
+
+// classAdj — поправка к оценке стратегии по опыту её класса (без учёта собственной статистики self).
+func classAdj(agg map[string]*clsStat, id string, self *stat) float64 {
+	fam, variant, subnet := stratKeys(id)
+	adj := 0.0
+	one := func(k string, wOK, wBad float64, minFail int) {
+		c := agg[k]
+		if c == nil {
+			return
+		}
+		ok, fail := c.ok, c.fail
+		if self != nil {
+			ok -= self.OK
+			fail -= self.Fail
+		}
+		if ok > 0 && ok*4 >= fail {
+			adj += wOK
+		} else if ok == 0 && fail >= minFail {
+			adj -= wBad
+		}
+	}
+	one("f|"+fam, 0, 0.15, 12)
+	if variant != "" {
+		one("v|"+variant, 0.2, 0.25, 6)
+	}
+	if subnet != "" {
+		one("s|"+subnet, 0.2, 0.25, 4)
+	}
+	return adj
+}
+
+// netSeeds — что уже работало в конкретных сетях по отчётам пользователя от 2026-11-19. Это наблюдения, а не
+// правила: реальные результаты в памяти важнее, а стратегия с тремя сбоями подряд теряет бонус.
+var netSeeds = map[string][]string{
+	// Билайн: MASQUE уходит в запрещённую Москву или молчит; WireGuard живёт на подсети 162.159.192.x
+	"cell:25099": {
+		"wg/162.159.192.4:2408/j4", "wg/162.159.192.3:2408/j4",
+		"wg/162.159.192.4:2408/q3", "wg/162.159.192.4:2408/q3r",
+		"wg/162.159.192.4:2408/v4", "wg/162.159.192.3:2408/v4",
+	},
+	// МТС: MASQUE через 162.159.198.x доходит до Хельсинки
+	"cell:25001": {
+		"h3/162.159.198.1/vk4x6", "h3/162.159.198.2/g3+speed",
+		"h3/162.159.198.1/vk6x6", "h3/162.159.198.1/g3",
+	},
+}
+
+func seedBonus(net, id string) float64 {
+	for _, s := range netSeeds[net] {
+		if s == id {
+			return 0.35
+		}
+	}
+	return 0
+}

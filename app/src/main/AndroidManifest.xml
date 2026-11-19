@@ -22,6 +22,8 @@
     </queries>
 
     <application
+        android:name=".HydraApp"
+        android:banner="@drawable/tv_banner"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -29,6 +31,7 @@
         android:theme="@style/Theme.Hydra">
         <activity
             android:name=".MainActivity"
+            android:banner="@drawable/tv_banner"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

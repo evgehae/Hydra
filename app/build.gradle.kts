@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 11
         versionName = "0.9.1"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
