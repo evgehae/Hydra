@@ -76,7 +76,10 @@ func TestRaceSkipsBlockedColo(t *testing.T) {
 func TestRaceAllBlocked(t *testing.T) {
 	ft := coloTransport(map[string]string{"a": "DME", "b": "LED"}, "a", "b")
 	mem, _ := LoadMemory("")
-	o := New(fastCfg(), mem, []Transport{ft}, nil)
+	cfg := fastCfg()
+	// по умолчанию запрещена только Москва (DME), поэтому здесь явно запрещаем оба дата-центра теста
+	cfg.Colo = &ColoPolicy{Block: []string{"DME", "LED"}}
+	o := New(cfg, mem, []Transport{ft}, nil)
 	_, _, err := o.race(context.Background(), "wifi:home", "")
 	if err == nil || !strings.Contains(err.Error(), "DME") {
 		t.Fatalf("ждали ошибку про запрещённые дата-центры, получили %v", err)
