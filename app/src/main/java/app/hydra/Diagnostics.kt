@@ -38,7 +38,12 @@ suspend fun runDiagnostics(): DiagResult = withContext(Dispatchers.IO) {
         val body = c.inputStream.bufferedReader().use { it.readText() }
         c.disconnect()
         kv = body.lines()
-            .mapNotNull { l -> l.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && "=" in it }
+            .mapNotNull { l ->
+                val parts = l.split("=", limit = 2)
+                if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
+            }
             .toMap()
         httpsOk = true
     } catch (e: Exception) {

@@ -150,6 +150,39 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("svc_check_min", 3)
         set(v) { sp.edit().putInt("svc_check_min", v).apply() }
 
+
+    /** Явные Jc/Jmin/Jmax для WG-профиля (0 = авто из стратегии). */
+    var wgJc: Int
+        get() = sp.getInt("wg_jc", 0)
+        set(v) { sp.edit().putInt("wg_jc", v).apply() }
+
+    var wgJmin: Int
+        get() = sp.getInt("wg_jmin", 40)
+        set(v) { sp.edit().putInt("wg_jmin", v).apply() }
+
+    var wgJmax: Int
+        get() = sp.getInt("wg_jmax", 70)
+        set(v) { sp.edit().putInt("wg_jmax", v).apply() }
+
+    /** Последнее состояние VPN для плитки QS. */
+    var lastVpnState: String
+        get() = sp.getString("last_vpn_state", "down") ?: "down"
+        set(v) { sp.edit().putString("last_vpn_state", v).apply() }
+
+    var lastColo: String
+        get() = sp.getString("last_colo", "") ?: ""
+        set(v) { sp.edit().putString("last_colo", v).apply() }
+
+    var lastPingMs: Int
+        get() = sp.getInt("last_ping_ms", 0)
+        set(v) { sp.edit().putInt("last_ping_ms", v).apply() }
+
+    /** Жёсткий timeout handshake (мс). 0 = дефолт ядра (2000). */
+    var handshakeTimeoutMs: Int
+        get() = sp.getInt("hs_timeout_ms", 2000)
+        set(v) { sp.edit().putInt("hs_timeout_ms", v).apply() }
+
+
     /** Однократная миграция: прежнее умолчание «DME,LED,SVX,…» заменяется на «DME». */
     fun migrate() {
         if (sp.getInt("defaults_ver", 0) < 2) {

@@ -61,6 +61,10 @@ fun AdvancedScreen(
     var notifyStrategy by remember { mutableStateOf(prefs.notifyStrategy) }
     var notifyErrors by remember { mutableStateOf(prefs.notifyErrors) }
     var notifyStatus by remember { mutableStateOf(prefs.notifyStatus) }
+    var wgJc by remember { mutableStateOf(prefs.wgJc) }
+    var wgJmin by remember { mutableStateOf(prefs.wgJmin) }
+    var wgJmax by remember { mutableStateOf(prefs.wgJmax) }
+    var hsTimeout by remember { mutableStateOf(prefs.handshakeTimeoutMs) }
     val hasRoot = remember { RootHelper.hasRoot() }
     var dlg by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
@@ -142,6 +146,31 @@ fun AdvancedScreen(
         SettingRow(
             stringResource(R.string.conn_endpoint), stringResource(R.string.conn_endpoint_sub),
             value = if (ep.isEmpty()) dflt else ep, onClick = { dlg = "ep" }
+        )
+
+        SectionLabel(stringResource(R.string.wg_junk_title))
+        RowDivider()
+        SettingRow(
+            stringResource(R.string.wg_jc),
+            stringResource(R.string.wg_junk_sub),
+            value = if (wgJc == 0) dflt else wgJc.toString(),
+            onClick = { dlg = "wg_jc" }
+        )
+        SettingRow(
+            stringResource(R.string.wg_jmin),
+            value = wgJmin.toString(),
+            onClick = { dlg = "wg_jmin" }
+        )
+        SettingRow(
+            stringResource(R.string.wg_jmax),
+            value = wgJmax.toString(),
+            onClick = { dlg = "wg_jmax" }
+        )
+        SettingRow(
+            stringResource(R.string.hs_timeout_title),
+            stringResource(R.string.hs_timeout_sub),
+            value = "${hsTimeout} ms",
+            onClick = { dlg = "hs_timeout" }
         )
 
         SectionLabel(stringResource(R.string.colo_title))
@@ -276,7 +305,53 @@ fun AdvancedScreen(
             onApply = { allow = it.uppercase(); prefs.allowColos = allow; dlg = ""; vpn.restartIfActive() },
             onReset = { allow = ""; prefs.allowColos = ""; dlg = ""; vpn.restartIfActive() }
         )
-        
+        "wg_jc" -> TextDialog(
+            stringResource(R.string.wg_jc), if (wgJc == 0) "" else wgJc.toString(), "0 = auto, 1–16",
+            onDismiss = { dlg = "" },
+            onApply = {
+                wgJc = it.toIntOrNull()?.coerceIn(0, 16) ?: 0
+                prefs.wgJc = wgJc
+                dlg = ""
+                vpn.restartIfActive()
+            },
+            onReset = { wgJc = 0; prefs.wgJc = 0; dlg = ""; vpn.restartIfActive() }
+        )
+        "wg_jmin" -> TextDialog(
+            stringResource(R.string.wg_jmin), wgJmin.toString(), "5–200",
+            onDismiss = { dlg = "" },
+            onApply = {
+                wgJmin = it.toIntOrNull()?.coerceIn(5, 200) ?: 40
+                prefs.wgJmin = wgJmin
+                if (wgJmax < wgJmin + 10) { wgJmax = wgJmin + 10; prefs.wgJmax = wgJmax }
+                dlg = ""
+                vpn.restartIfActive()
+            },
+            onReset = { wgJmin = 40; prefs.wgJmin = 40; dlg = ""; vpn.restartIfActive() }
+        )
+        "wg_jmax" -> TextDialog(
+            stringResource(R.string.wg_jmax), wgJmax.toString(), "20–300",
+            onDismiss = { dlg = "" },
+            onApply = {
+                wgJmax = it.toIntOrNull()?.coerceIn(20, 300) ?: 70
+                if (wgJmax < wgJmin + 10) wgJmax = wgJmin + 10
+                prefs.wgJmax = wgJmax
+                dlg = ""
+                vpn.restartIfActive()
+            },
+            onReset = { wgJmax = 70; prefs.wgJmax = 70; dlg = ""; vpn.restartIfActive() }
+        )
+        "hs_timeout" -> TextDialog(
+            stringResource(R.string.hs_timeout_title), hsTimeout.toString(), "1200–3500",
+            onDismiss = { dlg = "" },
+            onApply = {
+                hsTimeout = it.toIntOrNull()?.coerceIn(1200, 3500) ?: 2000
+                prefs.handshakeTimeoutMs = hsTimeout
+                dlg = ""
+                vpn.restartIfActive()
+            },
+            onReset = { hsTimeout = 2000; prefs.handshakeTimeoutMs = 2000; dlg = ""; vpn.restartIfActive() }
+        )
+
         "export_full" -> {
             val snap = try {
                 val json = "{" +

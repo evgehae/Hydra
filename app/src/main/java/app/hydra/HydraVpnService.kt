@@ -164,6 +164,16 @@ class HydraVpnService : VpnService() {
                     else -> getString(R.string.notif_connecting)
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
+                // Обновляем состояние для плитки в шторке
+                prefsNow.lastVpnState = when {
+                    raw.startsWith("up") -> "up"
+                    state == "reconnecting" || state == "failed" -> state
+                    prefsNow.wantConnected -> "connecting"
+                    else -> "down"
+                }
+                prefsNow.lastColo = colo
+                prefsNow.lastPingMs = rtt
+                try { HydraTileService.requestUpdate(this@HydraVpnService) } catch (_: Throwable) { }
                 if (raw.startsWith("up")) {
                     restartFails = 0
                     maybeServiceCheck(prefsNow)
