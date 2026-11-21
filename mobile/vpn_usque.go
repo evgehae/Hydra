@@ -260,3 +260,27 @@ func SpeedTest() string {
 	defer cancel()
 	return e.SpeedTest(ctx)
 }
+
+// ForgetCurrentNet стирает память Гидры о текущей сети (стратегии, придуманное, дата-центры, «карантин»).
+// dir — папка приложения. true — память стёрта.
+func ForgetCurrentNet(dir string) bool {
+	polMu.Lock()
+	nk := netKey
+	polMu.Unlock()
+	if nk == "" {
+		return false
+	}
+	vpnMu.Lock()
+	m := vpnMem
+	vpnMu.Unlock()
+	if m == nil {
+		var err error
+		m, err = hydra.LoadMemory(filepath.Join(dir, "memory.json"))
+		if err != nil || m == nil {
+			return false
+		}
+	}
+	m.ForgetNet(nk)
+	m.Save()
+	return true
+}
