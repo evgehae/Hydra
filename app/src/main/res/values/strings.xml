@@ -281,7 +281,7 @@
     <string name="speed_test">Speed / quality test</string>
 
     <!-- Quick Settings tile -->
-    <string name="tile_label">WARP CLAUDE</string>
+    <string name="tile_label">WARP</string>
     <string name="tile_on">VPN on</string>
     <string name="tile_on_fmt">%1$s · %2$d ms</string>
     <string name="tile_off">VPN off</string>
