@@ -293,6 +293,8 @@
     <string name="wg_jc">Jc (count)</string>
     <string name="wg_jmin">Jmin (bytes)</string>
     <string name="wg_jmax">Jmax (bytes)</string>
+    <string name="forget_net_title">Forget this network</string>
+    <string name="forget_net_sub">Erase Hydra's experience for the current network only (strategy quarantine, generated variants). Accounts and settings stay.</string>
     <string name="hs_timeout_title">Handshake timeout</string>
     <string name="hs_timeout_sub">How long to wait for WG response before next strategy (ms). Default 2000.</string>
     <string name="diag_trace_title">cdn-cgi/trace</string>
