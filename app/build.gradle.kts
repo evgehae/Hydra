@@ -12,8 +12,9 @@ android {
         applicationId = "warp.claude.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.0.0-claude"
+        val vc = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 12
+        versionCode = vc
+        versionName = "1.0.$vc-claude"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
