@@ -279,4 +279,23 @@
     <string name="export_full">Export full backup</string>
     <string name="import_full">Import full backup</string>
     <string name="speed_test">Speed / quality test</string>
+
+    <!-- Quick Settings tile -->
+    <string name="tile_label">WARP CLAUDE</string>
+    <string name="tile_on">VPN on</string>
+    <string name="tile_on_fmt">%1$s · %2$d ms</string>
+    <string name="tile_off">VPN off</string>
+    <string name="tile_connecting">Connecting…</string>
+
+    <!-- WG junk / handshake UI -->
+    <string name="wg_junk_title">WireGuard junk packets (Jc / Jmin / Jmax)</string>
+    <string name="wg_junk_sub">Amnezia-style padding before handshake. 0 = auto from strategy.</string>
+    <string name="wg_jc">Jc (count)</string>
+    <string name="wg_jmin">Jmin (bytes)</string>
+    <string name="wg_jmax">Jmax (bytes)</string>
+    <string name="hs_timeout_title">Handshake timeout</string>
+    <string name="hs_timeout_sub">How long to wait for WG response before next strategy (ms). Default 2000.</string>
+    <string name="diag_trace_title">cdn-cgi/trace</string>
+    <string name="diag_trace_fmt">IP %1$s · %2$s · %3$s · warp=%4$s</string>
+
 </resources>
