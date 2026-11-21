@@ -19,6 +19,8 @@ var (
 	polPar   = 3  // сколько стратегий пробовать одновременно (0/1 — по очереди)
 	polSNI   = "" // свой SNI для туннеля MASQUE ("" — по умолчанию)
 	polEP    = "" // свой адрес сервера "IP" или "IP:порт" ("" — не задан)
+	polStab  = false // режим максимальной стабильности
+	polTV    = false // профиль ТВ
 	// netEvents — «сеть сменилась»: движок реагирует сразу, не ожидая очередной пробы.
 	netEvents = make(chan struct{}, 1)
 )
@@ -146,4 +148,39 @@ func currentGate() bool {
 	polMu.Lock()
 	defer polMu.Unlock()
 	return polGate
+}
+
+// SetStabilityMode: меньше параллелизма, приоритет стабильных WG-стратегий.
+func SetStabilityMode(on bool) {
+	polMu.Lock()
+	polStab = on
+	if on && polPar > 2 {
+		polPar = 2
+	}
+	polMu.Unlock()
+}
+
+// SetTVProfile: профиль для Android TV / приставок.
+func SetTVProfile(on bool) {
+	polMu.Lock()
+	polTV = on
+	if on {
+		if polPar > 2 {
+			polPar = 2
+		}
+		polStab = true
+	}
+	polMu.Unlock()
+}
+
+func currentStability() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polStab
+}
+
+func currentTV() bool {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polTV
 }

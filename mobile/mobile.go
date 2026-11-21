@@ -4,6 +4,8 @@ package mobile
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -86,6 +88,17 @@ func WireguardExtraID(dir string) string {
 	return a.ID
 }
 
+// deviceHints — подсказки от Android (модель, leanback), выставляются перед регистрацией.
+var deviceModel string
+var deviceIsTV bool
+
+// SetDeviceHints передаёт из Kotlin реальную модель и факт, что это Android TV / leanback.
+// На ТВ регистрация часто падает из-за коротких таймаутов и «телефонного» model.
+func SetDeviceHints(model string, isTV bool) {
+	deviceModel = model
+	deviceIsTV = isTV
+}
+
 func registerReport(path string, wg bool) string {
 	if a, err := hydra.LoadAccount(path); err == nil && a != nil {
 		return "OK\nуже есть: " + a.ID
@@ -93,11 +106,24 @@ func registerReport(path string, wg bool) string {
 	var sb strings.Builder
 	r := hydra.NewRegistrar()
 	r.WG = wg
+	r.DeviceModel = deviceModel
+	r.IsTV = deviceIsTV
+	if r.IsTV {
+		// На ТВ-приставках сети часто медленнее и DPI жёстче — даём больше времени и попыток.
+		r.Timeout = 35 * time.Second
+		r.Attempts = 5
+		r.Stagger = 500 * time.Millisecond
+		r.Backoff = 2 * time.Second
+	}
 	r.Log = func(s string) {
 		sb.WriteString(s + "\n")
 		hydra.Logf("регистрация: %s", s)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	timeout := 90 * time.Second
+	if r.IsTV {
+		timeout = 150 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	acc, err := r.Register(ctx)
@@ -204,4 +230,93 @@ func ImportWireguardConfig(dir, text string) string {
 func DeleteWireguardConfig(dir string) {
 	os.Remove(wgPath(dir))
 	os.Remove(wg2Path(dir))
+}
+
+// ExportFullState — полный снимок: MASQUE-аккаунт, WG-аккаунты, путь к памяти.
+// prefs JSON передаёт Android и включает в итоговую строку.
+func ExportFullState(dir, prefsJSON string) string {
+	type snap struct {
+		Version int             `json:"v"`
+		Prefs   json.RawMessage `json:"prefs,omitempty"`
+		Masque  *hydra.Account  `json:"masque,omitempty"`
+		WG      *hydra.Account  `json:"wg,omitempty"`
+		WG2     *hydra.Account  `json:"wg2,omitempty"`
+	}
+	s := snap{Version: 1}
+	if prefsJSON != "" {
+		s.Prefs = json.RawMessage(prefsJSON)
+	}
+	if a, err := hydra.LoadAccount(accountPath(dir)); err == nil {
+		s.Masque = a
+	}
+	if a, err := hydra.LoadAccount(wgPath(dir)); err == nil {
+		s.WG = a
+	}
+	if a, err := hydra.LoadAccount(wg2Path(dir)); err == nil {
+		s.WG2 = a
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return "hydra-full1:" + base64.RawURLEncoding.EncodeToString(b)
+}
+
+// ImportFullState восстанавливает аккаунты из ExportFullState. Prefs возвращает
+// отдельной строкой (JSON), чтобы Android записал SharedPreferences.
+// Формат ответа: "OK\n{prefs json}" или "FAIL ..."
+func ImportFullState(dir, text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "hydra-full1:") {
+		return "FAIL это не полный снимок WARP CLAUDE"
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(text, "hydra-full1:"))
+	if err != nil {
+		return "FAIL повреждённая строка"
+	}
+	var s struct {
+		Version int             `json:"v"`
+		Prefs   json.RawMessage `json:"prefs"`
+		Masque  *hydra.Account  `json:"masque"`
+		WG      *hydra.Account  `json:"wg"`
+		WG2     *hydra.Account  `json:"wg2"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "FAIL " + err.Error()
+	}
+	if s.Masque != nil {
+		if err := s.Masque.Save(accountPath(dir)); err != nil {
+			return "FAIL masque: " + err.Error()
+		}
+	}
+	if s.WG != nil {
+		if err := s.WG.Save(wgPath(dir)); err != nil {
+			return "FAIL wg: " + err.Error()
+		}
+	}
+	if s.WG2 != nil {
+		if err := s.WG2.Save(wg2Path(dir)); err != nil {
+			return "FAIL wg2: " + err.Error()
+		}
+	}
+	prefs := "{}"
+	if len(s.Prefs) > 0 {
+		prefs = string(s.Prefs)
+	}
+	return "OK\n" + prefs
+}
+
+// SpeedTest — лёгкая проверка скорости через поднятый туннель: TCP до 1.1.1.1:443
+// и замер RTT + грубая оценка (сколько байт удалось прокачать за короткий probe).
+// Возвращает многострочный отчёт для UI.
+func SpeedTest() string {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e == nil {
+		return "туннель не подключён"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return e.SpeedTest(ctx)
 }
