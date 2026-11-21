@@ -430,8 +430,10 @@ class HydraVpnService : VpnService() {
             RootHelper.boostTun("tun0")
         }
         watchNetwork()
+        lastServiceCheckAt = 0L // сразу проверить сервисы, не ждать 30 с
+        serviceFailStreak = 0
         handler.removeCallbacks(statusUpdater)
-        handler.postDelayed(statusUpdater, 3000)
+        handler.postDelayed(statusUpdater, 2000)
     }
 
     /** Имя хоста в IP-адреса (в отдельном потоке с таймаутом: на главном потоке сеть запрещена). */
@@ -538,10 +540,12 @@ class HydraVpnService : VpnService() {
                 val total = available?.groupValues?.getOrNull(2)?.toIntOrNull()
                 val mostlyDead = okCount != null && total != null && total >= 6 && okCount <= 4
 
-                if (deadDns || (deadYt && deadBase) || mostlyDead) {
+                // YouTube DNS fail или массовый падёж — сразу переподключаемся (не ждём 2 раза).
+                val critical = deadDns || deadYt || mostlyDead
+                if (critical) {
                     serviceFailStreak++
                     jlog("служба: туннель «up», но сервисы мертвы (streak=$serviceFailStreak) — DNS/YouTube/base")
-                    if (serviceFailStreak >= 2 && now - lastForceRestartAt > 45_000L) {
+                    if (now - lastForceRestartAt > 20_000L) {
                         lastForceRestartAt = now
                         serviceFailStreak = 0
                         jlog("служба: принудительное переподключение из-за мёртвых сервисов")
@@ -549,7 +553,7 @@ class HydraVpnService : VpnService() {
                             try {
                                 mobile.Mobile.stopTunnel()
                             } catch (_: Throwable) { }
-                            handler.postDelayed({ startVpn() }, 800)
+                            handler.postDelayed({ startVpn() }, 600)
                         }
                     }
                 } else {
