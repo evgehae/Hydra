@@ -49,26 +49,32 @@ class HydraTileService : TileService() {
         } catch (_: Throwable) {
             if (prefs.wantConnected) "connecting" else "down"
         }
+        // Подпись плитки всегда короткая: WARP. Состояние — в subtitle (API 29+).
+        tile.label = getString(R.string.tile_label) // "WARP"
         when {
             st == "up" || st == "connected" -> {
                 tile.state = Tile.STATE_ACTIVE
                 val colo = prefs.lastColo
                 val ping = prefs.lastPingMs
-                tile.label = if (colo.isNotEmpty() && ping > 0)
-                    getString(R.string.tile_on_fmt, colo, ping)
-                else
-                    getString(R.string.tile_on)
-                tile.subtitle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    if (colo.isNotEmpty()) colo else null
-                } else null
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = when {
+                        colo.isNotEmpty() && ping > 0 -> "$colo · ${ping} ms"
+                        colo.isNotEmpty() -> colo
+                        else -> getString(R.string.tile_on)
+                    }
+                }
             }
             st == "connecting" || prefs.wantConnected -> {
                 tile.state = Tile.STATE_ACTIVE
-                tile.label = getString(R.string.tile_connecting)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = getString(R.string.tile_connecting)
+                }
             }
             else -> {
                 tile.state = Tile.STATE_INACTIVE
-                tile.label = getString(R.string.tile_off)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = getString(R.string.tile_off)
+                }
             }
         }
         try {

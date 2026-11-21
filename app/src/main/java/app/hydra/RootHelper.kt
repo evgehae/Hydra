@@ -168,6 +168,43 @@ object RootHelper {
         return c == 0
     }
 
+
+    /**
+     * Root-защита от убийства VPN системой (Xiaomi/HyperOS и др.):
+     *  - whitelist в battery optimization
+     *  - oom_score_adj = -1000 для текущего процесса
+     *  - попытка autostart permission (MIUI)
+     */
+    fun protectProcess(pkg: String, pid: Int = android.os.Process.myPid()): String {
+        if (!hasRoot()) return "root: нет"
+        val cmds = mutableListOf(
+            // не убивать по OOM
+            "echo -1000 > /proc/$pid/oom_score_adj 2>/dev/null || true",
+            "echo -1000 > /proc/$pid/oom_adj 2>/dev/null || true",
+            // whitelist батареи (Android 6+)
+            "dumpsys deviceidle whitelist +$pkg 2>/dev/null || true",
+            // MIUI autostart / background
+            "cmd appops set $pkg RUN_IN_BACKGROUND allow 2>/dev/null || true",
+            "cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow 2>/dev/null || true",
+            "cmd appops set $pkg START_FOREGROUND allow 2>/dev/null || true",
+            // снять ограничения standby
+            "am set-inactive $pkg false 2>/dev/null || true"
+        )
+        val (c, out) = su(cmds)
+        return if (c == 0) "protect: ok" else "protect: $out"
+    }
+
+    /** Поднять приоритет сетевых очередей для tun (если есть). */
+    fun boostTun(tunIf: String = "tun0"): Boolean {
+        if (!hasRoot()) return false
+        val (c, _) = su(listOf(
+            "ip link set dev $tunIf txqueuelen 1000 2>/dev/null || true",
+            // fq_codel снижает bufferbloat на VPN
+            "tc qdisc replace dev $tunIf root fq_codel 2>/dev/null || true"
+        ))
+        return c == 0
+    }
+
     fun statusReport(): String {
         if (!hasRoot()) return "root: нет"
         val backend = firewallBackend()

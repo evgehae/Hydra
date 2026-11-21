@@ -263,6 +263,8 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setParallel(par)
             mobile.Mobile.setIPv6(prefs.ipv6)
             mobile.Mobile.setServiceGate(prefs.tgGate)
+            try { mobile.Mobile.setWGJunk(prefs.wgJc, prefs.wgJmin, prefs.wgJmax) } catch (t: Throwable) { }
+            try { mobile.Mobile.setUpTimeoutMs(prefs.handshakeTimeoutMs) } catch (t: Throwable) { }
             try { mobile.Mobile.setStabilityMode(prefs.stabilityMode || prefs.tvProfile) } catch (t: Throwable) { }
             try { mobile.Mobile.setTVProfile(prefs.tvProfile) } catch (t: Throwable) { }
             jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=$par, root=${prefs.useRoot}, stability=${prefs.stabilityMode}, tv=${prefs.tvProfile}")
@@ -420,10 +422,12 @@ class HydraVpnService : VpnService() {
             jlog("служба: ядро не запустилось: $err — повторю")
             return
         }
-        // Root kill-switch: режем весь исходящий трафик мимо VPN-интерфейса.
+        // Root: kill-switch + защита от убийства процесса + boost tun.
         if (prefs.useRoot && RootHelper.hasRoot()) {
             val ok = RootHelper.enableKillSwitch("tun0")
             jlog("root kill-switch: " + if (ok) "включён (" + RootHelper.firewallBackend() + ")" else "не удалось")
+            jlog("root protect: " + RootHelper.protectProcess(packageName))
+            RootHelper.boostTun("tun0")
         }
         watchNetwork()
         handler.removeCallbacks(statusUpdater)
