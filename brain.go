@@ -303,3 +303,31 @@ func seedBonus(net, id string) float64 {
 	}
 	return 0
 }
+
+// prefix24 — ключ подсети /24 для адреса вида 162.159.192.3 (с портом или без): весь блок Cloudflare обычно
+// маршрутизируется одинаково, поэтому если один адрес ведёт в запрещённый дата-центр, соседи ведут туда же.
+func prefix24(host string) string {
+	p := strings.Split(host, ".")
+	if len(p) == 4 {
+		return p[0] + "." + p[1] + "." + p[2] + ".*"
+	}
+	return host
+}
+
+// blockedFor — до какого времени запрещён адрес: по нему самому или по его подсети /24.
+func blockedFor(blocked map[string]time.Time, host string) (time.Time, bool) {
+	t1, ok1 := blocked[host]
+	t2, ok2 := blocked[prefix24(host)]
+	switch {
+	case ok1 && ok2:
+		if t2.After(t1) {
+			return t2, true
+		}
+		return t1, true
+	case ok1:
+		return t1, true
+	case ok2:
+		return t2, true
+	}
+	return time.Time{}, false
+}

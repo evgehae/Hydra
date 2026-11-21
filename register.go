@@ -599,9 +599,14 @@ func (r *Registrar) dialTLS(ctx context.Context, rt route, addr string) (net.Con
 		ServerName: name,
 		NextProtos: []string{"http/1.1"},
 		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootPool(),
+		Time:       tlsNow,
 	})
 	if err := tc.HandshakeContext(ctx); err != nil {
 		raw.Close()
+		if isCertTimeError(err) && learnClockSkew(ctx, rt.d.Dial) {
+			return r.dialTLS(ctx, rt, addr) // часы устройства неверны: повторяем с поправкой
+		}
 		return nil, err
 	}
 	return tc, nil

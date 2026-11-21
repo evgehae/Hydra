@@ -194,7 +194,7 @@ func (e *Engine) pickStandby(nk string, primary Strategy, blocked map[string]tim
 				continue
 			}
 			ep := s.Params["endpoint"]
-			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+			if until, ok := blockedFor(blocked, hostOnly(ep)); ep != "" && ok && time.Now().Before(until) {
 				continue
 			}
 			if e.cfg.Mem.Doomed(nk, s.ID) || e.cfg.Mem.EndpointDead(nk, s.ID) {
@@ -252,7 +252,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				continue
 			}
 			ep := s.Params["endpoint"]
-			if until, ok := blocked[hostOnly(ep)]; ep != "" && ok && time.Now().Before(until) {
+			if until, ok := blockedFor(blocked, hostOnly(ep)); ep != "" && ok && time.Now().Before(until) {
 				taken[i] = true
 				skipped++
 				continue
@@ -287,6 +287,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			sawBlocked = true
 			if ep := v.a.s.Params["endpoint"]; ep != "" {
 				blocked[hostOnly(ep)] = time.Now().Add(10 * time.Minute)
+				blocked[prefix24(hostOnly(ep))] = time.Now().Add(10 * time.Minute)
 				Logf("   адрес %s ведёт в запрещённый %s — остальные стратегии с ним пропускаю на 10 минут", ep, v.o.coloBlocked)
 			}
 		}
@@ -542,6 +543,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 						sawBlocked = true
 						if ep := p.s.Params["endpoint"]; ep != "" {
 							blocked[hostOnly(ep)] = time.Now().Add(10 * time.Minute)
+				blocked[prefix24(hostOnly(ep))] = time.Now().Add(10 * time.Minute)
 						}
 						if failover("дата-центр " + c + " запрещён") {
 							continue
