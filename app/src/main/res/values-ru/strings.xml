@@ -281,7 +281,7 @@
     <string name="speed_test">Тест скорости / качества</string>
 
     <!-- Плитка в шторке -->
-    <string name="tile_label">WARP CLAUDE</string>
+    <string name="tile_label">WARP</string>
     <string name="tile_on">VPN вкл</string>
     <string name="tile_on_fmt">%1$s · %2$d мс</string>
     <string name="tile_off">VPN выкл</string>
