@@ -293,6 +293,8 @@
     <string name="wg_jc">Jc (число)</string>
     <string name="wg_jmin">Jmin (байт)</string>
     <string name="wg_jmax">Jmax (байт)</string>
+    <string name="forget_net_title">Забыть эту сеть</string>
+    <string name="forget_net_sub">Стереть опыт Гидры только по текущей сети (карантин стратегий, придуманные варианты). Аккаунты и настройки остаются.</string>
     <string name="hs_timeout_title">Таймаут рукопожатия</string>
     <string name="hs_timeout_sub">Сколько ждать ответ WG, прежде чем перейти к следующей стратегии (мс). По умолчанию 2000.</string>
     <string name="diag_trace_title">cdn-cgi/trace</string>
