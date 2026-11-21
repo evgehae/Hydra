@@ -221,8 +221,11 @@ fun HomeScreen(
             Spacer(Modifier.height(16.dp))
             Text(failText(failKind), style = MaterialTheme.typography.bodySmall, color = scheme.error, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { account.registerViaCellular() }) {
-                Text(stringResource(R.string.action_register_cell))
+            val isTvHome = androidx.compose.ui.platform.LocalContext.current.packageManager.hasSystemFeature("android.software.leanback")
+            if (!isTvHome) { // на ТВ нет мобильной сети: кнопка бесполезна
+                OutlinedButton(onClick = { account.registerViaCellular() }) {
+                    Text(stringResource(R.string.action_register_cell))
+                }
             }
         }
 

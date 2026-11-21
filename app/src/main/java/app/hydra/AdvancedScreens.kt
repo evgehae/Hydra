@@ -247,6 +247,15 @@ fun AdvancedScreen(
             value = "${hsTimeout} ms",
             onClick = { dlg = "hs_timeout" }
         )
+        val forgetCtx = LocalContext.current
+        SettingRow(
+            stringResource(R.string.forget_net_title),
+            stringResource(R.string.forget_net_sub),
+            onClick = {
+                try { mobile.Mobile.forgetCurrentNet(forgetCtx.filesDir.absolutePath) } catch (t: Throwable) { }
+                vpn.restartIfActive()
+            }
+        )
 
         SectionLabel(stringResource(R.string.colo_title))
         RowDivider()
@@ -451,10 +460,10 @@ fun AdvancedScreen(
             onReset = { wgJmax = 70; prefs.wgJmax = 70; dlg = ""; vpn.restartIfActive() }
         )
         "hs_timeout" -> TextDialog(
-            stringResource(R.string.hs_timeout_title), hsTimeout.toString(), "1200–3500",
+            stringResource(R.string.hs_timeout_title), hsTimeout.toString(), "1200–5000",
             onDismiss = { dlg = "" },
             onApply = {
-                hsTimeout = it.toIntOrNull()?.coerceIn(1200, 3500) ?: 2000
+                hsTimeout = it.toIntOrNull()?.coerceIn(1200, 5000) ?: 2000
                 prefs.handshakeTimeoutMs = hsTimeout
                 dlg = ""
                 vpn.restartIfActive()
