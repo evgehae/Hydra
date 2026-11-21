@@ -279,4 +279,23 @@
     <string name="export_full">Экспорт полного бэкапа</string>
     <string name="import_full">Импорт полного бэкапа</string>
     <string name="speed_test">Тест скорости / качества</string>
+
+    <!-- Плитка в шторке -->
+    <string name="tile_label">WARP CLAUDE</string>
+    <string name="tile_on">VPN вкл</string>
+    <string name="tile_on_fmt">%1$s · %2$d мс</string>
+    <string name="tile_off">VPN выкл</string>
+    <string name="tile_connecting">Подключение…</string>
+
+    <!-- WG junk / handshake UI -->
+    <string name="wg_junk_title">Мусорные пакеты WireGuard (Jc / Jmin / Jmax)</string>
+    <string name="wg_junk_sub">Amnezia-стиль: padding перед рукопожатием. 0 = авто из стратегии.</string>
+    <string name="wg_jc">Jc (число)</string>
+    <string name="wg_jmin">Jmin (байт)</string>
+    <string name="wg_jmax">Jmax (байт)</string>
+    <string name="hs_timeout_title">Таймаут рукопожатия</string>
+    <string name="hs_timeout_sub">Сколько ждать ответ WG, прежде чем перейти к следующей стратегии (мс). По умолчанию 2000.</string>
+    <string name="diag_trace_title">cdn-cgi/trace</string>
+    <string name="diag_trace_fmt">IP %1$s · %2$s · %3$s · warp=%4$s</string>
+
 </resources>
