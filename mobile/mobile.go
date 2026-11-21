@@ -21,7 +21,7 @@ const version = "1.0.1-gate"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
-	cfg := hydra.DefaultConfig()
+	cfg := hydra.DefaultEngineConfig()
 	return fmt.Sprintf("hydra-core %s (probe %s, up %s)", version, cfg.ProbeEvery, cfg.UpTimeout)
 }
 
