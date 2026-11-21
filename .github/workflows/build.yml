@@ -57,9 +57,23 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Собрать APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon -PversionCode=${{ github.run_number }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: Hydra-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Hydra build ${{ github.run_number }}
+          body: |
+            Автосборка #${{ github.run_number }}
+            versionCode=${{ github.run_number }}
+            Установи этот APK или дождись окна обновления в приложении.
+          files: app/build/outputs/apk/debug/*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
