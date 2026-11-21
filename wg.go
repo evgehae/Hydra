@@ -9,12 +9,41 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // WireGuard-транспорт: для обычных конфигураций WARP (как у wgcf) и для своих.
 // Адреса WireGuard-серверов Cloudflare (162.159.192/193/195.x, 188.114.96-99.x)
 // относятся к другим префиксам, чем MASQUE (162.159.198.x), и многие провайдеры
 // маршрутизируют их в другие дата-центры (например, FRA вместо DME).
+
+// UserJunk — явные Jc/Jmin/Jmax из UI (0 = не переопределять стратегию).
+var userJunk struct {
+	mu                 sync.Mutex
+	Jc, Jmin, Jmax     int
+}
+
+// SetUserJunk задаёт junk из настроек приложения. Jc=0 → авто.
+func SetUserJunk(jc, jmin, jmax int) {
+	userJunk.mu.Lock()
+	userJunk.Jc, userJunk.Jmin, userJunk.Jmax = jc, jmin, jmax
+	userJunk.mu.Unlock()
+}
+
+func applyUserJunk(jc, jmin, jmax int) (int, int, int) {
+	userJunk.mu.Lock()
+	defer userJunk.mu.Unlock()
+	if userJunk.Jc > 0 {
+		jc = userJunk.Jc
+		if userJunk.Jmin > 0 {
+			jmin = userJunk.Jmin
+		}
+		if userJunk.Jmax > jmin {
+			jmax = userJunk.Jmax
+		}
+	}
+	return jc, jmin, jmax
+}
 
 // IsWGInit: это начало рукопожатия WireGuard (сообщение типа 1, 148 байт)?
 func IsWGInit(p []byte) bool {

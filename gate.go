@@ -82,6 +82,10 @@ func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out cha
 }
 
 // serviceGateDev — та же проверка, но работает и в классическом (не race) режиме.
+// Жёсткие правила (чтобы не было «up, а YouTube/Telegram молчат»):
+//  1) Telegram недоступен → сразу смена пути (если ещё не слишком много плохих ДЦ).
+//  2) Telegram ок, но YouTube и WhatsApp оба недоступны → тоже смена пути.
+//  3) Только один soft-сервис упал → запоминаем, генерируем варианты, путь не рвём.
 func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev, actx context.Context, sid, colo string, out chan<- string) {
 	hard := e.badColoCount(nk) < 3
 	select {
@@ -89,11 +93,11 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 		return
 	case <-actx.Done():
 		return
-	case <-time.After(2500 * time.Millisecond):
+	case <-time.After(800 * time.Millisecond): // быстрее: не ждём 2.5 с, пока юзер смотрит на «пустой» YouTube
 	}
 	base := false
-	for _, ip := range []string{"8.8.8.8", "1.1.1.1"} {
-		if _, err := dev.tcpProbeTo(actx, net.ParseIP(ip).To4(), 443, 3*time.Second); err == nil {
+	for _, ip := range []string{"1.1.1.1", "8.8.8.8"} {
+		if _, err := dev.tcpProbeTo(actx, net.ParseIP(ip).To4(), 443, 2*time.Second); err == nil {
 			base = true
 			break
 		}
@@ -102,11 +106,18 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 		}
 	}
 	if !base {
-		return // сеть шатается: вывод был бы ненадёжным
+		// Базовый интернет через туннель не отвечает — считаем путь мёртвым.
+		if hard {
+			select {
+			case out <- "через туннель нет ответа даже до 1.1.1.1/8.8.8.8 — ищу другой путь":
+			default:
+			}
+		}
+		return
 	}
 	tgOK := false
 	for _, t := range tgTargets {
-		if _, err := dev.tcpProbeTo(actx, net.ParseIP(t.ip).To4(), t.port, 3*time.Second); err == nil {
+		if _, err := dev.tcpProbeTo(actx, net.ParseIP(t.ip).To4(), t.port, 2*time.Second); err == nil {
 			tgOK = true
 			break
 		}
@@ -128,16 +139,18 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 		}
 	}
 	failed := 0
+	softTotal := 0
 	for _, t := range svcSoft {
 		if actx.Err() != nil || ctx.Err() != nil {
 			return
 		}
-		ip, err := dev.resolveA(actx, t.host, 3*time.Second)
+		ip, err := dev.resolveA(actx, t.host, 2*time.Second)
 		if err != nil {
 			Logf("   ? %s: адрес не получен (%v), в память не записываю", t.name, err)
 			continue
 		}
-		_, err = dev.tcpProbeTo(actx, ip, 443, 2500*time.Millisecond)
+		softTotal++
+		_, err = dev.tcpProbeTo(actx, ip, 443, 2*time.Second)
 		if actx.Err() != nil {
 			return
 		}
@@ -148,6 +161,14 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 			failed++
 			Logf("✘ %s через %s (дата-центр %s) не достижим: %v", t.name, sid, colo, err)
 		}
+	}
+	// Все soft-сервисы, которые удалось проверить, лежат — путь плохой, даже если Telegram «ок» по IP.
+	if hard && softTotal >= 2 && failed >= softTotal {
+		select {
+		case out <- "YouTube/WhatsApp не доходят через " + colo + " при живом Telegram — ищу другой путь":
+		default:
+		}
+		return
 	}
 	if failed > 0 {
 		e.svcGrow(nk)

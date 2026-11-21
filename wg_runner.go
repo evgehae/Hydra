@@ -249,6 +249,7 @@ func NewWGPoolRunner(p *WGPool) (Runner, error) {
 		sig := s.Params["sig"]
 		jc := atoiDefault(s.Params["jc"], 0)
 		jmin, jmax := atoiDefault(s.Params["jmin"], 40), atoiDefault(s.Params["jmax"], 70)
+		jc, jmin, jmax = applyUserJunk(jc, jmin, jmax)
 		if sig != "" || jc > 0 {
 			fk.PerInit = func() [][]byte { return WGPrefix(sig, jc, jmin, jmax) }
 			Logf("   пролог перед рукопожатием: сигнатура %q + мусор %d × %d–%d байт", sig, jc, jmin, jmax)

@@ -1,32 +1,19 @@
-Патч Hydra — самолечение / прологи / плитка / jmin-jmax
+Патч #2 — ложный «up», плитка WARP, jmin/jmax → ядро, root-защита
 
-Как применить
-=============
-1. Распакуй этот архив.
-2. Скопируй содержимое поверх своей папки Hydra-main (с заменой файлов).
+ЧТО ИСПРАВЛЕНО
+1. serviceGate жёстче (gate.go):
+   - проверка через 0.8 с, не 2.5 с
+   - нет ответа до 1.1.1.1 → смена пути
+   - Telegram недоступен → смена пути
+   - YouTube+WhatsApp оба недоступны → смена пути
+2. Плитка: подпись только «WARP», состояние в subtitle (colo · ms)
+3. Jc/Jmin/Jmax и timeout из UI реально уходят в ядро (SetWGJunk / SetUpTimeoutMs)
+4. Root: protectProcess (oom -1000, battery whitelist, appops) + boostTun
 
-Структура (все пути относительно корня Hydra-main):
+КАК ПРИМЕНИТЬ
+Скопировать поверх Hydra-main с заменой. Пересобрать Go-ядро (AAR) И APK.
+Без пересборки AAR новые прологи/gate/timeout в рантайме не появятся.
 
-  wg.go
-  colo.go
-  engine.go
-  learn.go
-  app/src/main/AndroidManifest.xml
-  app/src/main/java/app/hydra/HydraTileService.kt   ← НОВЫЙ файл
-  app/src/main/java/app/hydra/Prefs.kt
-  app/src/main/java/app/hydra/AdvancedScreens.kt
-  app/src/main/java/app/hydra/HydraVpnService.kt
-  app/src/main/java/app/hydra/Diagnostics.kt
-  app/src/main/res/values/strings.xml
-  app/src/main/res/values-ru/strings.xml
-
-Новый файл
-----------
-HydraTileService.kt — плитка в шторке. Его раньше не было, просто положи в папку.
-
-После копирования
------------------
-Собери APK как обычно. После установки:
-- добавь плитку WARP CLAUDE в шторку
-- Дополнительно → Jc / Jmin / Jmax и таймаут рукопожатия
-- подключи VPN и пришли новый отчёт
+ВАЖНО (Xiaomi)
+Дополнительно → разрешить работу в фоне + автозапуск.
+С root и включённым «Использовать root» protectProcess сделает часть сам.
