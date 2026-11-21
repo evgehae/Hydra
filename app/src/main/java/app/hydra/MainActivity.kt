@@ -108,6 +108,38 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         account.ensureAll()
+
+        // Агрессивный запрос исключения из оптимизации батареи (Xiaomi/HyperOS и ТВ особенно).
+        // Без этого VPN часто убивается в фоне.
+        try {
+            val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
+                val isTV = ctx.packageManager.hasSystemFeature("android.software.leanback")
+                val isXiaomi = android.os.Build.MANUFACTURER.equals("Xiaomi", true) ||
+                    android.os.Build.MANUFACTURER.equals("Redmi", true) ||
+                    android.os.Build.MANUFACTURER.equals("POCO", true) ||
+                    android.os.Build.BRAND.equals("xiaomi", true)
+                // На Xiaomi/ТВ спрашиваем сразу; на остальных — тоже, но один раз за сессию.
+                if (isTV || isXiaomi || !prefs.batteryAsked) {
+                    prefs.batteryAsked = true
+                    try {
+                        ctx.startActivity(
+                            android.content.Intent(
+                                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                android.net.Uri.parse("package:" + ctx.packageName)
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (t: Throwable) {
+                        try {
+                            ctx.startActivity(
+                                android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (t2: Throwable) { }
+                    }
+                }
+            }
+        } catch (t: Throwable) { }
     }
     // самовосстановление регистрации: если аккаунта нет, пробуем снова (то по Wi-Fi, то через мобильную сеть)
     LaunchedEffect(Unit) {

@@ -109,6 +109,47 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("parallel", true)
         set(v) { sp.edit().putBoolean("parallel", v).apply() }
 
+
+    /** Уведомление при смене стратегии. */
+    var notifyStrategy: Boolean
+        get() = sp.getBoolean("notify_strategy", true)
+        set(v) { sp.edit().putBoolean("notify_strategy", v).apply() }
+
+    /** Уведомление при ошибках / reconnect. */
+    var notifyErrors: Boolean
+        get() = sp.getBoolean("notify_errors", true)
+        set(v) { sp.edit().putBoolean("notify_errors", v).apply() }
+
+    /** Показывать постоянную плитку статуса (ongoing). */
+    var notifyStatus: Boolean
+        get() = sp.getBoolean("notify_status", true)
+        set(v) { sp.edit().putBoolean("notify_status", v).apply() }
+
+    /** Уже показывали запрос на исключение из оптимизации батареи. */
+    var batteryAsked: Boolean
+        get() = sp.getBoolean("battery_asked", false)
+        set(v) { sp.edit().putBoolean("battery_asked", v).apply() }
+
+    /** Использовать root (iptables/nftables) для жёсткого kill-switch. */
+    var useRoot: Boolean
+        get() = sp.getBoolean("use_root", false)
+        set(v) { sp.edit().putBoolean("use_root", v).apply() }
+
+    /** Режим максимальной стабильности (меньше параллелизма, приоритет WG + EU ДЦ). */
+    var stabilityMode: Boolean
+        get() = sp.getBoolean("stability_mode", false)
+        set(v) { sp.edit().putBoolean("stability_mode", v).apply() }
+
+    /** Профиль ТВ: длиннее таймауты, меньше гонки, стабильность важнее скорости. */
+    var tvProfile: Boolean
+        get() = sp.getBoolean("tv_profile", false)
+        set(v) { sp.edit().putBoolean("tv_profile", v).apply() }
+
+    /** Периодическая проверка сервисов (минуты, 0 = только при подключении). */
+    var serviceCheckEveryMin: Int
+        get() = sp.getInt("svc_check_min", 3)
+        set(v) { sp.edit().putInt("svc_check_min", v).apply() }
+
     /** Однократная миграция: прежнее умолчание «DME,LED,SVX,…» заменяется на «DME». */
     fun migrate() {
         if (sp.getInt("defaults_ver", 0) < 2) {

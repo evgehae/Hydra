@@ -46,6 +46,7 @@ class HydraVpnService : VpnService() {
     private var tunPfd: ParcelFileDescriptor? = null
     private var restartFails = 0
     private var nextRestartAt = 0L
+    private var lastNotifiedStrategy = ""
 
     private fun closeTun() {
         try { tunPfd?.close() } catch (t: Throwable) { }
@@ -84,25 +85,51 @@ class HydraVpnService : VpnService() {
     }
 
     private fun buildNotification(text: String): Notification {
-        val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+        val openPi = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        return Notification.Builder(this, CHANNEL)
+        val stopPi = PendingIntent.getService(
+            this, 1,
+            Intent(this, HydraVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val big = Notification.BigTextStyle()
+            .setBigContentTitle(getString(R.string.app_name))
+            .bigText(text)
+        val b = Notification.Builder(this, CHANNEL)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
+            .setStyle(big)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentIntent(pi)
+            .setContentIntent(openPi)
             .setOngoing(true)
-            .build()
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, getString(R.string.notif_disconnect), stopPi)
+            .addAction(android.R.drawable.ic_menu_view, getString(R.string.notif_open), openPi)
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return b.build()
     }
 
     /** Постоянное уведомление держит сервис на переднем плане: система его не убивает. */
     private fun goForeground(text: String) {
         try {
             val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Hydra", NotificationManager.IMPORTANCE_LOW)
-            )
+            val ch = NotificationChannel(
+                CHANNEL,
+                getString(R.string.app_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Статус VPN · WARP CLAUDE"
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            nm.createNotificationChannel(ch)
             val n = buildNotification(text)
             if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -120,16 +147,41 @@ class HydraVpnService : VpnService() {
             try {
                 val raw = mobile.Mobile.engineStatus()
                 val p = raw.split("|")
-                val text = when (p.getOrElse(0) { "off" }) {
-                    "up" -> getString(R.string.notif_up, p.getOrElse(2) { "" }, p.getOrElse(3) { "0" }.toIntOrNull() ?: 0)
+                val prefsNow = Prefs(this@HydraVpnService)
+                val state = p.getOrElse(0) { "off" }
+                val strategy = p.getOrElse(1) { "" }
+                val colo = p.getOrElse(2) { "" }
+                val rtt = p.getOrElse(3) { "0" }.toIntOrNull() ?: 0
+                val text = when (state) {
+                    "up" -> {
+                        val base = getString(R.string.notif_up, colo.ifEmpty { strategy }, rtt)
+                        if (strategy.isNotEmpty() && colo.isNotEmpty())
+                            "$base\n$strategy"
+                        else base
+                    }
                     "reconnecting" -> getString(R.string.notif_reconnecting)
                     "failed" -> getString(R.string.notif_failed)
                     else -> getString(R.string.notif_connecting)
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
-                if (raw.startsWith("up")) restartFails = 0
+                if (raw.startsWith("up")) {
+                    restartFails = 0
+                    maybeServiceCheck(prefsNow)
+                    if (prefsNow.notifyStrategy && strategy.isNotEmpty() && strategy != lastNotifiedStrategy) {
+                        if (lastNotifiedStrategy.isNotEmpty()) {
+                            notifyEvent(
+                                getString(R.string.app_name),
+                                getString(R.string.notif_strategy_changed, strategy, colo)
+                            )
+                        }
+                        lastNotifiedStrategy = strategy
+                    }
+                } else if (state == "reconnecting" || state == "failed") {
+                    if (prefsNow.notifyErrors) {
+                        notifyEvent(getString(R.string.app_name), text)
+                    }
+                }
                 // Wi-Fi ведёт в запрещённый дата-центр: туннель автоматически идёт через мобильную сеть
-                val prefsNow = Prefs(this@HydraVpnService)
                 if (p.getOrElse(4) { "" }.startsWith("⛔") && prefsNow.channel == "auto" && !forceCell) {
                     val wp = curWifiPrint()
                     if (wp.isNotEmpty() && hasCellNet()) {
@@ -193,10 +245,17 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
-            mobile.Mobile.setParallel(if (prefs.parallel) 3L else 1L)
+            val par = when {
+                prefs.tvProfile || prefs.stabilityMode -> 2L
+                prefs.parallel -> 3L
+                else -> 1L
+            }
+            mobile.Mobile.setParallel(par)
             mobile.Mobile.setIPv6(prefs.ipv6)
             mobile.Mobile.setServiceGate(prefs.tgGate)
-            jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=${prefs.parallel}, свой DNS=${if (prefs.customDnsOn) prefs.customDns else "нет"}")
+            try { mobile.Mobile.setStabilityMode(prefs.stabilityMode || prefs.tvProfile) } catch (t: Throwable) { }
+            try { mobile.Mobile.setTVProfile(prefs.tvProfile) } catch (t: Throwable) { }
+            jlog("настройки: протокол=${prefs.protocol}, канал=${prefs.channel}, параллельно=$par, root=${prefs.useRoot}, stability=${prefs.stabilityMode}, tv=${prefs.tvProfile}")
             mobile.Mobile.setCustomEndpoint(prefs.customEndpoint)
             mobile.Mobile.setDNS(systemDns(this))
             mobile.Mobile.setNetKey(currentNetKey())
@@ -254,7 +313,7 @@ class HydraVpnService : VpnService() {
         }
 
         val b = Builder()
-            .setSession("Hydra")
+            .setSession("WARP CLAUDE")
             .setMtu(1280)
             .addAddress(v4, 32)
             .addRoute("0.0.0.0", 0)
@@ -351,6 +410,11 @@ class HydraVpnService : VpnService() {
             jlog("служба: ядро не запустилось: $err — повторю")
             return
         }
+        // Root kill-switch: режем весь исходящий трафик мимо VPN-интерфейса.
+        if (prefs.useRoot && RootHelper.hasRoot()) {
+            val ok = RootHelper.enableKillSwitch("tun0")
+            jlog("root kill-switch: " + if (ok) "включён (" + RootHelper.firewallBackend() + ")" else "не удалось")
+        }
         watchNetwork()
         handler.removeCallbacks(statusUpdater)
         handler.postDelayed(statusUpdater, 3000)
@@ -432,9 +496,36 @@ class HydraVpnService : VpnService() {
         }
     }
 
+
+    private fun notifyEvent(title: String, body: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            val chId = "hydra_events"
+            nm.createNotificationChannel(
+                NotificationChannel(chId, "WARP CLAUDE · события", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+            val openPi = PendingIntent.getActivity(
+                this, 2,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(this, chId)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentIntent(openPi)
+                .setAutoCancel(true)
+                .build()
+            nm.notify((System.currentTimeMillis() % 100000).toInt() + 2000, n)
+        } catch (t: Throwable) { }
+    }
+
     private fun stopVpn() {
         jlog("служба: остановка")
         Prefs(this).wantConnected = false
+        try {
+            if (Prefs(this).useRoot) RootHelper.disableKillSwitch()
+        } catch (t: Throwable) { }
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (t: Throwable) { }
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         netCallback = null

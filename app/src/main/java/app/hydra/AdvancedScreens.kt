@@ -55,6 +55,13 @@ fun AdvancedScreen(
     var parallel by remember { mutableStateOf(prefs.parallel) }
     var ipv6 by remember { mutableStateOf(prefs.ipv6) }
     var tgGate by remember { mutableStateOf(prefs.tgGate) }
+    var useRoot by remember { mutableStateOf(prefs.useRoot) }
+    var stabilityMode by remember { mutableStateOf(prefs.stabilityMode) }
+    var tvProfile by remember { mutableStateOf(prefs.tvProfile) }
+    var notifyStrategy by remember { mutableStateOf(prefs.notifyStrategy) }
+    var notifyErrors by remember { mutableStateOf(prefs.notifyErrors) }
+    var notifyStatus by remember { mutableStateOf(prefs.notifyStatus) }
+    val hasRoot = remember { RootHelper.hasRoot() }
     var dlg by remember { mutableStateOf("") }
     var showLicenses by remember { mutableStateOf(false) }
 
@@ -166,7 +173,64 @@ fun AdvancedScreen(
         SettingRow(stringResource(R.string.btn_autostart_xiaomi), onClick = openAutostart)
         NoteText(stringResource(R.string.kill_info))
 
+        SectionLabel("Root и стабильность")
+        RowDivider()
+        if (hasRoot) {
+            SettingSwitchRow(
+                "Использовать root (iptables/nftables)",
+                "Жёсткий kill-switch: трафик мимо VPN режется на уровне ядра",
+                useRoot
+            ) {
+                useRoot = it
+                prefs.useRoot = it
+                if (!it) {
+                    try { RootHelper.disableKillSwitch() } catch (t: Throwable) { }
+                }
+                vpn.restartIfActive()
+            }
+            NoteText("Root: да · backend: " + RootHelper.firewallBackend())
+        } else {
+            NoteText("Root не обнаружен — ползунок недоступен. На Magisk/KernelSU появится автоматически.")
+        }
+        SettingSwitchRow(
+            "Режим максимальной стабильности",
+            "Приоритет WG + европейские ДЦ, меньше экспериментов",
+            stabilityMode
+        ) {
+            stabilityMode = it
+            prefs.stabilityMode = it
+            vpn.restartIfActive()
+        }
+        SettingSwitchRow(
+            "Профиль ТВ / приставки",
+            "Длиннее таймауты, спокойнее гонка, упор на стабильность",
+            tvProfile
+        ) {
+            tvProfile = it
+            prefs.tvProfile = it
+            vpn.restartIfActive()
+        }
+
+        SectionLabel(stringResource(R.string.notif_section))
+        RowDivider()
+        SettingSwitchRow(stringResource(R.string.notify_status), "", notifyStatus) {
+            notifyStatus = it; prefs.notifyStatus = it
+        }
+        SettingSwitchRow(stringResource(R.string.notify_strategy), "", notifyStrategy) {
+            notifyStrategy = it; prefs.notifyStrategy = it
+        }
+        SettingSwitchRow(stringResource(R.string.notify_errors), "", notifyErrors) {
+            notifyErrors = it; prefs.notifyErrors = it
+        }
+
+        SectionLabel("Бэкап и тест")
+        RowDivider()
+        SettingRow(stringResource(R.string.export_full), onClick = { dlg = "export_full" })
+        SettingRow(stringResource(R.string.import_full), onClick = { dlg = "import_full" })
+        SettingRow(stringResource(R.string.speed_test), onClick = { dlg = "speed" })
+
         SectionLabel(stringResource(R.string.adv_sec_other))
+
         RowDivider()
         SettingRow(stringResource(R.string.settings_language),
             value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })

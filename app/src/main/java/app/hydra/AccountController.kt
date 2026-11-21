@@ -40,6 +40,17 @@ class AccountController(
     private val dnsProvider: () -> String
 ) {
 
+    init {
+        // Передаём в Go реальную модель и факт Android TV — критично для регистрации на приставках.
+        try {
+            val isTV = ctx.packageManager.hasSystemFeature("android.software.leanback")
+            val model = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim()
+            mobile.Mobile.setDeviceHints(model, isTV)
+        } catch (t: Throwable) {
+            // ignore
+        }
+    }
+
     var id by mutableStateOf(readId())
         private set
     var busy by mutableStateOf(false)
