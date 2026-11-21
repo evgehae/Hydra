@@ -80,7 +80,7 @@ class HydraTileService : TileService() {
             }
         }
         try {
-            tile.icon = Icon.createWithResource(this, R.drawable.ic_warp_fg)
+            tile.icon = Icon.createWithResource(this, R.drawable.ic_tile_w)
         } catch (_: Throwable) { }
         tile.updateTile()
     }

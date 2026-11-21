@@ -256,6 +256,10 @@ fun AdvancedScreen(
         RowDivider()
         SettingRow(stringResource(R.string.export_full), onClick = { dlg = "export_full" })
         SettingRow(stringResource(R.string.import_full), onClick = { dlg = "import_full" })
+        SettingRow(stringResource(R.string.export_file), onClick = { dlg = "export_file" })
+        SettingRow(stringResource(R.string.import_file), onClick = { dlg = "import_file" })
+        SettingRow(stringResource(R.string.export_account_file), onClick = { dlg = "export_acc_file" })
+        SettingRow(stringResource(R.string.import_account_file), onClick = { dlg = "import_acc_file" })
         SettingRow(stringResource(R.string.speed_test), onClick = { dlg = "speed" })
 
         SectionLabel(stringResource(R.string.adv_sec_other))
@@ -378,6 +382,84 @@ fun AdvancedScreen(
             },
             onReset = { dlg = "" }
         )
+        "export_file" -> {
+            val body = try {
+                val json = "{" +
+                    "\"protocol\":\"${prefs.protocol}\"," +
+                    "\"parallel\":${prefs.parallel}," +
+                    "\"tgGate\":${prefs.tgGate}," +
+                    "\"useRoot\":${prefs.useRoot}" +
+                    "}"
+                mobile.Mobile.exportFullState(ctx.filesDir.absolutePath, json)
+            } catch (e: Throwable) { e.message ?: "" }
+            val result = if (body.isNotBlank()) BackupIO.write(ctx, BackupIO.FILE_FULL, body) else "FAIL: empty export"
+            TextDialog(
+                stringResource(R.string.export_file),
+                result + "\n\n" + stringResource(R.string.backup_hint),
+                "",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
+        "import_file" -> {
+            val pair = BackupIO.read(ctx, BackupIO.FILE_FULL)
+            val text = pair.first
+            val info = pair.second
+            val result = if (text != null) {
+                try {
+                    val r = mobile.Mobile.importFullState(ctx.filesDir.absolutePath, text)
+                    "OK\n" + info + "\n" + (r ?: "")
+                } catch (e: Throwable) {
+                    "FAIL: " + (e.message ?: "") + "\n" + info
+                }
+            } else {
+                "FAIL\n" + info + "\n\n" + stringResource(R.string.backup_hint)
+            }
+            TextDialog(
+                stringResource(R.string.import_file),
+                result,
+                "",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
+        "export_acc_file" -> {
+            val body = try { mobile.Mobile.exportAccount(ctx.filesDir.absolutePath) } catch (e: Throwable) { "" }
+            val result = if (body.isNotBlank()) BackupIO.write(ctx, BackupIO.FILE_ACCOUNT, body) else "FAIL: no account"
+            TextDialog(
+                stringResource(R.string.export_account_file),
+                result + "\n\n" + stringResource(R.string.backup_hint),
+                "",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
+        "import_acc_file" -> {
+            val pair = BackupIO.read(ctx, BackupIO.FILE_ACCOUNT)
+            val text = pair.first
+            val info = pair.second
+            val result = if (text != null) {
+                try {
+                    val err = mobile.Mobile.importAccount(ctx.filesDir.absolutePath, text)
+                    if (err.isNullOrBlank()) "OK\n" + info else "FAIL: " + err + "\n" + info
+                } catch (e: Throwable) {
+                    "FAIL: " + (e.message ?: "") + "\n" + info
+                }
+            } else {
+                "FAIL\n" + info + "\n\nПоложи hydra-account.txt в Download и повтори."
+            }
+            TextDialog(
+                stringResource(R.string.import_account_file),
+                result,
+                "",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
         "speed" -> {
             val report = try { mobile.Mobile.speedTest() } catch (e: Throwable) { e.message ?: "error" }
             TextDialog(
