@@ -192,6 +192,15 @@ class Prefs(ctx: Context) {
         }
     }
 
+    /** GitHub "owner/repo" для проверки обновлений. Пусто = DEFAULT_REPO в UpdateChecker. */
+    var updateRepo: String
+        get() = sp.getString("update_repo", "") ?: ""
+        set(v) { sp.edit().putString("update_repo", v.trim()).apply() }
+
+    var lastUpdateCheckAt: Long
+        get() = sp.getLong("upd_check_at", 0L)
+        set(v) { sp.edit().putLong("upd_check_at", v).apply() }
+
     fun resetAll() { sp.edit().clear().apply() }
 
     companion object {

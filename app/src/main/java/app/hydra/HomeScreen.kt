@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,6 +75,9 @@ fun HomeScreen(
     val needAppsToast = stringResource(R.string.need_apps_toast)
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.Info?>(null) }
+    var updateBusy by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf("") }
     var wlText by remember { mutableStateOf<String?>(null) }
     var wlRelay by remember { mutableStateOf(false) }
     var wlBusy by remember { mutableStateOf(false) }
@@ -81,6 +85,13 @@ fun HomeScreen(
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) vpn.start()
+    }
+
+    // Проверка обновления с GitHub Releases (раз в 12 ч, при старте экрана).
+    LaunchedEffect(Unit) {
+        UpdateChecker.check(ctx, force = false) { info ->
+            if (info != null) updateInfo = info
+        }
     }
 
     val onTap: () -> Unit = {
@@ -299,6 +310,54 @@ fun HomeScreen(
         Spacer(Modifier.weight(3.2f))
     }
     wlText?.let { t ->
+
+    updateInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { if (!updateBusy) updateInfo = null },
+            title = { Text("Доступно обновление") },
+            text = {
+                Text(
+                    "Сборка ${info.tag} (code ${info.versionCode})\n" +
+                        "Сейчас: ${UpdateChecker.currentVersionCode(ctx)}\n\n" +
+                        (if (updateStatus.isNotEmpty()) updateStatus + "\n\n" else "") +
+                        info.name
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !updateBusy,
+                    onClick = {
+                        if (!UpdateChecker.canRequestInstall(ctx)) {
+                            UpdateChecker.openUnknownSourcesSettings(ctx)
+                            updateStatus = "Разреши установку из этого источника и нажми «Обновить» снова"
+                            return@TextButton
+                        }
+                        updateBusy = true
+                        updateStatus = "Скачиваю…"
+                        scope.launch {
+                            try {
+                                val file = withContext(Dispatchers.IO) {
+                                    UpdateChecker.downloadApk(ctx, info.apkUrl) { p ->
+                                        // progress optional
+                                    }
+                                }
+                                updateStatus = "Устанавливаю…"
+                                withContext(Dispatchers.IO) { UpdateChecker.installApk(ctx, file) }
+                                updateStatus = "Жди системное окно установки"
+                            } catch (e: Throwable) {
+                                updateStatus = "Ошибка: ${e.message}"
+                                updateBusy = false
+                            }
+                        }
+                    }
+                ) { Text(if (updateBusy) "…" else "Обновить") }
+            },
+            dismissButton = {
+                TextButton(enabled = !updateBusy, onClick = { updateInfo = null }) { Text("Позже") }
+            }
+        )
+    }
+
         AlertDialog(
             onDismissRequest = { wlText = null },
             title = { Text(stringResource(R.string.wl_title)) },

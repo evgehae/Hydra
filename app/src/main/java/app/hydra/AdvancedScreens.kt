@@ -18,7 +18,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,11 +46,83 @@ fun AdvancedScreen(
     onLanguageChanged: () -> Unit
 ) {
     val ctx = LocalContext.current
+    var backupMsg by remember { mutableStateOf<String?>(null) }
+    var pendingImportKind by remember { mutableStateOf("full") }
+
+    val openBackupImport = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val text = ctx.contentResolver.openInputStream(uri)?.use {
+                it.readBytes().toString(Charsets.UTF_8)
+            }?.trim().orEmpty()
+            if (text.isEmpty()) {
+                backupMsg = "FAIL: файл пустой"
+                Toast.makeText(ctx, backupMsg, Toast.LENGTH_LONG).show()
+                return@rememberLauncherForActivityResult
+            }
+            val dir = ctx.filesDir.absolutePath
+            val result = if (pendingImportKind == "account") {
+                val err = try { mobile.Mobile.importAccount(dir, text) } catch (e: Throwable) { e.message ?: "error" }
+                if (err.isNullOrBlank()) "OK: аккаунт импортирован" else "FAIL: $err"
+            } else {
+                try {
+                    val r = mobile.Mobile.importFullState(dir, text)
+                    "OK: полный бэкап\n" + (r ?: "")
+                } catch (e: Throwable) {
+                    "FAIL: " + (e.message ?: "")
+                }
+            }
+            backupMsg = result
+            Toast.makeText(ctx, result.take(120), Toast.LENGTH_LONG).show()
+        } catch (e: Throwable) {
+            backupMsg = "FAIL: " + (e.message ?: "")
+            Toast.makeText(ctx, backupMsg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val createBackupExport = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val dir = ctx.filesDir.absolutePath
+            val body = if (pendingImportKind == "account") {
+                try { mobile.Mobile.exportAccount(dir) } catch (e: Throwable) { "" }
+            } else {
+                try {
+                    val json = "{" +
+                        "\"protocol\":\"" + prefs.protocol + "\"," +
+                        "\"parallel\":" + prefs.parallel + "," +
+                        "\"tgGate\":" + prefs.tgGate + "," +
+                        "\"useRoot\":" + prefs.useRoot +
+                        "}"
+                    mobile.Mobile.exportFullState(dir, json)
+                } catch (e: Throwable) { e.message ?: "" }
+            }
+            if (body.isNullOrBlank()) {
+                backupMsg = "FAIL: нечего экспортировать"
+                Toast.makeText(ctx, backupMsg, Toast.LENGTH_LONG).show()
+                return@rememberLauncherForActivityResult
+            }
+            ctx.contentResolver.openOutputStream(uri)?.use { os ->
+                os.write(body.toByteArray(Charsets.UTF_8))
+            }
+            backupMsg = "OK: сохранено"
+            Toast.makeText(ctx, "Бэкап сохранён", Toast.LENGTH_SHORT).show()
+        } catch (e: Throwable) {
+            backupMsg = "FAIL: " + (e.message ?: "")
+            Toast.makeText(ctx, backupMsg, Toast.LENGTH_LONG).show()
+        }
+    }
+
     var sni by remember { mutableStateOf(prefs.customSni) }
     var ep by remember { mutableStateOf(prefs.customEndpoint) }
     var proto by remember { mutableStateOf(prefs.protocol) }
     var channel by remember { mutableStateOf(prefs.channel) }
     var lang by remember { mutableStateOf(prefs.lang) }
+    var updateRepo by remember { mutableStateOf(prefs.updateRepo) }
     var block by remember { mutableStateOf(prefs.blockedColos) }
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
@@ -256,10 +331,22 @@ fun AdvancedScreen(
         RowDivider()
         SettingRow(stringResource(R.string.export_full), onClick = { dlg = "export_full" })
         SettingRow(stringResource(R.string.import_full), onClick = { dlg = "import_full" })
-        SettingRow(stringResource(R.string.export_file), onClick = { dlg = "export_file" })
-        SettingRow(stringResource(R.string.import_file), onClick = { dlg = "import_file" })
-        SettingRow(stringResource(R.string.export_account_file), onClick = { dlg = "export_acc_file" })
-        SettingRow(stringResource(R.string.import_account_file), onClick = { dlg = "import_acc_file" })
+        SettingRow(stringResource(R.string.export_file), onClick = {
+            pendingImportKind = "full"
+            createBackupExport.launch("hydra-backup.txt")
+        })
+        SettingRow(stringResource(R.string.import_file), onClick = {
+            pendingImportKind = "full"
+            openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+        })
+        SettingRow(stringResource(R.string.export_account_file), onClick = {
+            pendingImportKind = "account"
+            createBackupExport.launch("hydra-account.txt")
+        })
+        SettingRow(stringResource(R.string.import_account_file), onClick = {
+            pendingImportKind = "account"
+            openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+        })
         SettingRow(stringResource(R.string.speed_test), onClick = { dlg = "speed" })
 
         SectionLabel(stringResource(R.string.adv_sec_other))
@@ -269,6 +356,8 @@ fun AdvancedScreen(
             value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
         SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
         SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+        SettingRow(stringResource(R.string.update_repo),
+            value = updateRepo.ifEmpty { "—" }, onClick = { dlg = "update_repo" })
         SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
             onClick = { showLicenses = !showLicenses })
         if (showLicenses) {
@@ -278,6 +367,17 @@ fun AdvancedScreen(
         Spacer(Modifier.height(24.dp))
     }
 
+    if (backupMsg != null) {
+        TextDialog(
+            "Бэкап",
+            backupMsg ?: "",
+            "",
+            onDismiss = { backupMsg = null },
+            onApply = { backupMsg = null },
+            onReset = { backupMsg = null }
+        )
+    }
+
     when (dlg) {
         "proto" -> ChoiceDialog(stringResource(R.string.conn_proto), protoOpts, proto,
             onPick = { proto = it; prefs.protocol = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
@@ -285,6 +385,12 @@ fun AdvancedScreen(
             onPick = { channel = it; prefs.channel = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
         "lang" -> ChoiceDialog(stringResource(R.string.settings_language), langOpts, lang,
             onPick = { lang = it; prefs.lang = it; dlg = ""; onLanguageChanged() }, onDismiss = { dlg = "" })
+        "update_repo" -> TextDialog(
+            stringResource(R.string.update_repo), updateRepo, "owner/Hydra",
+            onDismiss = { dlg = "" },
+            onApply = { updateRepo = it.trim(); prefs.updateRepo = updateRepo; dlg = "" },
+            onReset = { updateRepo = ""; prefs.updateRepo = ""; dlg = "" }
+        )
         "sni" -> TextDialog(
             stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
             onDismiss = { dlg = "" },
