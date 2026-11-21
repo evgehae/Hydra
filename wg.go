@@ -226,9 +226,55 @@ func BuildSTUNLike() []byte {
 	return b
 }
 
-// WGPrefix — «пролог» перед каждым рукопожатием WireGuard. По захвату Варвары:
-// сначала пакет, похожий на QUIC (или STUN), затем несколько пакетов случайной
-// длины, затем настоящее рукопожатие. Сервер Cloudflare всё лишнее отбрасывает.
+// BuildDNSLike — валидный DNS-запрос (A cloudflare.com).
+// DPI часто пропускает «обычный» DNS, а WG-рукопожатие после него не режет.
+func BuildDNSLike() []byte {
+	return []byte{
+		0x12, 0x34, // ID
+		0x01, 0x00, // flags: RD
+		0x00, 0x01, // QDCOUNT
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x0a, 'c', 'l', 'o', 'u', 'd', 'f', 'l', 'a', 'r', 'e',
+		0x03, 'c', 'o', 'm', 0x00,
+		0x00, 0x01, // QTYPE A
+		0x00, 0x01, // QCLASS IN
+	}
+}
+
+// BuildSIPLike — короткий SIP OPTIONS (как от VoIP-клиентов).
+func BuildSIPLike() []byte {
+	id := make([]byte, 8)
+	rand.Read(id)
+	hexdigits := "0123456789abcdef"
+	hx := make([]byte, 16)
+	for i := 0; i < 8; i++ {
+		hx[i*2] = hexdigits[id[i]>>4]
+		hx[i*2+1] = hexdigits[id[i]&0xf]
+	}
+	tag := string(hx[:8])
+	cid := string(hx[8:])
+	s := "OPTIONS sip:cloudflare.com SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bK" + tag + "\r\n" +
+		"From: <sip:user@local>;tag=" + tag + "\r\n" +
+		"To: <sip:cloudflare.com>\r\n" +
+		"Call-ID: " + cid + "@hydra\r\n" +
+		"CSeq: 1 OPTIONS\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	return []byte(s)
+}
+
+// BuildH3InitialLike — полный QUIC Initial с CRYPTO (SNI ya.ru), ~1200 байт.
+func BuildH3InitialLike() []byte {
+	pkt, err := BuildFakeQUICInitial("ya.ru", 1200)
+	if err != nil || len(pkt) == 0 {
+		return BuildQUICLike()
+	}
+	return pkt
+}
+
+// WGPrefix — «пролог» перед каждым рукопожатием WireGuard.
+// sig: stun | quic | qv | dns | sip | h3 | "" (только junk).
+// Сервер Cloudflare всё лишнее отбрасывает; DPI видит «разрешённый» трафик.
 func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
 	var out [][]byte
 	switch sig {
@@ -236,9 +282,15 @@ func WGPrefix(sig string, jc, jmin, jmax int) [][]byte {
 		out = append(out, BuildQUICLike())
 	case "stun":
 		out = append(out, BuildSTUNLike())
+	case "dns":
+		out = append(out, BuildDNSLike())
+	case "sip":
+		out = append(out, BuildSIPLike())
+	case "h3":
+		out = append(out, BuildH3InitialLike())
 	}
-	// "qv" — точная копия захвата Варвары на Билайне: QUIC-подобный пакет (108 байт) и сразу 4 мусорных пакета
-	// по 50–80 байт, без лишних пакетов между ними; всего 5 пакетов до рукопожатия, а не 8, как у "quic".
+	// "qv" — точная копия захвата Варвары: QUIC-like + сразу junk, без доп. 4 пакетов.
+	// Для остальных sig (кроме пустого) добавляем 4 средних junk-пакета.
 	if sig != "" && sig != "qv" {
 		out = append(out, GenJunk(4, 80, 120)...)
 	}
@@ -305,16 +357,20 @@ func WGStrategies(acc *Account) []Strategy {
 	}
 	for _, h := range hosts {
 		ep := net.JoinHostPort(h, "2408")
+		// проверенные прологи
 		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
 		if rsv {
 			out = append(out, mkr(ep, "quic", 3, 41, 78, "q3"))
 		}
-		// точный образ Варвары: QUIC-подобный пакет + 4 мусорных по 50–80 байт
 		out = append(out, mk(ep, "qv", 4, 50, 80, "v4"))
 		if rsv {
 			out = append(out, mkr(ep, "qv", 4, 50, 80, "v4"))
 		}
 		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
+		// новые типы пролога: dns / sip / полный h3-Initial
+		out = append(out, mk(ep, "dns", 3, 41, 78, "d3"))
+		out = append(out, mk(ep, "sip", 3, 41, 78, "p3"))
+		out = append(out, mk(ep, "h3", 2, 50, 80, "h3"))
 		out = append(out, mk(ep, "", 4, 40, 70, "j4"))
 		out = append(out, mk(ep, "", 0, 0, 0, "plain"))
 		if rsv {

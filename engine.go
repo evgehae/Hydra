@@ -57,9 +57,9 @@ type EngineConfig struct {
 
 func DefaultEngineConfig() EngineConfig {
 	return EngineConfig{
-		ProbeEvery:  3 * time.Second,
-		UpTimeout:   6 * time.Second,
-		BadProbes:   3,
+		ProbeEvery:  4 * time.Second,
+		UpTimeout:   2 * time.Second, // жёсткий timeout: не ждём 5–6 с amnezia-retry
+		BadProbes:   2,               // быстрее считаем туннель мёртвым и делаем failover
 		TCPCheck:    true,
 		ServiceGate: true, // после подключения сразу проверяем Telegram / YouTube / WhatsApp
 	}
@@ -478,9 +478,15 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 
 	timeout := e.cfg.UpTimeout
 	if e.cfg.Mem.Worked(nk, s.ID) {
-		timeout = timeout * 5 / 3 // уже работала здесь: на медленной сети рукопожатие бывает 5–6 с
+		timeout = timeout * 3 / 2 // уже работала: чуть больше (до ~3 с), но без 5–6 с ожидания
 	} else if e.cfg.Mem.Doomed(nk, s.ID) {
 		timeout = timeout * 2 / 3 // не раз подводила: не тратим на неё время
+	}
+	if timeout < 1200*time.Millisecond {
+		timeout = 1200 * time.Millisecond
+	}
+	if timeout > 3500*time.Millisecond {
+		timeout = 3500 * time.Millisecond // жёсткий потолок: не ждём amnezia-retry 5 с
 	}
 	start := time.Now()
 	var colo string

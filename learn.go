@@ -161,6 +161,11 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			jmin := clampInt(atoiDefault(q["jmin"], 40)+rnd.Intn(21)-10, 5, 100)
 			jmax := clampInt(atoiDefault(q["jmax"], 70)+rnd.Intn(61)-30, jmin+10, 300)
 			q["jc"], q["jmin"], q["jmax"] = strconv.Itoa(jc), strconv.Itoa(jmin), strconv.Itoa(jmax)
+			// мутация типа пролога: stun/quic/dns/sip/h3/qv
+			sigPool := []string{"stun", "quic", "qv", "dns", "sip", "h3", ""}
+			if rnd.Intn(10) < 6 {
+				q["sig"] = mem.PickGene(nk, "wg.sig", sigPool, rnd)
+			}
 			if rnd.Intn(10) < 4 { // у серверов WARP десятки рабочих UDP-портов
 				q["endpoint"] = net.JoinHostPort(hostOnly(q["endpoint"]), mem.PickGene(nk, "wg.port", wgPorts, rnd))
 			}
@@ -168,7 +173,11 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 			if q["rsv"] == "1" {
 				sfx = "r"
 			}
-			id = fmt.Sprintf("wg/%s/g:%d-%d-%d%s", q["endpoint"], jc, jmin, jmax, sfx)
+			sigTag := q["sig"]
+			if sigTag == "" {
+				sigTag = "plain"
+			}
+			id = fmt.Sprintf("wg/%s/g:%s-%d-%d-%d%s", q["endpoint"], sigTag, jc, jmin, jmax, sfx)
 		}
 		if id == "" || have[id] {
 			continue

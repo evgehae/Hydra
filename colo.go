@@ -78,39 +78,101 @@ type ColoReporter interface {
 	Colo(ctx context.Context) (string, error)
 }
 
-// ParseTrace разбирает ответ https://cloudflare.com/cdn-cgi/trace.
+// ParseTrace разбирает ответ https://cloudflare.com/cdn-cgi/trace в map.
 func ParseTrace(body string) map[string]string {
 	m := map[string]string{}
 	sc := bufio.NewScanner(strings.NewReader(body))
 	for sc.Scan() {
-		if k, v, ok := strings.Cut(sc.Text(), "="); ok {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
 			m[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
 	return m
 }
 
+// TraceInfo — стабильный разбор cdn-cgi/trace для диагностики и UI.
+type TraceInfo struct {
+	IP       string // публичный IP
+	Colo     string // код дата-центра (FRA, HEL, …)
+	Loc      string // страна (DE, FI, …)
+	Warp     string // "on" / "off" / ""
+	Gateway  string
+	HttpProtocol string
+	TlsVersion   string
+	Raw      map[string]string
+}
+
+// ParseTraceInfo — надёжный парсер: нормализует ключи, colo в верхний регистр.
+func ParseTraceInfo(body string) TraceInfo {
+	m := ParseTrace(body)
+	ti := TraceInfo{
+		IP:           m["ip"],
+		Colo:         normColo(m["colo"]),
+		Loc:          strings.ToUpper(strings.TrimSpace(m["loc"])),
+		Warp:         strings.ToLower(strings.TrimSpace(m["warp"])),
+		Gateway:      m["gateway"],
+		HttpProtocol: m["http"],
+		TlsVersion:   m["tls"],
+		Raw:          m,
+	}
+	return ti
+}
+
+// String — короткая строка для UI: "FRA · DE · warp=on · 1.2.3.4"
+func (t TraceInfo) String() string {
+	parts := []string{}
+	if t.Colo != "" {
+		parts = append(parts, t.Colo)
+	}
+	if t.Loc != "" {
+		parts = append(parts, t.Loc)
+	}
+	if t.Warp != "" {
+		parts = append(parts, "warp="+t.Warp)
+	}
+	if t.IP != "" {
+		parts = append(parts, t.IP)
+	}
+	return strings.Join(parts, " · ")
+}
+
 // TraceColo — стандартный способ узнать дата-центр: запрос trace через туннель.
 func TraceColo(ctx context.Context, t Tunnel) (string, error) {
+	ti, err := TraceFull(ctx, t)
+	if err != nil {
+		return "", err
+	}
+	if ti.Colo == "" {
+		return "", errors.New("в ответе trace нет colo")
+	}
+	return ti.Colo, nil
+}
+
+// TraceFull — полный разбор cdn-cgi/trace через туннель (IP, colo, loc, warp).
+func TraceFull(ctx context.Context, t Tunnel) (TraceInfo, error) {
 	tr := &http.Transport{
 		DialContext:         t.DialContext,
 		DisableKeepAlives:   true,
-		TLSHandshakeTimeout: 8 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
 	}
-	cl := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	cl := &http.Client{Transport: tr, Timeout: 8 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://cloudflare.com/cdn-cgi/trace", nil)
 	if err != nil {
-		return "", err
+		return TraceInfo{}, err
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		return "", err
+		return TraceInfo{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	colo := normColo(ParseTrace(string(body))["colo"])
-	if colo == "" {
-		return "", errors.New("в ответе trace нет colo")
+	ti := ParseTraceInfo(string(body))
+	if ti.Colo == "" && ti.IP == "" {
+		return ti, errors.New("пустой ответ trace")
 	}
-	return colo, nil
+	return ti, nil
 }
