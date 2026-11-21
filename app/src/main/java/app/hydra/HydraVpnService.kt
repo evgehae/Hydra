@@ -497,6 +497,24 @@ class HydraVpnService : VpnService() {
     }
 
 
+
+    private var lastServiceCheckAt = 0L
+    private fun maybeServiceCheck(prefs: Prefs) {
+        val everyMin = prefs.serviceCheckEveryMin.coerceAtLeast(0)
+        if (everyMin <= 0) return
+        val now = System.currentTimeMillis()
+        if (now - lastServiceCheckAt < everyMin * 60_000L) return
+        lastServiceCheckAt = now
+        Thread {
+            try {
+                val res = mobile.Mobile.serviceCheck()
+                if (res.isNotBlank()) jlog("ServiceCheck:\n" + res.take(500))
+            } catch (t: Throwable) {
+                jlog("ServiceCheck error: " + (t.message ?: "?"))
+            }
+        }.start()
+    }
+
     private fun notifyEvent(title: String, body: String) {
         try {
             val nm = getSystemService(NotificationManager::class.java)

@@ -276,6 +276,43 @@ fun AdvancedScreen(
             onApply = { allow = it.uppercase(); prefs.allowColos = allow; dlg = ""; vpn.restartIfActive() },
             onReset = { allow = ""; prefs.allowColos = ""; dlg = ""; vpn.restartIfActive() }
         )
+        
+        "export_full" -> {
+            val snap = try {
+                val json = "{" +
+                    "\"protocol\":\"${prefs.protocol}\"," +
+                    "\"parallel\":${prefs.parallel}," +
+                    "\"tgGate\":${prefs.tgGate}," +
+                    "\"useRoot\":${prefs.useRoot}" +
+                    "}"
+                mobile.Mobile.exportFullState(ctx.filesDir.absolutePath, json)
+            } catch (e: Throwable) { e.message ?: "" }
+            TextDialog(
+                stringResource(R.string.export_full), snap, "hydra-full1:…",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
+        "import_full" -> TextDialog(
+            stringResource(R.string.import_full), "", "hydra-full1:…",
+            onDismiss = { dlg = "" },
+            onApply = {
+                try { mobile.Mobile.importFullState(ctx.filesDir.absolutePath, it) } catch (e: Throwable) { }
+                dlg = ""
+            },
+            onReset = { dlg = "" }
+        )
+        "speed" -> {
+            val report = try { mobile.Mobile.speedTest() } catch (e: Throwable) { e.message ?: "error" }
+            TextDialog(
+                stringResource(R.string.speed_test), report, "",
+                onDismiss = { dlg = "" },
+                onApply = { dlg = "" },
+                onReset = { dlg = "" }
+            )
+        }
+
         "keys" -> ConfirmDialog(
             stringResource(R.string.conn_reset_keys), stringResource(R.string.conn_reset_keys_q),
             onDismiss = { dlg = "" },
