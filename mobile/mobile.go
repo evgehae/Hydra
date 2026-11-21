@@ -17,7 +17,7 @@ import (
 	hydra "hydra/core"
 )
 
-const version = "0.9.1"
+const version = "1.0.0-claude"
 
 // Version проверяет, что Go-ядро собрано и вызывается из Android.
 func Version() string {
@@ -306,17 +306,3 @@ func ImportFullState(dir, text string) string {
 	return "OK\n" + prefs
 }
 
-// SpeedTest — лёгкая проверка скорости через поднятый туннель: TCP до 1.1.1.1:443
-// и замер RTT + грубая оценка (сколько байт удалось прокачать за короткий probe).
-// Возвращает многострочный отчёт для UI.
-func SpeedTest() string {
-	vpnMu.Lock()
-	e := vpnEngine
-	vpnMu.Unlock()
-	if e == nil {
-		return "туннель не подключён"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	return e.SpeedTest(ctx)
-}

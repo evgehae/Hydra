@@ -244,3 +244,17 @@ func GetJournalFull(n int) string {
 	}
 	return hydra.JournalText(n)
 }
+
+
+// SpeedTest — оценка качества через поднятый туннель.
+func SpeedTest() string {
+	vpnMu.Lock()
+	e := vpnEngine
+	vpnMu.Unlock()
+	if e == nil {
+		return "туннель не подключён"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return e.SpeedTest(ctx)
+}

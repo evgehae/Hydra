@@ -11,3 +11,6 @@ func StartTunnel(dir string, tunFd int) string {
 func StopTunnel() {}
 
 func EngineStatus() string { return "off||||" }
+
+
+func SpeedTest() string { return "туннель не подключён" }
