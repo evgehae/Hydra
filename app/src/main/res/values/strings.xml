@@ -298,4 +298,11 @@
     <string name="diag_trace_title">cdn-cgi/trace</string>
     <string name="diag_trace_fmt">IP %1$s · %2$s · %3$s · warp=%4$s</string>
 
+
+    <string name="export_file">Export backup to file</string>
+    <string name="import_file">Import backup from file</string>
+    <string name="export_account_file">Export account only (to file)</string>
+    <string name="import_account_file">Import account only (from file)</string>
+    <string name="backup_hint">On TV: copy the file via USB from Download or Android/data/…/files/</string>
+
 </resources>
