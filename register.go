@@ -63,9 +63,17 @@ type Account struct {
 	// Для конфигураций WireGuard (Kind == "wg"): ключ — X25519 в base64.
 	Kind     string `json:"kind,omitempty"`
 	Custom   bool   `json:"custom,omitempty"` // импортирована пользователем
-	Jc       int    `json:"jc,omitempty"`     // «мусорные» пакеты перед рукопожатием (как в AmneziaWG)
+	Jc       int    `json:"jc,omitempty"`     // junk packets before handshake (AmneziaWG)
 	Jmin     int    `json:"jmin,omitempty"`
 	Jmax     int    `json:"jmax,omitempty"`
+	S1       int    `json:"s1,omitempty"`     // AmneziaWG init packet padding
+	S2       int    `json:"s2,omitempty"`
+	S3       int    `json:"s3,omitempty"`
+	S4       int    `json:"s4,omitempty"`
+	H1       int    `json:"h1,omitempty"`     // AmneziaWG header junk values
+	H2       int    `json:"h2,omitempty"`
+	H3       int    `json:"h3,omitempty"`
+	H4       int    `json:"h4,omitempty"`
 	ClientID string `json:"client_id,omitempty"`
 }
 
@@ -229,6 +237,11 @@ var allMethods = []regMethod{
 	{"doh+frag", true, true, ""},
 	{"front-speed", true, false, "speed.cloudflare.com"},
 	{"front-www", true, true, "www.cloudflare.com"},
+	// Дополнительные методы для жёстких сетей, DPI и Android TV:
+	{"frag-late", false, true, ""},
+	{"doh-quad9", true, false, ""},
+	{"front-cdn", true, true, "cdnjs.cloudflare.com"},
+	{"front-api", true, false, "api.cloudflare.com"},
 }
 
 type route struct {
@@ -239,23 +252,25 @@ type route struct {
 }
 
 type Registrar struct {
-	Dialers  []NamedDialer // пусто = системная сеть
-	Methods  []string      // пусто = все способы
-	BaseURL  string        // для тестов; по умолчанию боевой API
-	Stagger  time.Duration // пауза между стартами маршрутов
-	Timeout  time.Duration // на один маршрут
-	Attempts int           // сколько раундов гонки
-	Backoff  time.Duration // базовая пауза между раундами (удваивается)
-	WG       bool          // регистрировать конфигурацию WireGuard (а не MASQUE)
-	Log      func(string)
+	Dialers     []NamedDialer // пусто = системная сеть
+	Methods     []string      // пусто = все способы
+	BaseURL     string        // для тестов; по умолчанию боевой API
+	Stagger     time.Duration // пауза между стартами маршрутов
+	Timeout     time.Duration // на один маршрут
+	Attempts    int           // сколько раундов гонки
+	Backoff     time.Duration // базовая пауза между раундами (удваивается)
+	WG          bool          // регистрировать конфигурацию WireGuard (а не MASQUE)
+	DeviceModel string        // "Android", "Android TV", реальная модель — влияет на body и таймауты
+	IsTV        bool          // true для leanback — более терпеливые настройки
+	Log         func(string)
 }
 
 func NewRegistrar() *Registrar {
 	return &Registrar{
-		Stagger:  400 * time.Millisecond,
-		Timeout:  15 * time.Second,
-		Attempts: 3,
-		Backoff:  2 * time.Second,
+		Stagger:  350 * time.Millisecond,
+		Timeout:  22 * time.Second, // было 15 — на ТВ и плохих сетях часто не хватало
+		Attempts: 4,                // было 3
+		Backoff:  1500 * time.Millisecond,
 	}
 }
 
@@ -315,6 +330,8 @@ func (r *Registrar) routes() []route {
 }
 
 // Register регистрирует новое устройство, перебирая маршруты и повторяя раунды.
+// На Android TV и в жёстких сетях после неудачи MASQUE-гонки делаем последний
+// шанс: чистую WireGuard-регистрацию (как wgcf) — часто это единственное, что проходит.
 func (r *Registrar) Register(ctx context.Context) (*Account, error) {
 	var last error
 	for i := 0; i < r.Attempts; i++ {
@@ -338,6 +355,20 @@ func (r *Registrar) Register(ctx context.Context) (*Account, error) {
 		if !sleep(ctx, wait) {
 			return nil, ctx.Err()
 		}
+	}
+
+	// Последний шанс: если мы регистрировали MASQUE и всё упало — пробуем чистый WireGuard.
+	if !r.WG {
+		r.logf("все маршруты MASQUE не удались — пробую чистую регистрацию WireGuard (как wgcf)")
+		oldWG := r.WG
+		r.WG = true
+		acc, err := r.raceOnce(ctx)
+		r.WG = oldWG
+		if err == nil {
+			r.logf("чистая WireGuard-регистрация прошла успешно")
+			return acc, nil
+		}
+		last = err
 	}
 	return nil, last
 }
@@ -447,12 +478,20 @@ func (r *Registrar) attempt(ctx context.Context, rt route) (*Account, error) {
 
 	wgPub := make([]byte, 32) // как у приложения: «ключ WireGuard», который мы не используем
 	rand.Read(wgPub)
+	model := r.DeviceModel
+	if model == "" {
+		if r.IsTV {
+			model = "Android TV"
+		} else {
+			model = "Android"
+		}
+	}
 	regBody := map[string]any{
 		"key":           base64.StdEncoding.EncodeToString(wgPub),
 		"install_id":    "",
 		"fcm_token":     "",
 		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		"model":         "Android",
+		"model":         model,
 		"serial_number": randHex(8),
 		"locale":        "en_US",
 		"key_type":      "curve25519",
@@ -589,7 +628,11 @@ func (r *Registrar) dialTLS(ctx context.Context, rt route, addr string) (net.Con
 	}
 	var c net.Conn = raw
 	if rt.m.frag {
-		c = &fragConn{Conn: raw, at: 3, delay: 15 * time.Millisecond}
+		at, delay := 3, 15*time.Millisecond
+		if strings.Contains(rt.m.name, "late") {
+			at, delay = 40, 25*time.Millisecond // более поздняя фрагментация — лучше на части DPI и ТВ-стеках
+		}
+		c = &fragConn{Conn: raw, at: at, delay: delay}
 	}
 	name := host
 	if rt.m.sni != "" {
@@ -640,6 +683,8 @@ func dohResolve(ctx context.Context, d NamedDialer, host string) ([]string, erro
 	urls := []string{
 		"https://1.1.1.1/dns-query?name=" + host + "&type=A",
 		"https://8.8.8.8/resolve?name=" + host + "&type=A",
+		"https://9.9.9.9:5053/dns-query?name=" + host + "&type=A", // Quad9
+		"https://1.0.0.1/dns-query?name=" + host + "&type=A",
 	}
 	var lastErr error
 	for _, u := range urls {
@@ -696,12 +741,20 @@ func (r *Registrar) attemptWG(ctx context.Context, cl *http.Client, base string)
 	if err != nil {
 		return nil, err
 	}
+	model := r.DeviceModel
+	if model == "" {
+		if r.IsTV {
+			model = "Android TV"
+		} else {
+			model = "Android"
+		}
+	}
 	body := map[string]any{
 		"key":           base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()),
 		"install_id":    "",
 		"fcm_token":     "",
 		"tos":           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		"model":         "Android",
+		"model":         model,
 		"serial_number": randHex(8),
 		"locale":        "en_US",
 		"key_type":      "curve25519",

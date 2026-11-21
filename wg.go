@@ -92,8 +92,24 @@ func (a *Account) WGConfig() string {
 	sb.WriteString("[Interface]\n")
 	fmt.Fprintf(&sb, "PrivateKey = %s\n", a.PrivateKey)
 	fmt.Fprintf(&sb, "Address = %s\nDNS = 1.1.1.1, 1.0.0.1\nMTU = 1280\n", strings.Join(addrs, ", "))
-	if a.Jc > 0 {
-		fmt.Fprintf(&sb, "Jc = %d\nJmin = %d\nJmax = %d\nS1 = 0\nS2 = 0\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n", a.Jc, a.Jmin, a.Jmax)
+	if a.Jc > 0 || a.S1 > 0 || a.H1 > 0 {
+		s1, s2, s3, s4 := a.S1, a.S2, a.S3, a.S4
+		h1, h2, h3, h4 := a.H1, a.H2, a.H3, a.H4
+		if h1 == 0 {
+			h1 = 1
+		}
+		if h2 == 0 {
+			h2 = 2
+		}
+		if h3 == 0 {
+			h3 = 3
+		}
+		if h4 == 0 {
+			h4 = 4
+		}
+		fmt.Fprintf(&sb, "Jc = %d\nJmin = %d\nJmax = %d\n", a.Jc, a.Jmin, a.Jmax)
+		fmt.Fprintf(&sb, "S1 = %d\nS2 = %d\nS3 = %d\nS4 = %d\n", s1, s2, s3, s4)
+		fmt.Fprintf(&sb, "H1 = %d\nH2 = %d\nH3 = %d\nH4 = %d\n", h1, h2, h3, h4)
 	}
 	sb.WriteString("\n[Peer]\n")
 	fmt.Fprintf(&sb, "PublicKey = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = %s\nPersistentKeepalive = 25\n", a.PeerPublicKey, a.EndpointV4)
@@ -147,14 +163,22 @@ func ParseWGConfig(text string) (*Account, error) {
 				acc.Jmin, _ = strconv.Atoi(v)
 			case "jmax":
 				acc.Jmax, _ = strconv.Atoi(v)
-			case "s1", "s2":
-				if n, _ := strconv.Atoi(v); n != 0 {
-					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (S1/S2) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
-				}
-			case "h1", "h2", "h3", "h4":
-				if n, _ := strconv.Atoi(v); n != 0 && strconv.Itoa(n) != string(k[1]) {
-					return nil, errors.New("конфигурация меняет формат пакетов AmneziaWG (H1–H4) — это пока не поддерживается; поддерживаются Jc/Jmin/Jmax")
-				}
+			case "s1":
+				acc.S1, _ = strconv.Atoi(v)
+			case "s2":
+				acc.S2, _ = strconv.Atoi(v)
+			case "s3":
+				acc.S3, _ = strconv.Atoi(v)
+			case "s4":
+				acc.S4, _ = strconv.Atoi(v)
+			case "h1":
+				acc.H1, _ = strconv.Atoi(v)
+			case "h2":
+				acc.H2, _ = strconv.Atoi(v)
+			case "h3":
+				acc.H3, _ = strconv.Atoi(v)
+			case "h4":
+				acc.H4, _ = strconv.Atoi(v)
 			}
 		case "peer":
 			switch k {

@@ -30,20 +30,10 @@ var serviceNames = []struct{ name, host string }{
 	{"Discord", "discord.com"},
 }
 
-// resolveV4 возвращает первый IPv4-адрес имени. Запрос идёт обычным DNS вне туннеля.
+// resolveV4 возвращает первый IPv4-адрес имени.
+// Сначала пробует настоящий DoH (не зависит от DNS оператора), потом обычный резолвер.
 func resolveV4(ctx context.Context, host string) (net.IP, error) {
-	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(cctx, host)
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range addrs {
-		if ip4 := a.IP.To4(); ip4 != nil {
-			return ip4, nil
-		}
-	}
-	return nil, fmt.Errorf("в ответе нет адреса IPv4")
+	return ResolveA(ctx, host)
 }
 
 // ServiceCheck проверяет через действующий туннель, проходит ли TCP до популярных сервисов

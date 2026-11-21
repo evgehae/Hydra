@@ -78,21 +78,26 @@ var svcSoft = []struct{ name, host string }{
 // ищет другой путь. Больше трёх плохих дата-центров в одной сети не набираем: значит, дело не в них.
 // Результаты по всем сервисам запоминаются: стратегии, через которые доходит всё, получают приоритет.
 func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out chan<- string) {
+	e.serviceGateDev(ctx, nk, a.dev, a.ctx, a.s.ID, a.colo, out)
+}
+
+// serviceGateDev — та же проверка, но работает и в классическом (не race) режиме.
+func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev, actx context.Context, sid, colo string, out chan<- string) {
 	hard := e.badColoCount(nk) < 3
 	select {
 	case <-ctx.Done():
 		return
-	case <-a.ctx.Done():
+	case <-actx.Done():
 		return
 	case <-time.After(2500 * time.Millisecond):
 	}
 	base := false
 	for _, ip := range []string{"8.8.8.8", "1.1.1.1"} {
-		if _, err := a.dev.tcpProbeTo(a.ctx, net.ParseIP(ip).To4(), 443, 3*time.Second); err == nil {
+		if _, err := dev.tcpProbeTo(actx, net.ParseIP(ip).To4(), 443, 3*time.Second); err == nil {
 			base = true
 			break
 		}
-		if a.ctx.Err() != nil {
+		if actx.Err() != nil {
 			return
 		}
 	}
@@ -101,22 +106,22 @@ func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out cha
 	}
 	tgOK := false
 	for _, t := range tgTargets {
-		if _, err := a.dev.tcpProbeTo(a.ctx, net.ParseIP(t.ip).To4(), t.port, 3*time.Second); err == nil {
+		if _, err := dev.tcpProbeTo(actx, net.ParseIP(t.ip).To4(), t.port, 3*time.Second); err == nil {
 			tgOK = true
 			break
 		}
-		if a.ctx.Err() != nil {
+		if actx.Err() != nil {
 			return
 		}
 	}
-	e.cfg.Mem.RecordService(nk, a.s.ID, "Telegram", tgOK)
+	e.cfg.Mem.RecordService(nk, sid, "Telegram", tgOK)
 	if tgOK {
-		Logf("✔ Telegram через %s (дата-центр %s) достижим", a.s.ID, a.colo)
+		Logf("✔ Telegram через %s (дата-центр %s) достижим", sid, colo)
 	} else {
-		Logf("✘ Telegram через %s (дата-центр %s) не достижим", a.s.ID, a.colo)
+		Logf("✘ Telegram через %s (дата-центр %s) не достижим", sid, colo)
 		if hard {
 			select {
-			case out <- "Telegram не доходит через дата-центр " + a.colo + " (остальной интернет работает) — ищу другой путь":
+			case out <- "Telegram не доходит через дата-центр " + colo + " (остальной интернет работает) — ищу другой путь":
 			default:
 			}
 			return
@@ -124,24 +129,24 @@ func (e *Engine) serviceGate(ctx context.Context, nk string, a *attempt, out cha
 	}
 	failed := 0
 	for _, t := range svcSoft {
-		if a.ctx.Err() != nil || ctx.Err() != nil {
+		if actx.Err() != nil || ctx.Err() != nil {
 			return
 		}
-		ip, err := a.dev.resolveA(a.ctx, t.host, 3*time.Second)
+		ip, err := dev.resolveA(actx, t.host, 3*time.Second)
 		if err != nil {
 			Logf("   ? %s: адрес не получен (%v), в память не записываю", t.name, err)
 			continue
 		}
-		_, err = a.dev.tcpProbeTo(a.ctx, ip, 443, 2500*time.Millisecond)
-		if a.ctx.Err() != nil {
+		_, err = dev.tcpProbeTo(actx, ip, 443, 2500*time.Millisecond)
+		if actx.Err() != nil {
 			return
 		}
-		e.cfg.Mem.RecordService(nk, a.s.ID, t.name, err == nil)
+		e.cfg.Mem.RecordService(nk, sid, t.name, err == nil)
 		if err == nil {
-			Logf("✔ %s через %s достижим", t.name, a.s.ID)
+			Logf("✔ %s через %s достижим", t.name, sid)
 		} else {
 			failed++
-			Logf("✘ %s через %s (дата-центр %s) не достижим: %v", t.name, a.s.ID, a.colo, err)
+			Logf("✘ %s через %s (дата-центр %s) не достижим: %v", t.name, sid, colo, err)
 		}
 	}
 	if failed > 0 {

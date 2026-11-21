@@ -56,7 +56,13 @@ type EngineConfig struct {
 }
 
 func DefaultEngineConfig() EngineConfig {
-	return EngineConfig{ProbeEvery: 3 * time.Second, UpTimeout: 6 * time.Second, BadProbes: 3, TCPCheck: true}
+	return EngineConfig{
+		ProbeEvery:  3 * time.Second,
+		UpTimeout:   6 * time.Second,
+		BadProbes:   3,
+		TCPCheck:    true,
+		ServiceGate: true, // после подключения сразу проверяем Telegram / YouTube / WhatsApp
+	}
 }
 
 type Status struct {
@@ -552,11 +558,24 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	e.emit("connected", s.ID, colo)
 	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(start).Seconds(), s.ID, colo, rtt.Milliseconds())
 
+	// Автоматическая проверка сервисов сразу после state: up (классический путь).
+	gateCh := make(chan string, 1)
+	if e.cfg.ServiceGate {
+		go e.serviceGateDev(ctx, nk, dev, actx, s.ID, colo, gateCh)
+	}
+
 	bad, ticks := 0, 0
 	tk := time.NewTicker(e.cfg.ProbeEvery)
 	defer tk.Stop()
 	for {
 		select {
+		case reason := <-gateCh:
+			if reason != "" {
+				Logf("✘ %s", reason)
+				e.noteBadColo(nk, colo)
+				e.cfg.Mem.Record(nk, s.ID, false, 0)
+				return outcome{wasUp: true, coloBlocked: colo, reason: reason}
+			}
 		case <-ctx.Done():
 			return outcome{wasUp: true, reason: "остановка"}
 		case <-e.cfg.NetChanged:
