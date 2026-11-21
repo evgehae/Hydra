@@ -184,3 +184,29 @@ func currentTV() bool {
 	defer polMu.Unlock()
 	return polTV
 }
+
+// SetWGJunk передаёт Jc/Jmin/Jmax из UI в ядро (0 = авто из стратегии).
+func SetWGJunk(jc, jmin, jmax int) {
+	hydra.SetUserJunk(jc, jmin, jmax)
+}
+
+// SetUpTimeoutMs — жёсткий timeout рукопожатия в миллисекундах (1200–3500).
+var polUpMs = 2000
+
+func SetUpTimeoutMs(ms int) {
+	if ms < 1200 {
+		ms = 1200
+	}
+	if ms > 5000 {
+		ms = 5000
+	}
+	polMu.Lock()
+	polUpMs = ms
+	polMu.Unlock()
+}
+
+func currentUpTimeout() int {
+	polMu.Lock()
+	defer polMu.Unlock()
+	return polUpMs
+}

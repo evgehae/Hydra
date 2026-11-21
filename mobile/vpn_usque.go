@@ -133,6 +133,7 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == "" || !currentIPv6()
 	cfg.ServiceGate = currentGate()
+	cfg.UpTimeout = time.Duration(currentUpTimeout()) * time.Millisecond
 	cfg.NetAlive = realNetAlive
 	cfg.Allow = allow
 	cfg.NetState = realNetState
