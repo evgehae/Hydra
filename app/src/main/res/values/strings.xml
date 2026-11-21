@@ -305,4 +305,5 @@
     <string name="import_account_file">Import account only (from file)</string>
     <string name="backup_hint">On TV: copy the file via USB from Download or Android/data/…/files/</string>
 
+    <string name="update_repo">GitHub repo for updates (owner/name)</string>
 </resources>
