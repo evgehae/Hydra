@@ -73,6 +73,9 @@ func (e *Engine) verify(nk string, a *attempt) (bool, outcome) {
 	} else if e.cfg.Mem.Doomed(nk, s.ID) {
 		timeout = timeout * 2 / 3
 	}
+	if fl := e.slowFloor(nk); timeout < fl { // медленная сеть (Билайн): не режем ожидание до ~1,3 с
+		timeout = fl
+	}
 	up := false
 	var colo string
 	var rtt time.Duration

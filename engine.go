@@ -488,6 +488,9 @@ func (e *Engine) runStrategy(ctx context.Context, nk string, s Strategy) outcome
 	if timeout > 3500*time.Millisecond {
 		timeout = 3500 * time.Millisecond // жёсткий потолок: не ждём amnezia-retry 5 с
 	}
+	if fl := e.slowFloor(nk); timeout < fl { // медленная сеть: путь живой, но отвечает за 0,5–2 с
+		timeout = fl
+	}
 	start := time.Now()
 	var colo string
 	var rtt time.Duration

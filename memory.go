@@ -306,7 +306,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	agg := m.classAggLocked(net)
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
-		adj := classAdj(agg, s.ID, st)
+		adj := classAdj(agg, s.ID, st) + m.coloBonusLocked(net, s)
 		if sb := seedBonus(net, s.ID); sb > 0 && (st == nil || st.OK > 0 || st.Fail < 3) {
 			adj += sb
 		}

@@ -78,6 +78,10 @@ func (m *Memory) PickGene(nk, key string, opts []string, rnd *rand.Rand) string 
 		if st := m.Genes[nk+"|"+key+"="+o]; st != nil {
 			ok, fail = st.OK, st.Fail
 		}
+		if sd, has := geneSeeds[nk][key+"="+o]; has { // начальная подсказка по оператору
+			ok += sd[0]
+			fail += sd[1]
+		}
 		r := (float64(ok) + 1) / (float64(ok+fail) + 2)
 		w[i] = r*r + 0.05
 		sum += w[i]

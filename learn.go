@@ -33,6 +33,15 @@ func (e *Engine) allStrategies(nk string) []Strategy {
 			out = append(out, s)
 		}
 	}
+	if v6Dead() { // нет маршрута до IPv6: v6-адреса не пробуем (экономим ~100 попыток)
+		f := out[:0:0]
+		for _, s := range out {
+			if !isV6Strategy(s) {
+				f = append(f, s)
+			}
+		}
+		out = f
+	}
 	return out
 }
 

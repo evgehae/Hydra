@@ -240,6 +240,7 @@ func NewWGPoolRunner(p *WGPool) (Runner, error) {
 		// быстрая проверка маршрута
 		if c, derr := net.DialUDP("udp", nil, remote); derr != nil {
 			Logf("   ✘ нет маршрута до %s: %v", remote, derr)
+			markV6Dead(remote.IP)
 			return fmt.Errorf("нет маршрута до %s", remote)
 		} else {
 			c.Close()

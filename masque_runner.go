@@ -107,6 +107,7 @@ func NewMasqueRunner(acc *Account) (Runner, error) {
 			c, derr := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
 			if derr != nil {
 				Logf("   ✘ нет маршрута до %s: %v", host, derr)
+				markV6Dead(ip)
 				return fmt.Errorf("нет маршрута до %s", host)
 			}
 			c.Close()

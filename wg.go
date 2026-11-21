@@ -380,7 +380,7 @@ func WGStrategies(acc *Account) []Strategy {
 	}
 	// 1) адрес из аккаунта и проверенный у Варвары 162.159.192.3 — с разными прологами
 	// 162.159.192.4 работал на Билайне, 188.114.96.41 — адрес из захвата Варвары
-	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3", "162.159.192.4", "188.114.96.41"}
+	first := []string{hostOnly(acc.EndpointV4), "162.159.192.3", "162.159.192.4", "188.114.96.41", "162.159.192.6"}
 	for _, h := range first {
 		add(h)
 	}
@@ -418,6 +418,9 @@ func WGStrategies(acc *Account) []Strategy {
 			if rsv {
 				out = append(out, mkr(net.JoinHostPort(h, "2408"), "quic", 3, 41, 78, "q3"))
 			}
+			// q3 на части сетей даёт «рукопожатие есть, данных нет»: добавляем STUN- и h3-прологи
+			out = append(out, mk(net.JoinHostPort(h, "2408"), "stun", 3, 41, 78, "s3"))
+			out = append(out, mk(net.JoinHostPort(h, "2408"), "h3", 2, 50, 80, "h3"))
 		}
 	}
 	// 3) другие порты: некоторые провайдеры режут именно 2408
