@@ -140,6 +140,8 @@
     <string name="notif_connecting">Connecting…</string>
     <string name="notif_up">Connected · %1$s · %2$d ms</string>
     <string name="notif_reconnecting">Reconnecting…</string>
+    <string name="notif_disconnect">Disconnect</string>
+    <string name="notif_open">Open</string>
     <string name="notif_failed">No connection, retrying</string>
     <string name="diag_tunnel_title">Through Hydra (tunnel)</string>
     <string name="diag_tunnel_off">The tunnel is off. Connect to see its checks.</string>
@@ -269,4 +271,12 @@
     <string name="adv_ipv6_sub">Off: apps go straight over IPv4 (faster, no stalls). Turn on if you need an IPv6-only resource.</string>
     <string name="adv_tg">Check Telegram after connecting</string>
     <string name="adv_tg_sub">If the internet works but Telegram does not, Hydra picks another data center by itself.</string>
+    <string name="notif_strategy_changed">New route: %1$s · %2$s</string>
+    <string name="notif_section">Notifications</string>
+    <string name="notify_strategy">Notify on route change</string>
+    <string name="notify_errors">Notify on errors</string>
+    <string name="notify_status">Status tile in notification shade</string>
+    <string name="export_full">Export full backup</string>
+    <string name="import_full">Import full backup</string>
+    <string name="speed_test">Speed / quality test</string>
 </resources>
