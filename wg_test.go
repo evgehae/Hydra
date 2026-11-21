@@ -41,8 +41,10 @@ func TestParseWGConfigRejectsBadInput(t *testing.T) {
 	if _, err := ParseWGConfig(strings.Replace(good, "Endpoint = 1.2.3.4:51820", "Endpoint = nowhere", 1)); err == nil {
 		t.Fatal("плохой Endpoint должен отвергаться")
 	}
-	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "S1 = 15\n[Peer]", 1)); err == nil {
-		t.Fatal("S1 != 0 (изменённый формат пакетов) должен отвергаться")
+	if a, err := ParseWGConfig(strings.Replace(good, "[Peer]", "S1 = 15\n[Peer]", 1)); err != nil {
+		t.Fatalf("S1 должен приниматься (AmneziaWG): %v", err)
+	} else if a.S1 != 15 {
+		t.Fatalf("S1: want 15 got %d", a.S1)
 	}
 	if _, err := ParseWGConfig(strings.Replace(good, "[Peer]", "H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nJc = 3\nJmin = 20\nJmax = 40\n[Peer]", 1)); err != nil {
 		t.Fatalf("стандартные H1–H4 и Jc/Jmin/Jmax должны приниматься: %v", err)

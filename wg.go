@@ -118,7 +118,7 @@ func (a *Account) WGConfig() string {
 
 // ParseWGConfig разбирает .conf (WireGuard или AmneziaWG). Из обфускации
 // AmneziaWG поддерживаются «мусорные» пакеты Jc/Jmin/Jmax; изменение формата
-// пакетов (S1/S2/H1–H4) требует отдельной библиотеки и отвергается.
+// пакетов (S1/S2/H1–H4) сохраняются в аккаунте и .conf; runtime wireguard-go пока использует Jc/Jmin/Jmax.
 func ParseWGConfig(text string) (*Account, error) {
 	acc := &Account{Kind: "wg", Custom: true, ID: "custom"}
 	section := ""
