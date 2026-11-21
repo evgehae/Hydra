@@ -49,29 +49,31 @@ class HydraTileService : TileService() {
         } catch (_: Throwable) {
             if (prefs.wantConnected) "connecting" else "down"
         }
-        // Подпись плитки всегда короткая: WARP. Состояние — в subtitle (API 29+).
-        tile.label = getString(R.string.tile_label) // "WARP"
+        // Крупная подпись на плитке (на Xiaomi subtitle почти не читается).
         when {
             st == "up" || st == "connected" -> {
                 tile.state = Tile.STATE_ACTIVE
                 val colo = prefs.lastColo
                 val ping = prefs.lastPingMs
+                tile.label = when {
+                    colo.isNotEmpty() && ping > 0 -> "WARP $colo"
+                    colo.isNotEmpty() -> "WARP $colo"
+                    else -> "WARP ON"
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    tile.subtitle = when {
-                        colo.isNotEmpty() && ping > 0 -> "$colo · ${ping} ms"
-                        colo.isNotEmpty() -> colo
-                        else -> getString(R.string.tile_on)
-                    }
+                    tile.subtitle = if (ping > 0) "${ping} ms" else getString(R.string.tile_on)
                 }
             }
             st == "connecting" || prefs.wantConnected -> {
                 tile.state = Tile.STATE_ACTIVE
+                tile.label = "WARP …"
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     tile.subtitle = getString(R.string.tile_connecting)
                 }
             }
             else -> {
                 tile.state = Tile.STATE_INACTIVE
+                tile.label = "WARP"
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     tile.subtitle = getString(R.string.tile_off)
                 }

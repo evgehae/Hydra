@@ -513,16 +513,48 @@ class HydraVpnService : VpnService() {
 
 
     private var lastServiceCheckAt = 0L
+    private var serviceFailStreak = 0
+    private var lastForceRestartAt = 0L
+
+    /** Проверка сервисов чаще (30 с). Если DNS/YouTube/Google мертвы при state=up — переподключаемся. */
     private fun maybeServiceCheck(prefs: Prefs) {
-        val everyMin = prefs.serviceCheckEveryMin.coerceAtLeast(0)
-        if (everyMin <= 0) return
         val now = System.currentTimeMillis()
-        if (now - lastServiceCheckAt < everyMin * 60_000L) return
+        // не реже 30 с, даже если в настройках 0/3 мин
+        val intervalMs = maxOf(30_000L, prefs.serviceCheckEveryMin.coerceAtLeast(0) * 60_000L / 2)
+        if (now - lastServiceCheckAt < intervalMs) return
         lastServiceCheckAt = now
         Thread {
             try {
                 val res = mobile.Mobile.serviceCheck()
-                if (res.isNotBlank()) jlog("ServiceCheck:\n" + res.take(500))
+                if (res.isNotBlank()) jlog("ServiceCheck:\n" + res.take(800))
+                val deadDns = res.contains("DNS через туннель не ответил") ||
+                    res.contains("DNS through the tunnel")
+                val deadYt = res.contains("✘ YouTube") || res.contains("✗ YouTube")
+                val deadBase = res.contains("✘ Google") || res.contains("✘ Cloudflare") ||
+                    res.contains("нет SYN-ACK")
+                val available = Regex("""Доступно\s+(\d+)\s+из\s+(\d+)""").find(res)
+                    ?: Regex("""Available\s+(\d+)\s+of\s+(\d+)""").find(res)
+                val okCount = available?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val total = available?.groupValues?.getOrNull(2)?.toIntOrNull()
+                val mostlyDead = okCount != null && total != null && total >= 6 && okCount <= 4
+
+                if (deadDns || (deadYt && deadBase) || mostlyDead) {
+                    serviceFailStreak++
+                    jlog("служба: туннель «up», но сервисы мертвы (streak=$serviceFailStreak) — DNS/YouTube/base")
+                    if (serviceFailStreak >= 2 && now - lastForceRestartAt > 45_000L) {
+                        lastForceRestartAt = now
+                        serviceFailStreak = 0
+                        jlog("служба: принудительное переподключение из-за мёртвых сервисов")
+                        handler.post {
+                            try {
+                                mobile.Mobile.stopTunnel()
+                            } catch (_: Throwable) { }
+                            handler.postDelayed({ startVpn() }, 800)
+                        }
+                    }
+                } else {
+                    serviceFailStreak = 0
+                }
             } catch (t: Throwable) {
                 jlog("ServiceCheck error: " + (t.message ?: "?"))
             }
