@@ -140,13 +140,18 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 	}
 	failed := 0
 	softTotal := 0
+	dnsFail := 0
 	for _, t := range svcSoft {
 		if actx.Err() != nil || ctx.Err() != nil {
 			return
 		}
 		ip, err := dev.resolveA(actx, t.host, 2*time.Second)
 		if err != nil {
-			Logf("   ? %s: адрес не получен (%v), в память не записываю", t.name, err)
+			dnsFail++
+			softTotal++
+			failed++
+			Logf("✘ %s: DNS через туннель не ответил (%v)", t.name, err)
+			e.cfg.Mem.RecordService(nk, sid, t.name, false)
 			continue
 		}
 		softTotal++
@@ -162,7 +167,15 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 			Logf("✘ %s через %s (дата-центр %s) не достижим: %v", t.name, sid, colo, err)
 		}
 	}
-	// Все soft-сервисы, которые удалось проверить, лежат — путь плохой, даже если Telegram «ок» по IP.
+	// DNS в туннеле мёртв → путь бесполезен для приложений (YouTube и т.д.)
+	if hard && dnsFail >= 2 {
+		select {
+		case out <- "DNS через туннель не отвечает (" + colo + ") — ищу другой путь":
+		default:
+		}
+		return
+	}
+	// Все soft-сервисы лежат — путь плохой, даже если Telegram «ок» по IP.
 	if hard && softTotal >= 2 && failed >= softTotal {
 		select {
 		case out <- "YouTube/WhatsApp не доходят через " + colo + " при живом Telegram — ищу другой путь":
