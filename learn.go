@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,18 @@ func clampInt(v, lo, hi int) int {
 }
 
 // allStrategies — встроенные стратегии плюс придуманные для этой сети.
+
+// preferFamilyForNet: на Wi-Fi чаще заходит WG/s3, на мобильной — MASQUE h3.
+func preferFamilyForNet(nk string) string {
+	if strings.HasPrefix(nk, "wifi:") {
+		return "wg"
+	}
+	if strings.HasPrefix(nk, "cell:") {
+		return "h3"
+	}
+	return ""
+}
+
 func (e *Engine) allStrategies(nk string) []Strategy {
 	out := append([]Strategy(nil), e.cfg.Strategies...)
 	for _, s := range e.cfg.Mem.Generated(nk) {

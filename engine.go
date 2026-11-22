@@ -821,6 +821,9 @@ func (e *Engine) noteConnect() {
 	e.nConnect++
 	e.upSince = time.Now()
 	e.mu.Unlock()
+	// счётчики трафика — с момента текущего up (иначе 0B после ротации выглядит как «пустой» туннель)
+	atomic.StoreUint64(&e.rx, 0)
+	atomic.StoreUint64(&e.tx, 0)
 }
 
 func (e *Engine) noteLoss(reason string, failover bool) {

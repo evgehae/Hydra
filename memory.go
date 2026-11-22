@@ -312,11 +312,23 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	defer m.mu.Unlock()
 	out := append([]Strategy(nil), all...)
 	agg := m.classAggLocked(net)
+	pref := preferFamilyForNet(net)
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
 		adj := classAdj(agg, s.ID, st) + m.coloBonusLocked(net, s) + m.deadPenaltyLocked(net, s.ID)
 		if sb := seedBonus(net, s.ID); sb > 0 && (st == nil || st.OK > 0 || st.Fail < 3) {
 			adj += sb
+		}
+		// мягкий bias: Wi-Fi → wg, cell → h3 (реальный опыт всё равно важнее)
+		if pref != "" {
+			fam := family(s)
+			if fam == pref {
+				adj += 0.12
+			} else if pref == "wg" && fam == "h3" {
+				adj -= 0.04
+			} else if pref == "h3" && fam == "wg" {
+				adj -= 0.04
+			}
 		}
 		if st == nil {
 			return m.priorLocked(net, s.ID) + m.svcBonusLocked(net, s.ID) + adj

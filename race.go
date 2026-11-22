@@ -16,7 +16,7 @@ import (
 
 const (
 	raceStagger  = 700 * time.Millisecond // пауза перед запуском следующей стратегии в гонке
-	standbyEvery = 12 * time.Second       // чаще готовим резерв (обрывы без запаса)
+	standbyEvery = 20 * time.Second       // резерв нужен, но не дёргаем чемпиона каждые 12с
 	standbyRetry = 10 * time.Minute       // не пробовать одну и ту же стратегию в резерве чаще
 )
 
@@ -369,7 +369,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	var sb *attempt
 	tried := map[string]time.Time{}
 	bad, sbBad, ticks, tcpBad := 0, 0, 0, 0
-	nextSb := time.Now().Add(1 * time.Second) // резерв почти сразу после up
+	nextSb := time.Now().Add(8 * time.Second) // сначала стабилизируем основной, потом резерв
 	lastLearn := time.Time{}
 	lastBeat := time.Now()
 	gateCh := make(chan string, 1)
@@ -540,8 +540,13 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			}
 			sentN := atomic.LoadInt32(&p.dev.sent)
 			recvN := atomic.LoadInt32(&p.dev.recv)
-			// рукопожатие было, а данных из туннеля нет — не ждём вторую пробу
-			if err != nil && sentN >= 2 && recvN == 0 && limit > 1 {
+			rx, tx := e.Traffic()
+			// если приложения уже гоняют трафик — не убиваем сессию с одной пробы
+			if rx+tx > 32*1024 && limit < 3 {
+				limit = 3
+			}
+			// рукопожатие было, данных нет и трафика приложений нет — быстрее
+			if err != nil && sentN >= 2 && recvN == 0 && rx+tx < 2048 && limit > 1 {
 				limit = 1
 			}
 			if err != nil {
