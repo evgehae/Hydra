@@ -20,6 +20,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -228,6 +231,35 @@ fun SettingSwitchRow(title: String, subtitle: String? = null, checked: Boolean, 
         Switch(checked = checked, onCheckedChange = onChange)
     }
     RowDivider()
+}
+
+
+/** Сворачиваемый блок настроек (спойлер). */
+@Composable
+fun ExpandableSection(title: String, initiallyExpanded: Boolean = false, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(initiallyExpanded) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { open = !open }
+            .padding(start = 16.dp, end = 12.dp, top = 18.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    AnimatedVisibility(visible = open) {
+        Column { content() }
+    }
 }
 
 /** Мелкая подпись раздела на чёрном фоне. */

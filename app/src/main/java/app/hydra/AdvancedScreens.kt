@@ -221,37 +221,62 @@ fun AdvancedScreen(
             value = channelOpts.firstOrNull { it.first == channel }?.second, onClick = { dlg = "channel" })
         SettingRow(
             stringResource(R.string.conn_sni), stringResource(R.string.conn_sni_sub),
-            value = if (sni.isEmpty()) dflt else sni, onClick = { dlg = "sni" }
+            value = if (sni.isEmpty()) "авто" else sni, onClick = { dlg = "sni" }
+        )
+        SettingRow(
+            "Подобрать SNI",
+            subtitle = "Короткий список проверенных имён; пусто = ядро само",
+            value = "авто",
+            onClick = {
+                val pool = listOf(
+                    "",
+                    "consumer-masque.cloudflareclient.com",
+                    "www.cloudflare.com",
+                    "speed.cloudflare.com",
+                    "cloudflare.com",
+                    "cdnjs.cloudflare.com"
+                )
+                val i = (pool.indexOf(sni).let { if (it < 0) 0 else it } + 1) % pool.size
+                sni = pool[i]
+                prefs.customSni = sni
+                Toast.makeText(
+                    ctx,
+                    if (sni.isEmpty()) "SNI: авто (ядро само)" else "SNI: $sni",
+                    Toast.LENGTH_SHORT
+                ).show()
+                vpn.restartIfActive()
+            }
         )
         SettingRow(
             stringResource(R.string.conn_endpoint), stringResource(R.string.conn_endpoint_sub),
-            value = if (ep.isEmpty()) dflt else ep, onClick = { dlg = "ep" }
+            value = if (ep.isEmpty()) "авто" else ep, onClick = { dlg = "ep" }
         )
 
-        SectionLabel(stringResource(R.string.wg_junk_title))
-        RowDivider()
-        SettingRow(
-            stringResource(R.string.wg_jc),
-            stringResource(R.string.wg_junk_sub),
-            value = if (wgJc == 0) dflt else wgJc.toString(),
-            onClick = { dlg = "wg_jc" }
-        )
-        SettingRow(
-            stringResource(R.string.wg_jmin),
-            value = wgJmin.toString(),
-            onClick = { dlg = "wg_jmin" }
-        )
-        SettingRow(
-            stringResource(R.string.wg_jmax),
-            value = wgJmax.toString(),
-            onClick = { dlg = "wg_jmax" }
-        )
-        SettingRow(
-            stringResource(R.string.hs_timeout_title),
-            stringResource(R.string.hs_timeout_sub),
-            value = "${hsTimeout} ms",
-            onClick = { dlg = "hs_timeout" }
-        )
+        ExpandableSection("WireGuard junk / таймаут", initiallyExpanded = false) {
+            RowDivider()
+            SettingRow(
+                stringResource(R.string.wg_jc),
+                stringResource(R.string.wg_junk_sub),
+                value = if (wgJc == 0) "авто" else wgJc.toString(),
+                onClick = { dlg = "wg_jc" }
+            )
+            SettingRow(
+                stringResource(R.string.wg_jmin),
+                value = if (wgJc == 0) "авто" else wgJmin.toString(),
+                onClick = { dlg = "wg_jmin" }
+            )
+            SettingRow(
+                stringResource(R.string.wg_jmax),
+                value = if (wgJc == 0) "авто" else wgJmax.toString(),
+                onClick = { dlg = "wg_jmax" }
+            )
+            SettingRow(
+                stringResource(R.string.hs_timeout_title),
+                stringResource(R.string.hs_timeout_sub),
+                value = "${hsTimeout} ms",
+                onClick = { dlg = "hs_timeout" }
+            )
+        }
         val forgetCtx = LocalContext.current
         SettingRow(
             stringResource(R.string.forget_net_title),
@@ -269,6 +294,17 @@ fun AdvancedScreen(
         RowDivider()
         SettingRow(stringResource(R.string.colo_block), value = block.ifEmpty { none }, onClick = { dlg = "block" })
         SettingRow(stringResource(R.string.colo_allow), value = allow.ifEmpty { none }, onClick = { dlg = "allow" })
+        SettingRow(
+            "Пресет ДЦ: Европа",
+            subtitle = "HEL, FRA, AMS, ARN — не жёсткий запрет остальных, если включён fallback",
+            value = "применить",
+            onClick = {
+                allow = "HEL,FRA,AMS,ARN"
+                prefs.allowColos = allow
+                Toast.makeText(ctx, "Разрешены: HEL, FRA, AMS, ARN", Toast.LENGTH_SHORT).show()
+                vpn.restartIfActive()
+            }
+        )
         SettingSwitchRow(stringResource(R.string.fallback_any), stringResource(R.string.fallback_hint), fallback) {
             fallback = it
             prefs.fallbackAny = it
@@ -344,27 +380,28 @@ fun AdvancedScreen(
             notifyErrors = it; prefs.notifyErrors = it
         }
 
-        SectionLabel("Бэкап и тест")
-        RowDivider()
-        SettingRow(stringResource(R.string.export_full), onClick = { dlg = "export_full" })
-        SettingRow(stringResource(R.string.import_full), onClick = { dlg = "import_full" })
-        SettingRow(stringResource(R.string.export_file), onClick = {
-            pendingImportKind = "full"
-            createBackupExport.launch("hydra-backup.txt")
-        })
-        SettingRow(stringResource(R.string.import_file), onClick = {
-            pendingImportKind = "full"
-            openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
-        })
-        SettingRow(stringResource(R.string.export_account_file), onClick = {
-            pendingImportKind = "account"
-            createBackupExport.launch("hydra-account.txt")
-        })
-        SettingRow(stringResource(R.string.import_account_file), onClick = {
-            pendingImportKind = "account"
-            openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
-        })
-        SettingRow(stringResource(R.string.speed_test), onClick = { dlg = "speed" })
+        ExpandableSection("Бэкап и тест", initiallyExpanded = false) {
+            RowDivider()
+            SettingRow(stringResource(R.string.export_full), onClick = { dlg = "export_full" })
+            SettingRow(stringResource(R.string.import_full), onClick = { dlg = "import_full" })
+            SettingRow(stringResource(R.string.export_file), onClick = {
+                pendingImportKind = "full"
+                createBackupExport.launch("hydra-backup.txt")
+            })
+            SettingRow(stringResource(R.string.import_file), onClick = {
+                pendingImportKind = "full"
+                openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+            })
+            SettingRow(stringResource(R.string.export_account_file), onClick = {
+                pendingImportKind = "account"
+                createBackupExport.launch("hydra-account.txt")
+            })
+            SettingRow(stringResource(R.string.import_account_file), onClick = {
+                pendingImportKind = "account"
+                openBackupImport.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+            })
+            SettingRow(stringResource(R.string.speed_test), onClick = { dlg = "speed" })
+        }
 
         SectionLabel(stringResource(R.string.adv_sec_other))
 
@@ -373,11 +410,6 @@ fun AdvancedScreen(
             value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
         SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
         SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
-        SettingRow(
-            stringResource(R.string.update_repo),
-            value = updateRepo.ifEmpty { "—" },
-            onClick = { dlg = "update_repo" }
-        )
         SettingRow(
             "Проверить обновления",
             value = if (updateCheckBusy) "…" else updateCheckMsg.ifEmpty { "сейчас" },
