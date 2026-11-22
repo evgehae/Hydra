@@ -18,8 +18,41 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
+    // Подпись release: из env (CI) или из local.properties / -P (локально).
+    // Без ключа release-сборка падает — так и надо, debug остаётся для разработки.
+    val storeFilePath = System.getenv("HYDRA_KEYSTORE_FILE")
+        ?: (project.findProperty("HYDRA_KEYSTORE_FILE") as String?)
+    val storePassword = System.getenv("HYDRA_KEYSTORE_PASSWORD")
+        ?: (project.findProperty("HYDRA_KEYSTORE_PASSWORD") as String?)
+    val keyAlias = System.getenv("HYDRA_KEY_ALIAS")
+        ?: (project.findProperty("HYDRA_KEY_ALIAS") as String?)
+        ?: "hydra"
+    val keyPassword = System.getenv("HYDRA_KEY_PASSWORD")
+        ?: (project.findProperty("HYDRA_KEY_PASSWORD") as String?)
+        ?: storePassword
+
+    signingConfigs {
+        if (!storeFilePath.isNullOrBlank() && !storePassword.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(storeFilePath)
+                this.storePassword = storePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword ?: storePassword
+            }
+        }
+    }
+
     buildTypes {
-        release { isMinifyEnabled = false }
+        debug {
+            isMinifyEnabled = false
+        }
+        release {
+            isMinifyEnabled = false
+            val hasRelease = signingConfigs.findByName("release") != null
+            if (hasRelease) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
