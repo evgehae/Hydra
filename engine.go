@@ -848,6 +848,13 @@ func (e *Engine) Stats() string {
 	if e.probesTotal > 0 {
 		s += "проб: " + itoa(e.probesTotal) + ", потеряно: " + itoa(e.probesLost) + "\n"
 	}
+	if e.nConnDur > 0 {
+		avg := (e.sumConnDur / time.Duration(e.nConnDur)).Round(time.Millisecond)
+		s += "время до подключения: последнее " + e.lastConnDur.Round(time.Millisecond).String() + ", среднее " + avg.String() + " (n=" + itoa(e.nConnDur) + ")\n"
+	}
+	if e.nRotate > 0 {
+		s += "плановых ротаций потока: " + itoa(e.nRotate) + "\n"
+	}
 	if e.lastFail != "" {
 		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"
 	}

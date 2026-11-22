@@ -16,7 +16,7 @@ import (
 
 const (
 	raceStagger  = 700 * time.Millisecond // пауза перед запуском следующей стратегии в гонке
-	standbyEvery = 45 * time.Second       // как часто пробовать новый резерв
+	standbyEvery = 12 * time.Second       // чаще готовим резерв (обрывы без запаса)
 	standbyRetry = 10 * time.Minute       // не пробовать одну и ту же стратегию в резерве чаще
 )
 
@@ -368,7 +368,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	var sb *attempt
 	tried := map[string]time.Time{}
 	bad, sbBad, ticks, tcpBad := 0, 0, 0, 0
-	nextSb := time.Now().Add(3 * time.Second)
+	nextSb := time.Now().Add(1 * time.Second) // резерв почти сразу после up
 	lastLearn := time.Time{}
 	lastBeat := time.Now()
 	gateCh := make(chan string, 1)
@@ -424,7 +424,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		} else {
 			e.noteLoss(reason, true)
 		}
-		nextSb = time.Now().Add(5 * time.Second)
+		nextSb = time.Now().Add(2 * time.Second)
 		return true
 	}
 	lose := func(reason string) {
@@ -537,10 +537,16 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if sb != nil && limit > 2 {
 				limit = 2 // резерв готов — переходим на него быстрее
 			}
+			sentN := atomic.LoadInt32(&p.dev.sent)
+			recvN := atomic.LoadInt32(&p.dev.recv)
+			// рукопожатие было, а данных из туннеля нет — не ждём вторую пробу
+			if err != nil && sentN >= 2 && recvN == 0 && limit > 1 {
+				limit = 1
+			}
 			if err != nil {
 				bad++
 				Logf("   проба без ответа (%d из %d, в туннель ушло %d пакетов, пришло %d): %v", bad, limit,
-					atomic.LoadInt32(&p.dev.sent), atomic.LoadInt32(&p.dev.recv), err)
+					sentN, recvN, err)
 				if bad >= limit {
 					e.blame(nk, p.s.ID)
 					e.emit("degraded", p.s.ID, "туннель перестал отвечать")
