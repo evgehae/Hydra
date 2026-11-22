@@ -478,3 +478,67 @@ func (e *Engine) famBackoff(nk, fam string) bool {
 	}
 	return ok == 0 && fail >= 8 && time.Since(last) < 30*time.Minute
 }
+
+// ---- «подключилась, но данные не идут»: такую стратегию отодвигаем, а не выбираем снова и снова ----
+
+// MarkDead отодвигает стратегию в конец очереди в этой сети на время d.
+func (m *Memory) MarkDead(nk, id string, d time.Duration) {
+	if m == nil || nk == "" || id == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dead == nil {
+		m.dead = map[string]time.Time{}
+	}
+	m.dead[nk+"|"+id] = time.Now().Add(d)
+}
+
+func (m *Memory) deadPenaltyLocked(nk, id string) float64 {
+	if until, ok := m.dead[nk+"|"+id]; ok && time.Now().Before(until) {
+		return -2
+	}
+	return 0
+}
+
+// markActiveDead вызывается, когда проверка сервисов через туннель показала «0 из N»: пробы проходят, а данные нет.
+func (e *Engine) markActiveDead(st Status, total int) {
+	if st.Strategy == "" || e.cfg.Mem == nil {
+		return
+	}
+	nk := e.cfg.NetKey()
+	e.cfg.Mem.MarkDead(nk, st.Strategy, 30*time.Minute)
+	e.cfg.Mem.Record(nk, st.Strategy, false, 0)
+	Logf("☠ через %s сервисы не доходят (0 из %d) — отодвигаю эту стратегию в конец очереди на 30 минут", st.Strategy, total)
+}
+
+// ForgetAll стирает опыт по всем сетям (аккаунты и настройки не трогает).
+func (m *Memory) ForgetAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.Nets {
+		delete(m.Nets, k)
+	}
+	for k := range m.Gen {
+		delete(m.Gen, k)
+	}
+	for k := range m.Flow {
+		delete(m.Flow, k)
+	}
+	for k := range m.EPColo {
+		delete(m.EPColo, k)
+	}
+	for k := range m.Genes {
+		delete(m.Genes, k)
+	}
+	for k := range m.Why {
+		delete(m.Why, k)
+	}
+	for k := range m.Svc {
+		delete(m.Svc, k)
+	}
+	for k := range m.dead {
+		delete(m.dead, k)
+	}
+	m.saveSoonLocked()
+}

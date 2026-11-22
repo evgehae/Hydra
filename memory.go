@@ -37,6 +37,7 @@ type Memory struct {
 	// Патч 4 / flow + bandit (нужны profiles.go / race.go)
 	Flow   map[string][]int `json:"flow,omitempty"` // жизнь потоков по сетям (секунды)
 	bandit bool             // включено ли «исследование» (bandit)
+	dead   map[string]time.Time // стратегии, через которые после подключения не дошёл ни один сервис: до какого времени отодвинуты в конец очереди
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -313,7 +314,7 @@ func (m *Memory) Rank(net string, all []Strategy) []Strategy {
 	agg := m.classAggLocked(net)
 	score := func(s Strategy) float64 {
 		st := m.Nets[net][s.ID]
-		adj := classAdj(agg, s.ID, st) + m.coloBonusLocked(net, s)
+		adj := classAdj(agg, s.ID, st) + m.coloBonusLocked(net, s) + m.deadPenaltyLocked(net, s.ID)
 		if sb := seedBonus(net, s.ID); sb > 0 && (st == nil || st.OK > 0 || st.Fail < 3) {
 			adj += sb
 		}

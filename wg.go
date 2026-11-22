@@ -388,6 +388,8 @@ func WGStrategies(acc *Account) []Strategy {
 		ep := net.JoinHostPort(h, "2408")
 		// проверенные прологи
 		out = append(out, mk(ep, "quic", 3, 41, 78, "q3"))
+		// STUN сразу после QUIC: если у QUIC-пролога «рукопожатие есть, данных нет», следующий шанс — другой тип пролога
+		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
 		if rsv {
 			out = append(out, mkr(ep, "quic", 3, 41, 78, "q3"))
 		}
@@ -395,7 +397,6 @@ func WGStrategies(acc *Account) []Strategy {
 		if rsv {
 			out = append(out, mkr(ep, "qv", 4, 50, 80, "v4"))
 		}
-		out = append(out, mk(ep, "stun", 3, 41, 78, "s3"))
 		// новые типы пролога: dns / sip / полный h3-Initial
 		out = append(out, mk(ep, "dns", 3, 41, 78, "d3"))
 		out = append(out, mk(ep, "sip", 3, 41, 78, "p3"))

@@ -78,5 +78,8 @@ func (e *Engine) ServiceCheck(ctx context.Context) string {
 		}
 	}
 	fmt.Fprintf(&b, "Доступно %d из %d.\n", okN, total)
+	if total >= 8 && okN == 0 {
+		e.markActiveDead(st, total)
+	}
 	return b.String()
 }
