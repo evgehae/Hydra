@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -380,33 +382,42 @@ fun AdvancedScreen(
             "Проверить обновления",
             value = if (updateCheckBusy) "…" else updateCheckMsg.ifEmpty { "сейчас" },
             onClick = {
-                if (updateCheckBusy) return@SettingRow
-                updateCheckBusy = true
-                updateCheckMsg = "…"
-                UpdateChecker.check(ctx, force = true) { info ->
-                    updateCheckBusy = false
-                    if (info == null) {
-                        updateCheckMsg = "актуально"
-                        android.widget.Toast.makeText(ctx, "Обновлений нет", android.widget.Toast.LENGTH_SHORT).show()
-                    } else {
-                        updateCheckMsg = info.tag
-                        forceUpdateInfo = info
+                if (!updateCheckBusy) {
+                    updateCheckBusy = true
+                    updateCheckMsg = "…"
+                    UpdateChecker.check(ctx, force = true) { info: UpdateChecker.Info? ->
+                        updateCheckBusy = false
+                        if (info == null) {
+                            updateCheckMsg = "актуально"
+                            Toast.makeText(ctx, "Обновлений нет", Toast.LENGTH_SHORT).show()
+                        } else {
+                            updateCheckMsg = info.tag
+                            forceUpdateInfo = info
+                        }
                     }
                 }
             }
         )
         SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
             onClick = { showLicenses = !showLicenses })
-        forceUpdateInfo?.let { info ->
+    if (showLicenses) {
+            NoteText(stringResource(R.string.about_text))
+            NoteText(stringResource(R.string.licenses_text))
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+
+    forceUpdateInfo?.let { info: UpdateChecker.Info ->
         AlertDialog(
             onDismissRequest = { forceUpdateInfo = null },
             title = { Text("Доступно обновление") },
-            text = { Text("${info.tag} (code ${info.versionCode})\n${info.name}") },
+            text = {
+                Text(info.tag + " (code " + info.versionCode + ")\n" + info.name)
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val inf = info
                     forceUpdateInfo = null
-                    // download+install async via same path as Home
                     Thread {
                         try {
                             if (!UpdateChecker.canRequestInstall(ctx)) {
@@ -419,21 +430,16 @@ fun AdvancedScreen(
                             UpdateChecker.installApk(ctx, f)
                         } catch (e: Throwable) {
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                android.widget.Toast.makeText(ctx, "Ошибка: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                Toast.makeText(ctx, "Ошибка: " + (e.message ?: ""), Toast.LENGTH_LONG).show()
                             }
                         }
                     }.start()
                 }) { Text("Обновить") }
             },
-            dismissButton = { TextButton(onClick = { forceUpdateInfo = null }) { Text("Позже") } }
+            dismissButton = {
+                TextButton(onClick = { forceUpdateInfo = null }) { Text("Позже") }
+            }
         )
-    }
-
-    if (showLicenses) {
-            NoteText(stringResource(R.string.about_text))
-            NoteText(stringResource(R.string.licenses_text))
-        }
-        Spacer(Modifier.height(24.dp))
     }
 
     if (backupMsg != null) {
@@ -454,6 +460,12 @@ fun AdvancedScreen(
             onPick = { channel = it; prefs.channel = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
         "lang" -> ChoiceDialog(stringResource(R.string.settings_language), langOpts, lang,
             onPick = { lang = it; prefs.lang = it; dlg = ""; onLanguageChanged() }, onDismiss = { dlg = "" })
+        "update_repo" -> TextDialog(
+            stringResource(R.string.update_repo), updateRepo, "evgehae/Hydra",
+            onDismiss = { dlg = "" },
+            onApply = { updateRepo = it.trim(); prefs.updateRepo = updateRepo; dlg = "" },
+            onReset = { updateRepo = UpdateChecker.DEFAULT_REPO; prefs.updateRepo = updateRepo; dlg = "" }
+        )
         "sni" -> TextDialog(
             stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
             onDismiss = { dlg = "" },
