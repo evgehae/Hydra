@@ -211,6 +211,53 @@ func GenerateVariants(nk string, mem *Memory, all []Strategy, n int, rnd *rand.R
 }
 
 // learn придумывает и запоминает новые способы для этой сети.
+
+// inventAmneziaWG — полностью автоматические «конфиги» WG: endpoint × порт × пролог × junk.
+// Не импорт руками: Гидра сама плодит варианты, когда мало рабочих стратегий.
+func inventAmneziaWG(nk string, mem *Memory, n int, rnd *rand.Rand) []Strategy {
+	if n <= 0 {
+		return nil
+	}
+	sigs := []string{"stun", "quic", "qv", "dns", "sip", "h3", ""}
+	ports := []string{"2408", "500", "4500", "1701", "1180", "1387", "3476", "1018", "8443", "4443"}
+	hosts := make([]string, 0, 32)
+	for _, sub := range wgSubnets {
+		for _, host := range []int{1, 3, 4, 6, 7} {
+			hosts = append(hosts, fmt.Sprintf("%s.%d", sub, host))
+		}
+	}
+	// перемешать
+	rnd.Shuffle(len(hosts), func(i, j int) { hosts[i], hosts[j] = hosts[j], hosts[i] })
+	rnd.Shuffle(len(sigs), func(i, j int) { sigs[i], sigs[j] = sigs[j], sigs[i] })
+	var out []Strategy
+	for i := 0; i < n && i < len(hosts); i++ {
+		h := hosts[i%len(hosts)]
+		port := ports[rnd.Intn(len(ports))]
+		sig := sigs[rnd.Intn(len(sigs))]
+		jc := 2 + rnd.Intn(6)      // 2..7
+		jmin := 30 + rnd.Intn(30)  // 30..59
+		jmax := jmin + 20 + rnd.Intn(80)
+		ep := net.JoinHostPort(h, port)
+		sigTag := sig
+		if sigTag == "" {
+			sigTag = "plain"
+		}
+		id := fmt.Sprintf("wg/%s/auto:%s-%d-%d-%d", ep, sigTag, jc, jmin, jmax)
+		out = append(out, Strategy{
+			ID:        id,
+			Transport: "wg",
+			Params: map[string]string{
+				"endpoint": ep,
+				"sig":      sig,
+				"jc":       strconv.Itoa(jc),
+				"jmin":     strconv.Itoa(jmin),
+				"jmax":     strconv.Itoa(jmax),
+			},
+		})
+	}
+	return out
+}
+
 func (e *Engine) learn(nk string) {
 	if e.cfg.Mem == nil {
 		return
@@ -287,9 +334,13 @@ func (e *Engine) grow(nk string) {
 	}
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	gen := GenerateVariants(nk, e.cfg.Mem, e.allStrategies(nk), 6, rnd, true)
+	// Авто-конфиги WG (Amnezia-style): если мало живых путей — плодим endpoint×пролог×junk
+	if preferFamilyForNet(nk) == "wg" || rnd.Intn(2) == 0 {
+		gen = append(gen, inventAmneziaWG(nk, e.cfg.Mem, 6, rnd)...)
+	}
 	if len(gen) == 0 {
 		return
 	}
 	e.cfg.Mem.AddGenerated(nk, gen)
-	Logf("🧬 пополняю пул: придумал %d новых вариантов на основе работающих", len(gen))
+	Logf("🧬 пополняю пул: придумал %d новых вариантов (в т.ч. auto-conf WG)", len(gen))
 }
