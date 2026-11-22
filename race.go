@@ -363,6 +363,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	e.emit("connected", p.s.ID, colo)
 	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(p.start).Seconds(), p.s.ID, colo, p.rtt.Milliseconds())
 	e.noteConnect()
+	e.noteConnectTime(time.Since(p.start))
 
 	var sb *attempt
 	tried := map[string]time.Time{}
@@ -390,12 +391,18 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		}()
 	}
 
+	planned := false // идёт плановая ротация, а не реакция на обрыв
+	sbShort := 0     // сколько резервов подряд умерло, не прожив и 90 с (в этой сети резерв не держится)
+	lastRotate := time.Now()
 	// мгновенный переход на резерв; false — резерва нет
 	failover := func(reason string) bool {
 		if sb == nil {
 			return false
 		}
 		old := p
+		if !planned && !strings.HasPrefix(reason, "дата-центр") {
+			e.cfg.Mem.RecordFlowLife(nk, time.Since(old.start)) // поток умер: запоминаем, сколько он прожил
+		}
 		old.dev.demote()
 		old.cancel()
 		p = sb
@@ -410,11 +417,20 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			go e.serviceGate(ctx, nk, p, gateCh)
 		}
 		Logf("⚡ резерв принял нагрузку без разрыва: %s → %s (%s)", old.s.ID, p.s.ID, reason)
-		e.noteLoss(reason, true)
+		if planned {
+			e.mu.Lock()
+			e.nRotate++
+			e.mu.Unlock()
+		} else {
+			e.noteLoss(reason, true)
+		}
 		nextSb = time.Now().Add(5 * time.Second)
 		return true
 	}
 	lose := func(reason string) {
+		if !strings.HasPrefix(reason, "дата-центр") {
+			e.cfg.Mem.RecordFlowLife(nk, time.Since(p.start))
+		}
 		e.noteLoss(reason, false)
 		e.setStatus(Status{State: "reconnecting", Message: reason})
 		newSkip = p.s.ID
@@ -493,6 +509,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 		case <-tk.C:
 			if e.cfg.NetKey() != nk {
 				Logf("↻ сеть сменилась (%s → %s) — переподключаюсь", nk, e.cfg.NetKey())
+				atomic.StoreInt64(&v6DeadAt, 0) // в новой сети IPv6 может быть
 				newSkip = ""
 				restart = true
 				return
@@ -578,12 +595,41 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 					Logf("   резерв %s не ответил на пробу (%d из %d)", sb.s.ID, sbBad, e.cfg.BadProbes)
 					if sbBad >= e.cfg.BadProbes {
 						Logf("   резерв %s не отвечает — убираю", sb.s.ID)
+						if time.Since(sb.start) < 90*time.Second {
+							sbShort++
+						} else {
+							sbShort = 0
+						}
+						if d := sbBackoff(sbShort); d > 0 {
+							nextSb = time.Now().Add(d)
+							if sbShort == 3 || sbShort == 6 || sbShort == 10 {
+								Logf("🛡 резервы в этой сети умирают за ~30 с (подряд %d) — пробую реже, следующий через %s", sbShort, d.Round(time.Second))
+							}
+						}
 						sb.cancel()
 						sb = nil
 						sbBad = 0
 					}
 				} else {
 					sbBad = 0
+				}
+			}
+			// плановая ротация: поток в этой сети обычно умирает через ttl — меняем его заранее на свежий резерв
+			if e.cfg.Rotate && sb != nil && sbBad == 0 && bad == 0 {
+				if ttl := e.cfg.Mem.FlowTTL(nk); ttl > 0 {
+					lim := ttl * 7 / 10
+					if lim < 60*time.Second {
+						lim = 60 * time.Second
+					}
+					if time.Since(p.start) > lim && time.Since(sb.start) < lim && time.Since(lastRotate) > 45*time.Second {
+						lastRotate = time.Now()
+						planned = true
+						ok := failover("плановая ротация: потоки здесь живут ~" + ttl.Round(time.Second).String())
+						planned = false
+						if ok {
+							continue
+						}
+					}
 				}
 			}
 			if time.Since(lastBeat) > 10*time.Minute {
@@ -596,6 +642,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 				Logf("💓 в порядке: основной %s, дата-центр %s, пинг %d мс, резерв: %s, проб потеряно %d из %d",
 					p.s.ID, colo, r.Milliseconds(), sbName, lost, total)
 				Logf("💓 %s", strings.TrimSpace(e.PoolSummary(nk)))
+				Logf("💓 %s", strings.TrimSpace(e.cfg.Mem.FlowInfo(nk)))
 			}
 			if time.Since(lastPrune) > 10*time.Minute {
 				lastPrune = time.Now()

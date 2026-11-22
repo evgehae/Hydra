@@ -99,7 +99,7 @@ func (e *Engine) pickTest(nk string, exclude map[string]bool, blocked map[string
 	best, bestDef := "", 0.0
 	for _, f := range []string{"wg", "h2", "h3"} {
 		t := poolTargets[f]
-		if def := float64(t-healthy[f]) / float64(t); def > bestDef && untested[f] > 0 {
+		if def := float64(t-healthy[f]) / float64(t); def > bestDef && untested[f] > 0 && !e.famBackoff(nk, f) {
 			best, bestDef = f, def
 		}
 	}
