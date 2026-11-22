@@ -255,6 +255,19 @@ func (e *Engine) waitOnline(ctx context.Context) {
 }
 
 // grow пополняет пул: придумывает новые варианты на основе стратегий, которые уже работали.
+func (e *Engine) ensurePool(nk string) {
+	h, _, _ := e.poolCounts(nk)
+	sum := 0
+	for _, n := range h {
+		sum += n
+	}
+	if sum < 3 {
+		Logf("🧬 мало рабочих стратегий (%d) — придумываю запас", sum)
+		e.grow(nk)
+		e.grow(nk)
+	}
+}
+
 func (e *Engine) grow(nk string) {
 	if e.cfg.Mem == nil {
 		return

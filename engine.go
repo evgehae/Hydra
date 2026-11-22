@@ -101,7 +101,8 @@ type Engine struct {
 	tried                      map[string]time.Time // когда стратегию последний раз пробовали
 	inOutage, outageLogged     bool
 	wlLast                     time.Time
-	badColo                    map[string]time.Time // дата-центры, через которые не доходит Telegram
+	badColo                    map[string]time.Time
+	badColoHits map[string]int // сколько раз colo «провалился» до бана // дата-центры, через которые не доходит Telegram
 
 	// Патч 4: время до подключения + ротации резерва
 	lastConnDur time.Duration
@@ -758,6 +759,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		if sawBlocked && e.cfg.SoftFallback && !e.soft {
 			e.soft = true
 			blocked = map[string]time.Time{}
+			e.clearBadColos("")
 			Logf("⚠ все рабочие адреса ведут в запрещённые дата-центры; включён режим «всё равно» — принимаю любой")
 			continue
 		}
@@ -772,7 +774,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		case ran == 0:
 			msg = "нет стратегий"
 		case sawBlocked:
-			msg = "⛔ рабочие маршруты ведут только в запрещённые дата-центры"
+			e.clearBadColos(nk)
+			msg = "⛔ рабочие маршруты ведут только в запрещённые дата-центры — сбрасываю запреты и пробую снова"
 		}
 		Logf("✘ подключиться не удалось: %s; повтор через %s", msg, backoff)
 		e.setStatus(Status{State: "failed", Message: msg})
@@ -847,13 +850,6 @@ func (e *Engine) Stats() string {
 	}
 	if e.probesTotal > 0 {
 		s += "проб: " + itoa(e.probesTotal) + ", потеряно: " + itoa(e.probesLost) + "\n"
-	}
-	if e.nConnDur > 0 {
-		avg := (e.sumConnDur / time.Duration(e.nConnDur)).Round(time.Millisecond)
-		s += "время до подключения: последнее " + e.lastConnDur.Round(time.Millisecond).String() + ", среднее " + avg.String() + " (n=" + itoa(e.nConnDur) + ")\n"
-	}
-	if e.nRotate > 0 {
-		s += "плановых ротаций потока: " + itoa(e.nRotate) + "\n"
 	}
 	if e.lastFail != "" {
 		s += "последний сбой: " + e.lastFail + " (" + e.lastFailAt.Format("15:04:05") + ")\n"

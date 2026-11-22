@@ -364,6 +364,7 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 	Logf("✔ подключено за %.1f с: %s, дата-центр %s, пинг %d мс", time.Since(p.start).Seconds(), p.s.ID, colo, p.rtt.Milliseconds())
 	e.noteConnect()
 	e.noteConnectTime(time.Since(p.start))
+	e.ensurePool(nk)
 
 	var sb *attempt
 	tried := map[string]time.Time{}

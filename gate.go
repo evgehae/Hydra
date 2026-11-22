@@ -14,7 +14,7 @@ var tgTargets = []struct {
 	{"149.154.167.51", 443}, {"149.154.175.50", 443}, {"149.154.167.91", 443}, {"91.108.56.130", 443},
 }
 
-const badColoFor = 6 * time.Hour
+const badColoFor = 25 * time.Minute // было 6ч — слишком долго держали HEL/FRA в бане
 
 // coloAllowed: разрешён ли дата-центр настройками и не «плохой» ли он (Telegram не доходит).
 func (e *Engine) coloAllowed(nk, colo string) bool {
@@ -35,12 +35,44 @@ func (e *Engine) isBadColo(nk, colo string) bool {
 }
 
 func (e *Engine) noteBadColo(nk, colo string) {
+	if colo == "" {
+		return
+	}
 	e.mu.Lock()
 	if e.badColo == nil {
 		e.badColo = map[string]time.Time{}
 	}
-	e.badColo[nk+"|"+colo] = time.Now()
+	if e.badColoHits == nil {
+		e.badColoHits = map[string]int{}
+	}
+	k := nk + "|" + colo
+	e.badColoHits[k]++
+	// один сбой не банит colo (иначе HEL умирает после единичного «нет 1.1.1.1»)
+	if e.badColoHits[k] < 2 {
+		e.mu.Unlock()
+		Logf("   дата-центр %s: сбой %d/2 — пока не запрещаю", colo, e.badColoHits[k])
+		return
+	}
+	e.badColo[k] = time.Now()
 	e.mu.Unlock()
+	Logf("   дата-центр %s: запрет на %s после повторного сбоя", colo, badColoFor)
+}
+
+// clearBadColos снимает временные запреты дата-центров (при тупике «все пути закрыты»).
+func (e *Engine) clearBadColos(nk string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for k := range e.badColo {
+		if nk == "" || strings.HasPrefix(k, nk+"|") {
+			delete(e.badColo, k)
+		}
+	}
+	for k := range e.badColoHits {
+		if nk == "" || strings.HasPrefix(k, nk+"|") {
+			delete(e.badColoHits, k)
+		}
+	}
+	Logf("♻ сняты временные запреты дата-центров для сети %s", nk)
 }
 
 func (e *Engine) badColoCount(nk string) int {
@@ -93,11 +125,11 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 		return
 	case <-actx.Done():
 		return
-	case <-time.After(400 * time.Millisecond): // быстрее отсекаем «up без интернета»
+	case <-time.After(800 * time.Millisecond): // быстрее: не ждём 2.5 с, пока юзер смотрит на «пустой» YouTube
 	}
 	base := false
 	for _, ip := range []string{"1.1.1.1", "8.8.8.8"} {
-		if _, err := dev.tcpProbeTo(actx, net.ParseIP(ip).To4(), 443, 1200*time.Millisecond); err == nil {
+		if _, err := dev.tcpProbeTo(actx, net.ParseIP(ip).To4(), 443, 2*time.Second); err == nil {
 			base = true
 			break
 		}
@@ -106,11 +138,12 @@ func (e *Engine) serviceGateDev(ctx context.Context, nk string, dev *attemptDev,
 		}
 	}
 	if !base {
-		// Базовый интернет через туннель не отвечает — путь мёртвый (всегда меняем).
-		Logf("✘ через %s (%s) нет ответа до 1.1.1.1/8.8.8.8 — путь мёртвый", sid, colo)
-		select {
-		case out <- "через туннель нет ответа даже до 1.1.1.1/8.8.8.8 — ищу другой путь":
-		default:
+		// Базовый интернет через туннель не отвечает — считаем путь мёртвым.
+		if hard {
+			select {
+			case out <- "через туннель нет ответа даже до 1.1.1.1/8.8.8.8 — ищу другой путь":
+			default:
+			}
 		}
 		return
 	}
