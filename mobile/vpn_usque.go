@@ -282,9 +282,7 @@ func ForgetCurrentNet(dir string) bool {
 	polMu.Lock()
 	nk := netKey
 	polMu.Unlock()
-	if nk == "" {
-		return false
-	}
+	all := nk == "" // ключ сети ещё не известен (служба не запускалась): стираем опыт по всем сетям
 	vpnMu.Lock()
 	m := vpnMem
 	vpnMu.Unlock()
@@ -295,7 +293,11 @@ func ForgetCurrentNet(dir string) bool {
 			return false
 		}
 	}
-	m.ForgetNet(nk)
+	if all {
+		m.ForgetAll()
+	} else {
+		m.ForgetNet(nk)
+	}
 	m.Save()
 	return true
 }
