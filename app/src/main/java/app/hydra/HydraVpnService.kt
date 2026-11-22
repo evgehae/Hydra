@@ -315,6 +315,8 @@ class HydraVpnService : VpnService() {
     private fun establishAndRun() {
         val dir = filesDir.absolutePath
         val prefs = Prefs(this)
+        // время в журнале Go — по часовому поясу устройства (иначе UTC и разница с отчётом в 3 часа)
+        try { mobile.Mobile.setTZOffset((java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000).toLong()) } catch (t: Throwable) { }
 
         val v4 = try { mobile.Mobile.accountAddr4(dir) } catch (t: Throwable) { "" }
         val v6 = try { mobile.Mobile.accountAddr6(dir) } catch (t: Throwable) { "" }
@@ -528,7 +530,7 @@ class HydraVpnService : VpnService() {
         Thread {
             try {
                 val res = mobile.Mobile.serviceCheck()
-                if (res.isNotBlank()) jlog("ServiceCheck:\n" + res.take(800))
+                if (res.contains("✘")) jlog("ServiceCheck:\n" + res.take(800))
                 val deadDns = res.contains("DNS через туннель не ответил") ||
                     res.contains("DNS through the tunnel")
                 val deadYt = res.contains("✘ YouTube") || res.contains("✗ YouTube")
