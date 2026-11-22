@@ -109,6 +109,10 @@ fun HomeScreen(
     }
 
     val up = vpn.state == "up"
+    var netVerdict by remember { mutableStateOf("") }
+    LaunchedEffect(up, vpn.strategy) {
+        netVerdict = if (up) try { mobile.Mobile.netVerdict() ?: "" } catch (_: Throwable) { "" } else ""
+    }
     val busy = account.working || vpn.state == "connecting" || vpn.state == "reconnecting"
     val scheme = MaterialTheme.colorScheme
 
@@ -124,7 +128,11 @@ fun HomeScreen(
     val sub = when {
         account.working -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
-        up -> if (vpn.message.isNotEmpty()) vpn.message else stringResource(R.string.home_private)
+        up -> when {
+            netVerdict.isNotBlank() -> netVerdict
+            vpn.message.isNotEmpty() -> vpn.message
+            else -> stringResource(R.string.home_private)
+        }
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
         whitelist -> stringResource(R.string.wl_sub)
         vpn.state == "reconnecting" || vpn.state == "failed" ->

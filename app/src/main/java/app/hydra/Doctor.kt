@@ -33,17 +33,35 @@ private fun validEndpoint(s: String): Boolean {
     return true
 }
 
-/** Строки с ✘ из последней проверки сервисов через туннель (если её запускали). */
+/** Строки с ✘ из последней проверки сервисов. Игнорируем, если позже уже было «Доступно N» с N>=8. */
 private fun lastServiceFailures(journal: String): List<String>? {
+    // последняя строка «Доступно X из Y» решает: если X достаточно — D41 не показываем
+    val availRe = Regex("""Доступно\s+(\d+)\s+из\s+(\d+)""")
+    val allAvail = availRe.findAll(journal).toList()
+    if (allAvail.isNotEmpty()) {
+        val last = allAvail.last()
+        val ok = last.groupValues[1].toIntOrNull() ?: 0
+        val total = last.groupValues[2].toIntOrNull() ?: 0
+        if (total > 0 && ok * 2 >= total) return null // половина+ жива — не тревога
+        if (ok >= 8) return null
+    }
     val i = journal.lastIndexOf("проверка сервисов через туннель")
     if (i < 0) return null
     val block = journal.substring(i).lines().take(30)
     val end = block.indexOfFirst { it.contains("Доступно") }
-    val part = if (end >= 0) block.take(end) else block.take(15)
+    val part = if (end >= 0) block.take(end + 1) else block.take(15)
+    val availLine = part.lastOrNull { it.contains("Доступно") } ?: ""
+    val m = availRe.find(availLine)
+    if (m != null) {
+        val ok = m.groupValues[1].toIntOrNull() ?: 0
+        val total = m.groupValues[2].toIntOrNull() ?: 12
+        if (ok * 2 >= total) return null
+    }
     val fails = part.filter { it.contains("✘") }.map { it.trim() }
+    if (fails.isEmpty()) return null
     val tg = fails.filter { it.contains("Telegram DC") }
-    // один недоступный дата-центр Telegram из четырёх — не проблема: клиенту хватает остальных
-    return if (tg.size < 4) fails.filterNot { it.contains("Telegram DC") } else fails
+    // один недоступный DC Telegram из четырёх — не проблема
+    return if (tg.size < 4) fails.filterNot { it.contains("Telegram DC") }.ifEmpty { null } else fails
 }
 
 private fun operatorName(code: String): String = when (code) {
@@ -220,6 +238,13 @@ fun diagnose(
             "clock.go: learnClockSkew (ядро умеет подстроиться само); register.go: dialTLS")
     }
     // ---- по журналу и движку ----
+    if (prefs.splitOnlySelected) {
+        add("D45", 1, "Включён split: в VPN только выбранные приложения",
+            "приложений в списке: ${prefs.splitApps.size}",
+            "Остальной трафик идёт мимо туннеля. В отчёте сервисы могут быть ✔, а браузер/YouTube вне списка — без VPN.",
+            "Для проверки стабильности временно выключи split (все приложения через VPN).",
+            "Prefs.splitOnlySelected; HydraVpnService.kt")
+    }
     val lost = Regex("потерь без резерва: (\\d+)").find(engine)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     if (lost > 0) {
         add("D30", 2, "Были обрывы без резерва",
