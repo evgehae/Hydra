@@ -321,6 +321,12 @@ func seedBonus(net, id string) float64 {
 			return 0.35
 		}
 	}
+	// remote priors (priors.json / SetRemotePriors) — патч 4
+	for _, s := range remoteSeeds(net) {
+		if s == id {
+			return 0.35
+		}
+	}
 	return 0
 }
 
