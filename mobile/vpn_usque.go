@@ -121,6 +121,13 @@ func StartTunnel(dir string, tunFd int) string {
 	}
 	mem, _ := hydra.LoadMemory(filepath.Join(dir, "memory.json"))
 	vpnMem = mem
+	if mem != nil {
+		mem.SetBandit(true)
+	}
+	// общая база подсказок (priors.json), если приложение её скачало
+	if b, err := os.ReadFile(filepath.Join(dir, "priors.json")); err == nil {
+		_ = hydra.SetRemotePriors(b)
+	}
 
 	cfg := hydra.DefaultEngineConfig()
 	cfg.LocalIP = ip
@@ -132,6 +139,7 @@ func StartTunnel(dir string, tunFd int) string {
 	cfg.NetChanged = netEvents
 	cfg.SoftFallback = currentFallback()
 	cfg.DropV6 = stripMask(acc.AddrV6) == "" || !currentIPv6()
+	cfg.Rotate = true
 	cfg.ServiceGate = currentGate()
 	cfg.UpTimeout = time.Duration(currentUpTimeout()) * time.Millisecond
 	cfg.NetAlive = realNetAlive
@@ -206,6 +214,8 @@ func Diagnostics() string {
 	out += netStateInfo()
 	if m := vpnMem; m != nil {
 		out += m.Summary(nk, 15)
+		out += m.FlowInfo(nk)
+		out += "вердикт по сети: " + m.Verdict(nk) + "\n"
 		out += "🧠 что Гидра знает об этой сети (" + nk + "): какие сервисы доходят через какие стратегии\n" + m.ServiceMatrix(nk)
 		if e := vpnEngine; e != nil {
 			if bl := e.BadColoList(nk); len(bl) > 0 {
@@ -235,7 +245,12 @@ func ServiceCheck() string {
 		return "Гидра не запущена\n"
 	}
 	res := e.ServiceCheck(context.Background())
-	hydra.Logf("🔎 проверка сервисов через туннель:\n%s", res)
+	if strings.Contains(res, "✘") {
+		hydra.Logf("🔎 проверка сервисов через туннель:\n%s", res)
+	} else { // всё доступно: одна строка вместо 14, чтобы журнал не забивался и хватало на часы
+		lines := strings.Split(strings.TrimSpace(res), "\n")
+		hydra.Logf("🔎 сервисы через туннель: %s", lines[len(lines)-1])
+	}
 	return res
 }
 
@@ -283,4 +298,18 @@ func ForgetCurrentNet(dir string) bool {
 	m.ForgetNet(nk)
 	m.Save()
 	return true
+}
+
+// NetVerdict — короткий вывод о текущей сети простыми словами (для главного экрана).
+func NetVerdict() string {
+	polMu.Lock()
+	nk := netKey
+	polMu.Unlock()
+	vpnMu.Lock()
+	m := vpnMem
+	vpnMu.Unlock()
+	if m == nil || nk == "" {
+		return ""
+	}
+	return m.Verdict(nk)
 }

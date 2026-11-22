@@ -46,6 +46,9 @@ func init() {
 // GetJournal возвращает последние n строк журнала (0 — все), новые в конце.
 func GetJournal(n int) string { return hydra.JournalText(n) }
 
+// SetTZOffset задаёт часовой пояс для времени в журнале (на Android Go по умолчанию показывает UTC).
+func SetTZOffset(sec int) { time.Local = time.FixedZone("local", sec) }
+
 // ClearJournal очищает журнал.
 func ClearJournal() { hydra.JournalClear() }
 
