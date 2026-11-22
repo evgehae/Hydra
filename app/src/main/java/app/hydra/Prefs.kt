@@ -104,6 +104,15 @@ class Prefs(ctx: Context) {
         sp.edit().putString("cell_wifi", (cur + "$print@${System.currentTimeMillis()}").joinToString(";")).apply()
     }
 
+    fun clearCellWifi(print: String) {
+        val cur = (sp.getString("cell_wifi", "") ?: "").split(";").filter { it.isNotEmpty() && !it.startsWith("$print@") }
+        sp.edit().putString("cell_wifi", cur.joinToString(";")).apply()
+    }
+
+    fun clearAllCellWifi() {
+        sp.edit().remove("cell_wifi").apply()
+    }
+
     /** Параллельная гонка стратегий и горячий резерв. */
     var parallel: Boolean
         get() = sp.getBoolean("parallel", true)

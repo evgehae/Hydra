@@ -193,14 +193,19 @@ class HydraVpnService : VpnService() {
                 }
                 // Wi-Fi ведёт в запрещённый дата-центр: туннель автоматически идёт через мобильную сеть
                 if (p.getOrElse(4) { "" }.startsWith("⛔") && prefsNow.channel == "auto" && !forceCell) {
+                    // на мобильную переходим, только если «запрещённый дата-центр» держится ~20 секунд подряд, а не при первом же сообщении
+                    blockedStreak++
                     val wp = curWifiPrint()
-                    if (wp.isNotEmpty() && hasCellNet()) {
+                    if (blockedStreak >= 7 && wp.isNotEmpty() && hasCellNet()) {
+                        blockedStreak = 0
                         enableAutoCell(wp)
                         return
                     }
+                } else {
+                    blockedStreak = 0
                 }
                 val now = System.currentTimeMillis()
-                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt) {
+                if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt && !cellWaiting) {
                     restartFails++
                     nextRestartAt = now + minOf(60_000L, 3_000L shl minOf(restartFails, 5))
                     jlog("служба: ядро остановлено — поднимаю заново (попытка $restartFails)")
@@ -244,12 +249,19 @@ class HydraVpnService : VpnService() {
     private fun startVpn() {
         val running = try { !mobile.Mobile.engineStatus().startsWith("off") } catch (t: Throwable) { false }
         if (running) return
+        if (cellWaiting) return // уже ждём мобильную сеть: повторный START не плодим
 
         handler.removeCallbacks(statusUpdater)
         handler.postDelayed(statusUpdater, 3000)
         val prefs = Prefs(this)
         prefs.migrate()
         forceCell = prefs.channel == "cell" || (prefs.channel == "auto" && prefs.cellWifiActive(curWifiPrint()))
+        if (forceCell && !hasCellNet()) {
+            // мобильной сети сейчас нет: не ждём 10 секунд впустую, идём по Wi-Fi
+            jlog("служба: мобильной сети сейчас нет — подключаюсь по Wi-Fi")
+            if (prefs.channel == "auto") prefs.clearCellWifi(curWifiPrint())
+            forceCell = false
+        }
         try {
             mobile.Mobile.setColoPolicy(prefs.blockedColos, prefs.allowColos)
             mobile.Mobile.setFallback(prefs.fallbackAny)
@@ -283,11 +295,13 @@ class HydraVpnService : VpnService() {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build()
             var started = false
+            cellWaiting = true
             val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     handler.post {
                         if (started) return@post
                         started = true
+                        cellWaiting = false
                         try { cm().bindProcessToNetwork(network) } catch (t: Throwable) { }
                         establishAndRun()
                     }
@@ -298,13 +312,21 @@ class HydraVpnService : VpnService() {
                 cm().requestNetwork(req, cb)
             } catch (t: Throwable) {
                 Log.e(TAG, "мобильная сеть: " + t.message)
+                cellWaiting = false
                 stopSelf()
                 return
             }
             handler.postDelayed({
                 if (!started) {
-                    Log.e(TAG, "мобильная сеть недоступна")
-                    stopVpn()
+                    started = true
+                    cellWaiting = false
+                    // мобильной сети нет: не зависаем, а подключаемся по Wi-Fi и снимаем режим «через мобильную» для этого Wi-Fi
+                    jlog("служба: мобильная сеть недоступна — снимаю режим «через мобильную» для этого Wi-Fi и подключаюсь по Wi-Fi")
+                    Prefs(this).clearCellWifi(curWifiPrint())
+                    forceCell = false
+                    try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
+                    cellCallback = null
+                    establishAndRun()
                 }
             }, 10000)
         } else {
@@ -518,6 +540,8 @@ class HydraVpnService : VpnService() {
 
     private var lastServiceCheckAt = 0L
     private var serviceFailStreak = 0
+    private var blockedStreak = 0
+    private var cellWaiting = false // идёт ожидание мобильной сети: сторож и повторные START не должны запускать старт ещё раз
     private var lastForceRestartAt = 0L
 
     /** Проверка сервисов чаще (30 с). Если DNS/YouTube/Google мертвы при state=up — переподключаемся. */
@@ -593,6 +617,7 @@ class HydraVpnService : VpnService() {
 
     private fun stopVpn() {
         jlog("служба: остановка")
+        cellWaiting = false
         Prefs(this).wantConnected = false
         try {
             if (Prefs(this).useRoot) RootHelper.disableKillSwitch()

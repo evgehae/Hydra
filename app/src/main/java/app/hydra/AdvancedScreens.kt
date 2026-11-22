@@ -251,8 +251,11 @@ fun AdvancedScreen(
             stringResource(R.string.forget_net_title),
             stringResource(R.string.forget_net_sub),
             onClick = {
-                try { mobile.Mobile.forgetCurrentNet(forgetCtx.filesDir.absolutePath) } catch (t: Throwable) { }
-                vpn.restartIfActive()
+                Prefs(forgetCtx).clearAllCellWifi()
+                Thread {
+                    try { mobile.Mobile.forgetCurrentNet(forgetCtx.filesDir.absolutePath) } catch (t: Throwable) { }
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { vpn.restartIfActive() }
+                }.start()
             }
         )
 
