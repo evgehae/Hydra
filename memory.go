@@ -33,6 +33,10 @@ type Memory struct {
 	Why   map[string]int   `json:"why"`   // причины сбоев по сетям и семействам
 	Svc map[string]*stat `json:"svc"` // дошли ли сервисы (Telegram, YouTube, WhatsApp) через стратегию: сеть|стратегия|сервис
 	Ver int                   `json:"ver"` // версия формата: <2 — в памяти могли быть сбои из-за белых списков
+
+	// Патч 4 / flow + bandit (нужны profiles.go / race.go)
+	Flow   map[string][]int `json:"flow,omitempty"` // жизнь потоков по сетям (секунды)
+	bandit bool             // включено ли «исследование» (bandit)
 }
 
 func LoadMemory(path string) (*Memory, error) {
@@ -53,6 +57,9 @@ func LoadMemory(path string) (*Memory, error) {
 	}
 	if m.Nets == nil {
 		m.Nets = map[string]map[string]*stat{}
+	}
+	if m.Flow == nil {
+		m.Flow = map[string][]int{}
 	}
 	if m.Ver < 2 {
 		// прежние версии записывали провалы стратегий и тогда, когда виноват был режим белых списков

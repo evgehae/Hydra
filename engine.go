@@ -53,6 +53,7 @@ type EngineConfig struct {
 	CanRun       func(Strategy) bool                // можно ли сейчас запускать стратегию (например, свободен ли аккаунт WG)
 	Allow        func(Strategy) bool                // разрешена ли стратегия выбранным протоколом (nil — все)
 	ServiceGate  bool                               // после подключения проверять Telegram и обходить дата-центры, где он недоступен
+	Rotate       bool                               // плановая ротация потоков по FlowTTL (патч 4)
 }
 
 func DefaultEngineConfig() EngineConfig {
@@ -101,6 +102,12 @@ type Engine struct {
 	inOutage, outageLogged     bool
 	wlLast                     time.Time
 	badColo                    map[string]time.Time // дата-центры, через которые не доходит Telegram
+
+	// Патч 4: время до подключения + ротации резерва
+	lastConnDur time.Duration
+	sumConnDur  time.Duration
+	nConnDur    int
+	nRotate     int
 
 	mu      sync.Mutex
 	status  Status
