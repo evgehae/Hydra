@@ -122,6 +122,10 @@ fun AdvancedScreen(
     var proto by remember { mutableStateOf(prefs.protocol) }
     var channel by remember { mutableStateOf(prefs.channel) }
     var lang by remember { mutableStateOf(prefs.lang) }
+    var updateRepo by remember { mutableStateOf(prefs.updateRepo.ifEmpty { UpdateChecker.DEFAULT_REPO }) }
+    var updateCheckBusy by remember { mutableStateOf(false) }
+    var updateCheckMsg by remember { mutableStateOf("") }
+    var forceUpdateInfo by remember { mutableStateOf<UpdateChecker.Info?>(null) }
     var block by remember { mutableStateOf(prefs.blockedColos) }
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
@@ -367,9 +371,65 @@ fun AdvancedScreen(
             value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
         SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
         SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
+        SettingRow(
+            stringResource(R.string.update_repo),
+            value = updateRepo.ifEmpty { "—" },
+            onClick = { dlg = "update_repo" }
+        )
+        SettingRow(
+            "Проверить обновления",
+            value = if (updateCheckBusy) "…" else updateCheckMsg.ifEmpty { "сейчас" },
+            onClick = {
+                if (updateCheckBusy) return@SettingRow
+                updateCheckBusy = true
+                updateCheckMsg = "…"
+                UpdateChecker.check(ctx, force = true) { info ->
+                    updateCheckBusy = false
+                    if (info == null) {
+                        updateCheckMsg = "актуально"
+                        android.widget.Toast.makeText(ctx, "Обновлений нет", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        updateCheckMsg = info.tag
+                        forceUpdateInfo = info
+                    }
+                }
+            }
+        )
         SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
             onClick = { showLicenses = !showLicenses })
-        if (showLicenses) {
+        forceUpdateInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { forceUpdateInfo = null },
+            title = { Text("Доступно обновление") },
+            text = { Text("${info.tag} (code ${info.versionCode})\n${info.name}") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val inf = info
+                    forceUpdateInfo = null
+                    // download+install async via same path as Home
+                    Thread {
+                        try {
+                            if (!UpdateChecker.canRequestInstall(ctx)) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    UpdateChecker.openUnknownSourcesSettings(ctx)
+                                }
+                                return@Thread
+                            }
+                            val f = UpdateChecker.downloadApk(ctx, inf.apkUrl, null)
+                            UpdateChecker.installApk(ctx, f)
+                        } catch (e: Throwable) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                android.widget.Toast.makeText(ctx, "Ошибка: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }.start()
+                }) { Text("Обновить") }
+            },
+            dismissButton = { TextButton(onClick = { forceUpdateInfo = null }) { Text("Позже") } }
+        )
+    }
+
+    if (showLicenses) {
             NoteText(stringResource(R.string.about_text))
             NoteText(stringResource(R.string.licenses_text))
         }

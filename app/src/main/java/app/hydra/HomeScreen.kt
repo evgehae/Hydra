@@ -128,11 +128,8 @@ fun HomeScreen(
     val sub = when {
         account.working -> stringResource(R.string.home_sub_registering)
         !hasAccount -> stringResource(R.string.home_sub_need_account)
-        up -> when {
-            netVerdict.isNotBlank() -> netVerdict
-            vpn.message.isNotEmpty() -> vpn.message
-            else -> stringResource(R.string.home_private)
-        }
+        // На главном — только короткий статус; вердикт сети/ядра — в Диагностике
+        up -> stringResource(R.string.home_private)
         vpn.state == "connecting" -> stringResource(R.string.vpn_connecting_sub)
         whitelist -> stringResource(R.string.wl_sub)
         vpn.state == "reconnecting" || vpn.state == "failed" ->
