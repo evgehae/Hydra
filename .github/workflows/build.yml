@@ -10,14 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      #- name: Создать файлы проекта (если их ещё нет)
-       #run: |
-         #bash bootstrap.sh
-          #git config user.name "hydra-bot"
-          #git config user.email "hydra-bot@users.noreply.github.com"
-          #git add -A
-          #git diff --cached --quiet || (git commit -m "Update project files" && git push origin HEAD:${{ github.ref_name }})
-
       - uses: actions/setup-go@v5
         with:
           go-version: stable
@@ -56,13 +48,39 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Собрать APK
-        run: gradle assembleDebug --no-daemon -PversionCode=${{ github.run_number }}
+      - name: Подготовить release keystore
+        env:
+          HYDRA_KEYSTORE_BASE64: ${{ secrets.HYDRA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$HYDRA_KEYSTORE_BASE64" ]; then
+            echo "::error::Секрет HYDRA_KEYSTORE_BASE64 не задан. См. SIGNING.md"
+            exit 1
+          fi
+          echo "$HYDRA_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/hydra-release.jks"
+          ls -la "$GITHUB_WORKSPACE/hydra-release.jks"
+
+      - name: Собрать signed release APK
+        env:
+          HYDRA_KEYSTORE_FILE: ${{ github.workspace }}/hydra-release.jks
+          HYDRA_KEYSTORE_PASSWORD: ${{ secrets.HYDRA_KEYSTORE_PASSWORD }}
+          HYDRA_KEY_ALIAS: ${{ secrets.HYDRA_KEY_ALIAS }}
+          HYDRA_KEY_PASSWORD: ${{ secrets.HYDRA_KEY_PASSWORD }}
+        run: |
+          test -n "$HYDRA_KEYSTORE_PASSWORD"
+          test -n "$HYDRA_KEY_ALIAS"
+          test -n "$HYDRA_KEY_PASSWORD"
+          gradle assembleRelease --no-daemon -PversionCode=${{ github.run_number }}
+          # единое имя для UpdateChecker и артефактов
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          cp "$APK" "Hydra-v${{ github.run_number }}.apk"
+          ls -la "Hydra-v${{ github.run_number }}.apk"
+          # проверка, что APK подписан
+          jarsigner -verify "Hydra-v${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Hydra-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: Hydra-release-apk
+          path: Hydra-v${{ github.run_number }}.apk
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -70,10 +88,11 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Hydra build ${{ github.run_number }}
           body: |
-            Автосборка #${{ github.run_number }}
+            Автосборка #${{ github.run_number }} (signed release)
             versionCode=${{ github.run_number }}
             Установи этот APK или дождись окна обновления в приложении.
-          files: app/build/outputs/apk/debug/*.apk
+            Подпись постоянная — обновление поверх предыдущей release-сборки без удаления.
+          files: Hydra-v${{ github.run_number }}.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
