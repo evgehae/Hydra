@@ -122,7 +122,6 @@ fun AdvancedScreen(
     var proto by remember { mutableStateOf(prefs.protocol) }
     var channel by remember { mutableStateOf(prefs.channel) }
     var lang by remember { mutableStateOf(prefs.lang) }
-    var updateRepo by remember { mutableStateOf(prefs.updateRepo) }
     var block by remember { mutableStateOf(prefs.blockedColos) }
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
@@ -365,8 +364,6 @@ fun AdvancedScreen(
             value = langOpts.firstOrNull { it.first == lang }?.second, onClick = { dlg = "lang" })
         SettingRow(stringResource(R.string.conn_reset_keys), onClick = { dlg = "keys" })
         SettingRow(stringResource(R.string.conn_reset_all), onClick = { dlg = "all" })
-        SettingRow(stringResource(R.string.update_repo),
-            value = updateRepo.ifEmpty { "—" }, onClick = { dlg = "update_repo" })
         SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
             onClick = { showLicenses = !showLicenses })
         if (showLicenses) {
@@ -394,12 +391,6 @@ fun AdvancedScreen(
             onPick = { channel = it; prefs.channel = it; dlg = ""; vpn.restartIfActive() }, onDismiss = { dlg = "" })
         "lang" -> ChoiceDialog(stringResource(R.string.settings_language), langOpts, lang,
             onPick = { lang = it; prefs.lang = it; dlg = ""; onLanguageChanged() }, onDismiss = { dlg = "" })
-        "update_repo" -> TextDialog(
-            stringResource(R.string.update_repo), updateRepo, "owner/Hydra",
-            onDismiss = { dlg = "" },
-            onApply = { updateRepo = it.trim(); prefs.updateRepo = updateRepo; dlg = "" },
-            onReset = { updateRepo = ""; prefs.updateRepo = ""; dlg = "" }
-        )
         "sni" -> TextDialog(
             stringResource(R.string.conn_sni), sni, stringResource(R.string.conn_sni_hint),
             onDismiss = { dlg = "" },

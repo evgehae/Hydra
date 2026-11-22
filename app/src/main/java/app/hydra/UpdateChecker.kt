@@ -19,12 +19,12 @@ import java.util.concurrent.Executors
  * CI после успешной сборки публикует APK в Release; приложение раз в сутки
  * (и при старте) спрашивает latest и предлагает установить.
  *
- * Задай репозиторий: Prefs.updateRepo = "owner/name"
- * или константу DEFAULT_REPO ниже.
+ * Репозиторий по умолчанию: DEFAULT_REPO = "evgehae/Hydra".
+ * Пункт в настройках убран — обновления работают сами.
  */
 object UpdateChecker {
-    /** Замени на свой GitHub: "username/Hydra". Пусто = проверка выключена, пока не задашь в Prefs. */
-    const val DEFAULT_REPO = ""
+    /** GitHub owner/repo. Зашито; пункт в настройках скрыт. */
+    const val DEFAULT_REPO = "evgehae/Hydra"
 
     data class Info(
         val tag: String,
@@ -48,8 +48,10 @@ object UpdateChecker {
         }
 
     fun repo(ctx: Context): String {
+        // Репозиторий зашит. Prefs.updateRepo больше не показывается в UI
+        // и используется только если вдруг задан вручную (для тестов).
         val p = Prefs(ctx).updateRepo.trim()
-        return p.ifEmpty { DEFAULT_REPO.trim() }
+        return if (p.contains('/')) p else DEFAULT_REPO
     }
 
     /**
