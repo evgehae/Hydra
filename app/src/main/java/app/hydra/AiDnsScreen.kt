@@ -1,25 +1,27 @@
 package app.hydra
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 /**
- * Обход ИИ внутри приложения (без увода в системные «Частный DNS»).
- * Основное: подбор живого DNS → «Только ИИ» (карта доменов + hosts/local DNS).
- * Опционально: весь телефон через системный Private DNS — внизу, мелко.
+ * Один экран обхода ИИ.
+ * «Параметры DNS» в приложении — только IP внутри WARP, не сюда.
+ * Здесь: подбор Smart DNS + применение (частный DNS / только ИИ).
  */
 @Composable
 fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
     val ctx = LocalContext.current
 
-    var enabled by remember { mutableStateOf(prefs.aiDnsEnabled) }
-    var providerId by remember { mutableStateOf(prefs.aiDnsProvider.ifBlank { "geodema" }) }
+    var providerId by remember { mutableStateOf(prefs.aiDnsProvider.ifBlank { "comss" }) }
     var enabledSvc by remember {
         mutableStateOf(
             prefs.aiDnsServices.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -29,44 +31,30 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var probes by remember { mutableStateOf<List<AiDns.ProviderProbe>>(emptyList()) }
+    var sysDns by remember {
+        mutableStateOf(AiDns.readPrivateDns(ctx).let { (m, h) ->
+            if (h.isBlank()) m else "$m · $h"
+        })
+    }
+
+    fun refreshSys() {
+        sysDns = AiDns.readPrivateDns(ctx).let { (m, h) -> if (h.isBlank()) m else "$m · $h" }
+    }
 
     SubPage("Обход ИИ", onBack = onBack) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Обход включён", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Только домены ИИ → прокси. Остальной трафик без «левого» DNS.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = {
-                    enabled = it
-                    prefs.aiDnsEnabled = it
-                    if (!it) {
-                        AiDns.clearHosts()
-                        RootHelper.disableDnsRedirect()
-                        LocalDnsServer.setMap(emptyList())
-                        LocalDnsServer.stop()
-                        status = "Выключено"
-                    }
-                }
-            )
-        }
+        NoteText(
+            "Это не «Параметры DNS» WARP. Здесь Smart DNS для ChatGPT/Claude/Grok/Gemini.\n" +
+                "Сейчас в системе: $sysDns"
+        )
 
-        SectionTitle("Подбор DNS")
+        SectionTitle("1. Проверить DNS")
         SettingRow(
-            if (busy) "Проверяю провайдеров…" else "Проверить, кто живой",
-            subtitle = "ChatGPT · Claude · Grok · Gemini — кто открывается",
+            if (busy) "Проверяю…" else "Проверить все серверы",
+            subtitle = "Красный = мёртвый · Жёлтый = живой без ИИ · Зелёный = открывает ИИ",
             onClick = {
                 if (busy) return@SettingRow
                 busy = true
-                status = "Опрос…"
+                status = "Опрос DoH (лучше на секунду выключить VPN)…"
                 probes = emptyList()
                 AiDns.probeProviders(
                     serviceIds = enabledSvc.toList().ifEmpty { AiDns.services.map { it.id } }
@@ -77,39 +65,75 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
                     if (best != null) {
                         providerId = best.id
                         prefs.aiDnsProvider = best.id
-                        status = "Выбран ${best.title}"
-                    } else status = "Подмены не найдены"
+                        val pr = list.find { it.providerId == best.id }
+                        status = "Лучший: ${best.title} — ${pr?.detail ?: ""}"
+                    } else {
+                        status = "Никто не дал подмену. Выключи VPN и проверь снова (DoH через WARP часто «мертвит» серверы)."
+                    }
+                    refreshSys()
                 }
             }
         )
 
-        if (probes.isNotEmpty()) {
+        val list = if (probes.isNotEmpty()) {
             probes.sortedByDescending { p ->
-                (if (p.alive) 100 else 0) + p.bypass.values.count { it } * 10
-            }.forEach { pr ->
+                (if (p.alive) 50 else 0) + p.bypass.values.count { it } * 20 - (p.latencyMs / 100).toInt()
+            }
+        } else null
+
+        if (list != null) {
+            list.forEach { pr ->
                 val p = AiDns.provider(pr.providerId)
-                val titles = AiDns.services.filter { pr.bypass[it.id] == true }
-                    .joinToString(", ") { it.title }
-                val head = when {
-                    !pr.alive -> "мёртвый"
-                    titles.isNotEmpty() -> "✔ $titles"
-                    else -> "живой, без ИИ"
+                val aiCount = pr.bypass.values.count { it }
+                val (dotColor, label) = when {
+                    !pr.alive -> Color(0xFFE53935) to "мёртвый"
+                    aiCount > 0 -> Color(0xFF43A047) to ("ИИ: " + AiDns.services.filter { pr.bypass[it.id] == true }.joinToString { it.title })
+                    else -> Color(0xFFFDD835) to "живой, без ИИ"
                 }
-                SettingRow(
-                    p.title,
-                    subtitle = "$head · ${pr.latencyMs} мс",
-                    value = if (providerId == p.id) "✓" else null,
-                    onClick = {
-                        providerId = p.id
-                        prefs.aiDnsProvider = p.id
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .background(dotColor, CircleShape)
+                    )
+                    if (aiCount > 0) {
+                        Spacer(Modifier.width(4.dp))
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .background(Color(0xFF43A047), CircleShape)
+                        )
                     }
-                )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "$label · ${pr.latencyMs} мс",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (providerId == p.id) {
+                        Text("✓", color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        TextButton(onClick = {
+                            providerId = p.id
+                            prefs.aiDnsProvider = p.id
+                        }) { Text("выбрать") }
+                    }
+                }
+                RowDivider()
             }
         } else {
             AiDns.providers.filter { it.id != "cloudflare" }.forEach { p ->
                 SettingRow(
                     p.title,
-                    subtitle = p.hostname,
+                    subtitle = p.hostname + if (p.note.isNotBlank()) " · ${p.note}" else "",
                     value = if (providerId == p.id) "✓" else null,
                     onClick = {
                         providerId = p.id
@@ -135,19 +159,34 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
         if (status.isNotBlank()) {
             Text(
                 status,
-                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(16.dp)
             )
         }
 
+        SectionTitle("2. Включить")
         Button(
             onClick = {
-                if (busy) return@Button
-                busy = true
-                status = "Применяю только ИИ…"
+                // Главный рабочий путь — частный DNS (как у тебя руками)
                 prefs.aiDnsEnabled = true
-                enabled = true
+                prefs.aiDnsProvider = providerId
+                val r = AiDns.applyPrivateDns(ctx, providerId)
+                refreshSys()
+                status = r.message
+                Toast.makeText(ctx, r.message.take(120), Toast.LENGTH_LONG).show()
+            },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Text("Включить (частный DNS)")
+        }
+
+        OutlinedButton(
+            onClick = {
+                if (busy) return@OutlinedButton
+                busy = true
+                status = "Карта только-ИИ…"
+                prefs.aiDnsEnabled = true
                 AiDns.activateAiOnly(ctx, providerId, enabledSvc) { r ->
                     busy = false
                     status = r.message
@@ -155,27 +194,31 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
                 }
             },
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
         ) {
-            Text(if (busy) "…" else "Применить (только ИИ)")
+            Text("Только домены ИИ (hosts / local DNS)")
+        }
+
+        OutlinedButton(
+            onClick = {
+                val r = AiDns.disablePrivateDns(ctx)
+                RootHelper.disableDnsRedirect()
+                AiDns.clearHosts()
+                LocalDnsServer.stop()
+                prefs.aiDnsEnabled = false
+                refreshSys()
+                status = r.message
+            },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Text("Выключить обход")
         }
 
         NoteText(
-            "1) «Проверить, кто живой» → 2) «Применить (только ИИ)».\n" +
-                "С root: hosts + redirect. Без root: переподключи VPN.\n" +
-                "Пункт «Параметры DNS» в приложении — для DNS внутри WARP (IP), не для DoH-обхода ИИ."
+            "«Включить (частный DNS)» — то, что уже открывает тебе ИИ вручную.\n" +
+                "С root пишется само; без root — hostname в буфер и экран настроек.\n" +
+                "«Параметры DNS» в меню WARP — другие: IP 1.1.1.1 внутри туннеля, не Smart DNS.\n" +
+                "Перед проверкой серверов лучше выключить VPN на 30 с."
         )
-
-        // вторично, без акцента
-        TextButton(
-            onClick = {
-                val r = AiDns.applyPrivateDns(ctx, providerId)
-                status = r.message
-                Toast.makeText(ctx, status.take(80), Toast.LENGTH_LONG).show()
-            },
-            modifier = Modifier.padding(horizontal = 8.dp)
-        ) {
-            Text("Дополнительно: частный DNS на весь телефон", style = MaterialTheme.typography.bodySmall)
-        }
     }
 }

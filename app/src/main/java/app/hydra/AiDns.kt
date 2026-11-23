@@ -64,13 +64,23 @@ object AiDns {
     )
 
     val providers = listOf(
-        Provider("geodema", "Geodema Smart DNS", "dns.geodema.love", "https://dns.geodema.love/dns-query"),
-        Provider("keyoneday", "Keyoneday DNS", "dns.keyoneday.ru", "https://dns.keyoneday.ru/dns-query"),
-        Provider("wlrus", "WLRus DNS", "dns.wlrus.cfd", "https://dns.wlrus.cfd/dns-query"),
-        Provider("geohide", "GeoHide RU", "geohide.ru", "https://geohide.ru/dns-query"),
-        Provider("dnsai", "DNS-AI.RU", "dns.dns-ai.ru", "https://dns.dns-ai.ru/dns-query"),
-        Provider("magic", "MagicDNS", "magicdns.ru", "https://magicdns.ru/dns-query", "если отвечает"),
-        Provider("cloudflare", "Cloudflare (контроль)", "one.one.one.one", "https://cloudflare-dns.com/dns-query", "без подмены"),
+        // Актуальные Smart DNS для ИИ (РФ, 2026). Hostname = для частного DNS Android.
+        Provider("comss", "Comss.one", "dns.comss.one", "https://dns.comss.one/dns-query"),
+        Provider("geohide", "GeoHide", "geohide.ru", "https://geohide.ru/dns-query"),
+        Provider("geohide_us", "GeoHide US", "us.geohide.ru", "https://us.geohide.ru/dns-query"),
+        Provider("dnsai", "DNS-AI", "dns.dns-ai.ru", "https://dns.dns-ai.ru/dns-query"),
+        Provider("dnsai_cf", "DNS-AI (через CF)", "cf.dns-ai.ru", "https://cf.dns-ai.ru/dns-query"),
+        Provider("magic", "MagicDNS", "dns.magicdns.ru", "https://dns.magicdns.ru/dns-query"),
+        Provider("magic2", "MagicDNS (api)", "api.magicinfo.art", "https://api.magicinfo.art/rpc"),
+        Provider("keyoneday", "KeyOneDay", "dns.keyoneday.ru", "https://dns.keyoneday.ru/dns-query"),
+        Provider("keyoneday2", "KeyOneDay (alt)", "keyoneday.ru", "https://keyoneday.ru/dns-query"),
+        Provider("dagami", "Dagami", "dns.dagami.ru", "https://dns.dagami.ru/dns-query"),
+        Provider("geodema", "Geodema", "dns.geodema.love", "https://dns.geodema.love/dns-query"),
+        Provider("wlrus", "WLRus", "dns.wlrus.cfd", "https://dns.wlrus.cfd/dns-query"),
+        Provider("pereval", "Перевал", "free.pereval.top", "https://free.pereval.top/dns-query"),
+        Provider("malw", "Malw.link", "dns.malw.link", "https://dns.malw.link/dns-query"),
+        Provider("xbox", "XBox DNS", "xbox-dns.ru", "https://xbox-dns.ru/dns-query", "AI могли отключить"),
+        Provider("cloudflare", "Cloudflare (контроль)", "one.one.one.one", "https://cloudflare-dns.com/dns-query", "без подмены ИИ"),
     )
 
     val services = listOf(
@@ -99,14 +109,21 @@ object AiDns {
 
     // ─── DoH resolve ───────────────────────────────────────────
 
-    fun dohA(dohUrl: String, name: String, timeoutMs: Int = 8000): List<String> {
-        val url = dohUrl.trimEnd('?') +
-            (if (dohUrl.contains('?')) "&" else "?") +
-            "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
+    fun dohA(dohUrl: String, name: String, timeoutMs: Int = 12000): List<String> {
+        val base = dohUrl.trim()
+        val url = if (base.contains("name=") || base.endsWith("/rpc")) {
+            // некоторые API (magic) — другой формат; пробуем стандартный JSON
+            base.trimEnd('?') + (if (base.contains('?')) "&" else "?") +
+                "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
+        } else {
+            base.trimEnd('?') + (if (base.contains('?')) "&" else "?") +
+                "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
+        }
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = timeoutMs
             readTimeout = timeoutMs
-            setRequestProperty("Accept", "application/dns-json")
+            setRequestProperty("Accept", "application/dns-json, application/json, */*")
+            setRequestProperty("User-Agent", "Hydra-AiDns/1.0")
             instanceFollowRedirects = true
         }
         return try {
