@@ -444,7 +444,11 @@ fun AdvancedScreen(
 
     forceUpdateInfo?.let { info: UpdateChecker.Info ->
         AlertDialog(
-            onDismissRequest = { if (updateDlStatus.isEmpty() || updateDlStatus.startsWith("Ошибка") || updateDlStatus.startsWith("Жди")) forceUpdateInfo = null },
+            onDismissRequest = {
+                if (updateDlStatus.isEmpty() || updateDlStatus.startsWith("Ошибка") || updateDlStatus.startsWith("Жди") || updateDlStatus.startsWith("Установка")) {
+                    forceUpdateInfo = null
+                }
+            },
             title = { Text("WARP CLAUDE — обновление") },
             text = {
                 Column {
@@ -473,7 +477,7 @@ fun AdvancedScreen(
                                 }
                                 val f = UpdateChecker.downloadApk(ctx, inf.apkUrl) { p ->
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                        updateDlStatus = "Скачиваю… $p%"
+                                        updateDlStatus = "Скачиваю… " + p + "%"
                                     }
                                 }
                                 android.os.Handler(android.os.Looper.getMainLooper()).post {
