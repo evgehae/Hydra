@@ -358,28 +358,7 @@ class HydraVpnService : VpnService() {
         var dnsAdded = 0
         // AI-DNS важнее «польз. DNS» с https://… — тот путь резолвит DoH-хост в IP прокси и ломает DNS
         if (prefs.aiDnsEnabled) {
-            val cache = prefs.aiDnsCache
-            if (cache.isNotBlank() && LocalDnsServer.mapSize() == 0) {
-                val hits = cache.lines().mapNotNull { line ->
-                    val p = line.split("|")
-                    if (p.size >= 2) AiDns.ResolveHit(p[0], p[1], p.getOrNull(2) == "1") else null
-                }
-                if (hits.isNotEmpty()) LocalDnsServer.setMap(hits)
-            }
-            if (LocalDnsServer.mapSize() > 0) {
-                LocalDnsServer.start { sock ->
-                    try { protect(sock) } catch (_: Exception) { false }
-                }
-                try {
-                    b.addDnsServer("127.0.0.1")
-                    dnsAdded++
-                    jlog("AI-DNS only-ИИ: 127.0.0.1:" + LocalDnsServer.boundPort + " имён " + LocalDnsServer.mapSize() + " · " + LocalDnsServer.stats())
-                } catch (e: Exception) {
-                    jlog("AI-DNS: addDnsServer 127.0.0.1 fail: " + e.message)
-                }
-            } else {
-                jlog("AI-DNS: карта пуста — Обход ИИ → «Только ИИ» или «Проверить провайдеры»")
-            }
+            dnsAdded += AiDns.applyToBuilder(this, b) { jlog(it) }
         } else if (prefs.customDnsOn) {
             for (raw in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
                 // Только IP или hostname без https:// — DoH URL здесь бесполезен (нужен UDP/53)

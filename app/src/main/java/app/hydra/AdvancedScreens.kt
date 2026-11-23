@@ -198,8 +198,7 @@ fun AdvancedScreen(
         RowDivider()
         SettingRow(stringResource(R.string.conn_apps), onClick = onApps)
         SettingRow(stringResource(R.string.conn_routes), onClick = onRoutes)
-        SettingRow(stringResource(R.string.conn_dns), onClick = onDns)
-        SettingRow("Обход ИИ (AI-DNS)", subtitle = "DoH-подмена имён ChatGPT/Claude/Grok", onClick = onAiDns)
+        SettingRow("DNS и обход ИИ", subtitle = "Smart DNS для ChatGPT/Claude/Grok/Gemini + свой DNS туннеля", onClick = onAiDns)
 
         SectionLabel(stringResource(R.string.adv_sec_conn))
         RowDivider()

@@ -2,31 +2,45 @@ package app.hydra
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.Callable
-import java.util.concurrent.Future
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 /**
- * Обход ИИ через DNS, который подменяет имена на IP «прокси».
+ * Обход ИИ через Smart DNS (ChatGPT / Claude / Grok / Gemini…).
  *
- * Рабочий путь (как у системного «Частный DNS»):
- *   private_dns_mode=hostname + private_dns_specifier=<хост DoT>
- * Без root — открываем системный экран и копируем hostname.
- * С root / WRITE_SECURE_SETTINGS — пишем сами.
+ * Как это работает теперь (один способ, VPN выключать НЕ нужно):
+ *  1. Приложение само (его трафик идёт мимо туннеля) спрашивает у каждого Smart DNS адреса сервисов ИИ:
+ *     обычным UDP:53, а если не вышло — DoH (формат RFC 8484) и DoT.
+ *  2. Настоящая проверка: подключается к выданному адресу по TLS с нужным SNI и смотрит ответ
+ *     (открывается / «недоступно в вашей стране» / капча / не подключилось).
+ *  3. Включение: DNS туннеля = адреса выбранного Smart DNS, а эти адреса и адреса прокси ИИ
+ *     исключаются из туннеля (Android 13+). Остальной трафик идёт через WARP как обычно.
+ *  Системный «Частный DNS» остаётся запасным путём (нужны root/WRITE_SECURE_SETTINGS).
  *
- * Дополнительно: проверка провайдеров (живой DoH? что открывает?).
+ * Список серверов: встроенный + файл dns-providers.json из репозитория (обновляется кнопкой) + свои.
  */
 object AiDns {
     private const val TAG = "HydraAiDns"
+    private const val REMOTE_URL = "https://api.github.com/repos/evgehae/Hydra/contents/dns-providers.json"
     private val io = Executors.newCachedThreadPool()
 
     data class Provider(
@@ -34,125 +48,372 @@ object AiDns {
         val title: String,
         /** Hostname для Android Private DNS (DoT). */
         val hostname: String,
-        /** DoH JSON endpoint для проверок. */
+        /** DoH endpoint. */
         val dohUrl: String,
-        val note: String = ""
+        /** Известные обычные DNS-адреса (UDP:53) — для DNS внутри туннеля. */
+        val plain: List<String> = emptyList(),
+        val note: String = "",
+        val custom: Boolean = false
     )
 
     data class Service(
         val id: String,
         val title: String,
-        /** Главное имя для пробы (достаточно одного «репрезентативного»). */
         val probeDomain: String,
         val domains: List<String>
     )
 
-    data class ResolveHit(
-        val domain: String,
-        val ip: String,
-        val isProxyGuess: Boolean
-    )
+    data class ResolveHit(val domain: String, val ip: String, val isProxyGuess: Boolean)
+
+    enum class Check { OPEN, BLOCKED, TLS_FAIL, NO_CONN }
 
     /** Результат проверки одного провайдера. */
     data class ProviderProbe(
         val providerId: String,
         val alive: Boolean,
         val latencyMs: Long,
-        /** serviceId → открывает ли (подмена относительно Cloudflare). */
+        /** serviceId → реально открывается (подмена + TLS + нет блока страны). */
         val bypass: Map<String, Boolean>,
-        val detail: String
+        val detail: String,
+        /** serviceId → короткий статус для экрана («✔», «⛔ страна», «✘»…). */
+        val marks: Map<String, String> = emptyMap(),
+        /** Обычные DNS-адреса (UDP:53), которые ответили. Если пусто — можно только через DoH/DoT. */
+        val dnsIps: List<String> = emptyList(),
+        /** Адреса прокси ИИ, которые открылись (их исключаем из туннеля). */
+        val proxyIps: List<String> = emptyList(),
+        val via: String = ""
     )
 
-    val providers = listOf(
-        // Актуальные Smart DNS для ИИ (РФ, 2026). Hostname = для частного DNS Android.
-        Provider("comss", "Comss.one", "dns.comss.one", "https://dns.comss.one/dns-query"),
-        Provider("geohide", "GeoHide", "geohide.ru", "https://geohide.ru/dns-query"),
+    // ─── Список провайдеров ────────────────────────────────────
+
+    /** Проверено по открытым источникам 14–23.11.2026; мёртвые убираются автоматически (проверка + файл из репозитория). */
+    private val builtin = listOf(
+        Provider("comss", "Comss.one", "dns.comss.one", "https://dns.comss.one/dns-query",
+            listOf("94.250.253.55", "212.109.195.93"), "ChatGPT, Claude, Gemini, Grok"),
+        Provider("geohide", "GeoHide (EU)", "geohide.ru", "https://geohide.ru/dns-query",
+            listOf("143.20.64.192", "45.13.237.213"), "Gemini иногда капча"),
         Provider("geohide_us", "GeoHide US", "us.geohide.ru", "https://us.geohide.ru/dns-query"),
-        Provider("dnsai", "DNS-AI", "dns.dns-ai.ru", "https://dns.dns-ai.ru/dns-query"),
-        Provider("dnsai_cf", "DNS-AI (через CF)", "cf.dns-ai.ru", "https://cf.dns-ai.ru/dns-query"),
-        Provider("magic", "MagicDNS", "dns.magicdns.ru", "https://dns.magicdns.ru/dns-query"),
+        Provider("magic", "MagicDNS", "magicdns.ru", "https://dns.magicdns.ru/dns-query",
+            listOf("109.120.132.43", "94.249.177.102")),
         Provider("magic2", "MagicDNS (api)", "api.magicinfo.art", "https://api.magicinfo.art/rpc"),
+        Provider("zapret", "Zapret DNS", "dns.zapret.moe", "https://dns.zapret.moe/dns-query",
+            listOf("83.217.211.149"), "с 09.10.2026, ~90 сервисов"),
+        Provider("dagami", "Dagami", "dns.dagami.ru", "https://dns.dagami.ru/dns-query", listOf("48.102.213.179")),
         Provider("keyoneday", "KeyOneDay", "dns.keyoneday.ru", "https://dns.keyoneday.ru/dns-query"),
         Provider("keyoneday2", "KeyOneDay (alt)", "keyoneday.ru", "https://keyoneday.ru/dns-query"),
-        Provider("dagami", "Dagami", "dns.dagami.ru", "https://dns.dagami.ru/dns-query"),
+        Provider("pereval", "Перевал", "free.pereval.top", "https://free.pereval.top/dns-query"),
+        Provider("malw", "Malw.link", "dns.malw.link", "https://dns.malw.link/dns-query",
+            listOf("84.21.189.133", "193.23.209.189")),
+        Provider("dnsai", "DNS-AI", "dns.dns-ai.ru", "https://dns.dns-ai.ru/dns-query"),
+        Provider("dnsai_cf", "DNS-AI (через CF)", "cf.dns-ai.ru", "https://cf.dns-ai.ru/dns-query"),
         Provider("geodema", "Geodema", "dns.geodema.love", "https://dns.geodema.love/dns-query"),
         Provider("wlrus", "WLRus", "dns.wlrus.cfd", "https://dns.wlrus.cfd/dns-query"),
-        Provider("pereval", "Перевал", "free.pereval.top", "https://free.pereval.top/dns-query"),
-        Provider("malw", "Malw.link", "dns.malw.link", "https://dns.malw.link/dns-query"),
-        Provider("xbox", "XBox DNS", "xbox-dns.ru", "https://xbox-dns.ru/dns-query", "AI могли отключить"),
-        Provider("cloudflare", "Cloudflare (контроль)", "one.one.one.one", "https://cloudflare-dns.com/dns-query", "без подмены ИИ"),
+        Provider("bezmezhau", "Bezmezhau", "dns.bezmezhau.com", "https://sync.bezmezhau.com/dns-query", note = "нестабильный"),
+        Provider("cloudflare", "Cloudflare (контроль)", "one.one.one.one", "https://cloudflare-dns.com/dns-query",
+            listOf("1.1.1.1", "1.0.0.1"), "без подмены ИИ")
     )
+
+    /** xbox-dns.ru с 10.10.2026 на ИИ отвечает 0.0.0.0, Astracat не отвечает — убраны. */
+    private val builtinDead = setOf("xbox", "astracat")
+
+    @Volatile var providers: List<Provider> = builtin
+        private set
+
+    private fun sp(ctx: Context) = ctx.getSharedPreferences("hydra_aidns", Context.MODE_PRIVATE)
+
+    private fun parseProviders(arr: JSONArray?, custom: Boolean): List<Provider> {
+        if (arr == null) return emptyList()
+        val res = ArrayList<Provider>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val host = o.optString("host").trim()
+            val doh = o.optString("doh").trim()
+            if (host.isEmpty() && doh.isEmpty()) continue
+            val ips = ArrayList<String>()
+            val ia = o.optJSONArray("ip")
+            if (ia != null) for (k in 0 until ia.length()) {
+                val s = ia.optString(k).trim()
+                if (s.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) ips.add(s)
+            }
+            val h = host.ifEmpty { doh.substringAfter("://").substringBefore("/") }
+            val id = o.optString("id").ifBlank { (if (custom) "c_" else "r_") + h }
+            res.add(Provider(id, o.optString("title").ifBlank { h }, h,
+                doh.ifEmpty { "https://$h/dns-query" }, ips, o.optString("note"), custom))
+        }
+        return res
+    }
+
+    /** Пересобрать список: встроенные + из репозитория + свои, минус мёртвые. */
+    fun reload(ctx: Context) {
+        val s = sp(ctx)
+        val dead = HashSet<String>(builtinDead)
+        val remote = ArrayList<Provider>()
+        try {
+            val txt = s.getString("remote", "") ?: ""
+            if (txt.isNotBlank()) {
+                val o = JSONObject(txt)
+                remote.addAll(parseProviders(o.optJSONArray("providers"), false))
+                val d = o.optJSONArray("dead")
+                if (d != null) for (i in 0 until d.length()) dead.add(d.optString(i))
+            }
+        } catch (e: Exception) { Log.w(TAG, "remote json: ${e.message}") }
+        val own = try { parseProviders(JSONArray(s.getString("custom", "[]") ?: "[]"), true) } catch (e: Exception) { emptyList() }
+        val map = LinkedHashMap<String, Provider>()
+        for (p in builtin + remote + own) if (p.id !in dead || p.custom) map[p.id] = p
+        providers = map.values.toList()
+    }
+
+    /** Добавить свой сервер: hostname, IPv4 или https://…/dns-query. null = ок, иначе текст ошибки. */
+    fun addCustom(ctx: Context, input: String): String? {
+        val t = input.trim()
+        if (t.isEmpty()) return "Пусто"
+        val isIp = t.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))
+        val o = JSONObject()
+        when {
+            t.startsWith("https://") -> { o.put("doh", t); o.put("host", t.substringAfter("://").substringBefore("/").substringBefore(":")) }
+            isIp -> { o.put("host", t); o.put("ip", JSONArray().put(t)); o.put("doh", "") }
+            t.matches(Regex("""[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")) -> o.put("host", t)
+            else -> return "Нужен hostname, IPv4 или https://…/dns-query"
+        }
+        o.put("title", o.optString("host"))
+        o.put("id", "c_" + o.optString("host"))
+        val s = sp(ctx)
+        val arr = try { JSONArray(s.getString("custom", "[]") ?: "[]") } catch (e: Exception) { JSONArray() }
+        val out = JSONArray()
+        for (i in 0 until arr.length()) if (arr.optJSONObject(i)?.optString("id") != o.optString("id")) out.put(arr.get(i))
+        out.put(o)
+        s.edit().putString("custom", out.toString()).apply()
+        reload(ctx)
+        return null
+    }
+
+    fun removeCustom(ctx: Context, id: String) {
+        val s = sp(ctx)
+        val arr = try { JSONArray(s.getString("custom", "[]") ?: "[]") } catch (e: Exception) { JSONArray() }
+        val out = JSONArray()
+        for (i in 0 until arr.length()) if (arr.optJSONObject(i)?.optString("id") != id) out.put(arr.get(i))
+        s.edit().putString("custom", out.toString()).apply()
+        reload(ctx)
+    }
+
+    /** Обновить список серверов из репозитория (api.github.com отдаёт файл и там, где raw.* закрыт). */
+    fun syncRemote(ctx: Context, onDone: (Boolean, String) -> Unit) {
+        io.execute {
+            try {
+                val c = (URL(REMOTE_URL).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000; readTimeout = 8000
+                    setRequestProperty("Accept", "application/vnd.github.raw+json")
+                    setRequestProperty("User-Agent", "Hydra-AiDns/2")
+                }
+                try {
+                    if (c.responseCode !in 200..299) { onDone(false, "GitHub: код ${c.responseCode}"); return@execute }
+                    val body = c.inputStream.bufferedReader().readText()
+                    val before = providers.size
+                    val o = JSONObject(body)
+                    if (o.optJSONArray("providers") == null) { onDone(false, "В файле нет списка providers"); return@execute }
+                    sp(ctx).edit().putString("remote", body).putLong("remote_ts", System.currentTimeMillis()).apply()
+                    reload(ctx)
+                    onDone(true, "Список обновлён: серверов ${providers.size} (было $before)")
+                } finally { c.disconnect() }
+            } catch (e: Exception) {
+                onDone(false, "Не удалось обновить: ${e.message}")
+            }
+        }
+    }
 
     val services = listOf(
         Service("chatgpt", "ChatGPT", "chatgpt.com", listOf(
             "chatgpt.com", "www.chatgpt.com", "chat.openai.com", "api.openai.com",
-            "ab.chatgpt.com", "cdn.oaistatic.com"
+            "ab.chatgpt.com", "cdn.oaistatic.com", "auth.openai.com"
         )),
-        Service("claude", "Claude", "claude.ai", listOf(
-            "claude.ai", "www.claude.ai", "api.anthropic.com"
-        )),
-        Service("grok", "Grok", "grok.com", listOf(
-            "grok.com", "www.grok.com", "x.ai", "api.x.ai"
-        )),
+        Service("claude", "Claude", "claude.ai", listOf("claude.ai", "www.claude.ai", "api.anthropic.com")),
+        Service("grok", "Grok", "grok.com", listOf("grok.com", "www.grok.com", "x.ai", "api.x.ai")),
         Service("gemini", "Gemini", "gemini.google.com", listOf(
-            "gemini.google.com", "aistudio.google.com"
+            "gemini.google.com", "aistudio.google.com", "notebooklm.google.com"
         )),
-        Service("copilot", "Copilot", "copilot.microsoft.com", listOf(
-            "copilot.microsoft.com"
-        )),
-        Service("perplexity", "Perplexity", "www.perplexity.ai", listOf(
-            "www.perplexity.ai", "perplexity.ai"
-        )),
+        Service("copilot", "Copilot", "copilot.microsoft.com", listOf("copilot.microsoft.com")),
+        Service("perplexity", "Perplexity", "www.perplexity.ai", listOf("www.perplexity.ai", "perplexity.ai")),
     )
 
     fun provider(id: String) = providers.find { it.id == id } ?: providers.first()
 
-    // ─── DoH resolve ───────────────────────────────────────────
+    // ─── DNS: формат пакетов ───────────────────────────────────
 
-    fun dohA(dohUrl: String, name: String, timeoutMs: Int = 12000): List<String> {
-        val base = dohUrl.trim()
-        val url = if (base.contains("name=") || base.endsWith("/rpc")) {
-            // некоторые API (magic) — другой формат; пробуем стандартный JSON
-            base.trimEnd('?') + (if (base.contains('?')) "&" else "?") +
-                "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
-        } else {
-            base.trimEnd('?') + (if (base.contains('?')) "&" else "?") +
-                "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
+    fun buildQuery(name: String, type: Int = 1): ByteArray {
+        val out = ByteArrayOutputStream()
+        val id = (System.nanoTime() and 0xffff).toInt()
+        out.write(id shr 8); out.write(id and 0xff)
+        out.write(0x01); out.write(0x00)           // RD
+        out.write(0); out.write(1)                 // QDCOUNT
+        for (i in 0 until 6) out.write(0)          // AN/NS/AR
+        for (label in name.trimEnd('.').split('.')) {
+            val b = label.toByteArray(Charsets.US_ASCII)
+            out.write(b.size); out.write(b, 0, b.size)
         }
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = timeoutMs
-            readTimeout = timeoutMs
-            setRequestProperty("Accept", "application/dns-json, application/json, */*")
-            setRequestProperty("User-Agent", "Hydra-AiDns/1.0")
-            instanceFollowRedirects = true
+        out.write(0)
+        out.write(type shr 8); out.write(type and 0xff)
+        out.write(0); out.write(1)                 // IN
+        return out.toByteArray()
+    }
+
+    private fun u16(r: ByteArray, i: Int) = ((r[i].toInt() and 0xff) shl 8) or (r[i + 1].toInt() and 0xff)
+
+    private fun skipName(r: ByteArray, start: Int): Int {
+        var i = start
+        while (i < r.size) {
+            val l = r[i].toInt() and 0xff
+            if (l == 0) return i + 1
+            if ((l and 0xC0) == 0xC0) return i + 2
+            i += 1 + l
         }
+        return i
+    }
+
+    fun parseA(r: ByteArray): List<String> {
+        if (r.size < 12) return emptyList()
+        if ((r[3].toInt() and 0x0f) != 0) return emptyList()
+        val qd = u16(r, 4)
+        val an = u16(r, 6)
+        var i = 12
+        for (q in 0 until qd) { i = skipName(r, i) + 4 }
+        val res = ArrayList<String>()
+        for (a in 0 until an) {
+            if (i >= r.size) break
+            i = skipName(r, i)
+            if (i + 10 > r.size) break
+            val t = u16(r, i)
+            val rd = u16(r, i + 8)
+            i += 10
+            if (t == 1 && rd == 4 && i + 4 <= r.size) {
+                res.add("${r[i].toInt() and 0xff}.${r[i + 1].toInt() and 0xff}.${r[i + 2].toInt() and 0xff}.${r[i + 3].toInt() and 0xff}")
+            }
+            i += rd
+        }
+        return res
+    }
+
+    // ─── DNS: транспорты ───────────────────────────────────────
+
+    fun udpA(server: String, name: String, timeoutMs: Int = 2500): List<String> {
         return try {
-            val code = conn.responseCode
-            if (code !in 200..299) return emptyList()
-            val body = conn.inputStream.bufferedReader().readText()
-            val json = JSONObject(body)
-            val ans = json.optJSONArray("Answer") ?: return emptyList()
-            buildList {
-                for (i in 0 until ans.length()) {
-                    val o = ans.getJSONObject(i)
-                    if (o.optInt("type") == 1) {
-                        val data = o.optString("data")
-                        if (data.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) add(data)
-                    }
+            DatagramSocket().use { s ->
+                s.soTimeout = timeoutMs
+                val q = buildQuery(name)
+                s.send(DatagramPacket(q, q.size, InetAddress.getByName(server), 53))
+                val buf = ByteArray(1500)
+                val p = DatagramPacket(buf, buf.size)
+                s.receive(p)
+                parseA(buf.copyOf(p.length))
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** DoH в формате RFC 8484 (его понимают все; JSON-формат — нет, из-за него живые серверы казались «мёртвыми»). */
+    fun dohWireA(dohUrl: String, name: String, timeoutMs: Int = 5000): List<String> {
+        val q = Base64.encodeToString(buildQuery(name), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val base = dohUrl.trim()
+        val url = base + (if (base.contains('?')) "&" else "?") + "dns=" + q
+        val conn = try { URL(url).openConnection() as HttpURLConnection } catch (e: Exception) { return emptyList() }
+        return try {
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.setRequestProperty("Accept", "application/dns-message")
+            conn.setRequestProperty("User-Agent", "Hydra-AiDns/2")
+            if (conn.responseCode !in 200..299) emptyList() else parseA(conn.inputStream.readBytes())
+        } catch (e: Exception) { emptyList() } finally { conn.disconnect() }
+    }
+
+    /** DoH JSON (запасной, для нестандартных вроде api.magicinfo.art/rpc). */
+    fun dohA(dohUrl: String, name: String, timeoutMs: Int = 8000): List<String> {
+        val base = dohUrl.trim()
+        val url = base.trimEnd('?') + (if (base.contains('?')) "&" else "?") +
+            "name=" + URLEncoder.encode(name, "UTF-8") + "&type=A"
+        val conn = try { URL(url).openConnection() as HttpURLConnection } catch (e: Exception) { return emptyList() }
+        return try {
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.setRequestProperty("Accept", "application/dns-json, application/json, */*")
+            conn.setRequestProperty("User-Agent", "Hydra-AiDns/2")
+            if (conn.responseCode !in 200..299) return emptyList()
+            val ans = JSONObject(conn.inputStream.bufferedReader().readText()).optJSONArray("Answer") ?: return emptyList()
+            val res = ArrayList<String>()
+            for (i in 0 until ans.length()) {
+                val o = ans.getJSONObject(i)
+                if (o.optInt("type") == 1) {
+                    val d = o.optString("data")
+                    if (d.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) res.add(d)
                 }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "dohA $name via $dohUrl: ${e.message}")
-            emptyList()
-        } finally {
-            conn.disconnect()
+            res
+        } catch (e: Exception) { emptyList() } finally { conn.disconnect() }
+    }
+
+    fun dotA(host: String, name: String, timeoutMs: Int = 5000): List<String> {
+        return try {
+            val raw = Socket()
+            raw.connect(InetSocketAddress(host, 853), timeoutMs)
+            raw.soTimeout = timeoutMs
+            val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, host, 853, true) as SSLSocket
+            ssl.use { s ->
+                s.startHandshake()
+                val q = buildQuery(name)
+                val o = s.outputStream
+                o.write(q.size shr 8); o.write(q.size and 0xff); o.write(q, 0, q.size); o.flush()
+                val ins = DataInputStream(s.inputStream)
+                val len = ins.readUnsignedShort()
+                val b = ByteArray(len)
+                ins.readFully(b)
+                parseA(b)
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    data class Resolved(val ips: List<String>, val via: String, val ms: Long, val dnsIps: List<String> = emptyList())
+
+    /** Кандидаты на обычный DNS: известные + адреса самого hostname. */
+    private fun plainCandidates(p: Provider): List<String> {
+        val res = LinkedHashSet<String>(p.plain)
+        if (!p.hostname.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) {
+            try {
+                for (a in InetAddress.getAllByName(p.hostname)) {
+                    val h = a.hostAddress ?: continue
+                    if (h.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) res.add(h)
+                }
+            } catch (_: Exception) {}
+        } else res.add(p.hostname)
+        return res.toList()
+    }
+
+    /** Спросить имя у провайдера любым способом: UDP → DoH(wire) → DoH(JSON) → DoT. */
+    fun resolveAny(p: Provider, name: String, plain: List<String> = plainCandidates(p)): Resolved {
+        val t0 = System.currentTimeMillis()
+        val okDns = ArrayList<String>()
+        var first: List<String> = emptyList()
+        for (ip in plain.take(4)) {
+            val r = udpA(ip, name)
+            if (r.isNotEmpty()) { if (first.isEmpty()) first = r; okDns.add(ip); if (okDns.size >= 2) break }
         }
+        if (first.isNotEmpty()) return Resolved(first, "UDP", System.currentTimeMillis() - t0, okDns)
+        var r = dohWireA(p.dohUrl, name)
+        if (r.isNotEmpty()) return Resolved(r, "DoH", System.currentTimeMillis() - t0)
+        r = dohA(p.dohUrl, name)
+        if (r.isNotEmpty()) return Resolved(r, "DoH", System.currentTimeMillis() - t0)
+        r = dotA(p.hostname, name)
+        if (r.isNotEmpty()) return Resolved(r, "DoT", System.currentTimeMillis() - t0)
+        return Resolved(emptyList(), "", System.currentTimeMillis() - t0)
+    }
+
+    /** «Настоящие» адреса (без подмены): Cloudflare. */
+    fun baselineA(name: String): List<String> {
+        var r = udpA("1.1.1.1", name)
+        if (r.isEmpty()) r = udpA("8.8.8.8", name)
+        if (r.isEmpty()) r = dohWireA("https://cloudflare-dns.com/dns-query", name)
+        return r
     }
 
     private fun looksLikeProxy(ip: String, baseline: Set<String>): Boolean {
         if (ip in baseline) return false
-        // RFC1918 / CGNAT / link-local — не прокси для ИИ
-        if (ip.startsWith("10.") || ip.startsWith("192.168.") || ip.startsWith("127.")) return false
+        if (ip.startsWith("10.") || ip.startsWith("192.168.") || ip.startsWith("127.") || ip == "0.0.0.0") return false
         if (ip.startsWith("172.")) {
             val second = ip.split(".").getOrNull(1)?.toIntOrNull() ?: 0
             if (second in 16..31) return false
@@ -160,96 +421,211 @@ object AiDns {
         return true
     }
 
-    private fun tcpReachable(ip: String, port: Int = 443, timeoutMs: Int = 2500): Boolean {
+    private val blockMarkers = listOf(
+        "unsupported_country", "unsupported_location", "location=unsupported",
+        "not available in your country", "isn't available in your country", "not available in your region",
+        "unavailable in your region", "google.com/sorry", "недоступен в вашей стране"
+    )
+
+    /** Подключение к адресу с нужным SNI и взгляд на ответ: это и есть «открывается ли». */
+    fun httpsCheck(ip: String, host: String): Check {
+        val raw = Socket()
+        try {
+            raw.connect(InetSocketAddress(ip, 443), 3500)
+            raw.soTimeout = 4500
+        } catch (e: Exception) {
+            try { raw.close() } catch (_: Exception) {}
+            return Check.NO_CONN
+        }
         return try {
-            Socket().use { s ->
-                s.connect(InetSocketAddress(ip, port), timeoutMs)
-                true
+            val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, host, 443, true) as SSLSocket
+            ssl.use { s ->
+                try { s.startHandshake() } catch (e: Exception) { return@use Check.TLS_FAIL }
+                val req = "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: Mozilla/5.0 (Linux; Android 15)\r\n" +
+                    "Accept: text/html\r\nConnection: close\r\n\r\n"
+                s.outputStream.write(req.toByteArray()); s.outputStream.flush()
+                val buf = ByteArray(6000)
+                var n = 0
+                try {
+                    while (n < buf.size) {
+                        val k = s.inputStream.read(buf, n, buf.size - n)
+                        if (k <= 0) break
+                        n += k
+                    }
+                } catch (_: Exception) {}
+                if (n == 0) return@use Check.TLS_FAIL
+                val txt = String(buf, 0, n, Charsets.ISO_8859_1).lowercase()
+                if (!txt.startsWith("http/")) Check.TLS_FAIL
+                else if (blockMarkers.any { txt.contains(it) }) Check.BLOCKED
+                else Check.OPEN
             }
-        } catch (_: Exception) {
-            false
+        } catch (e: Exception) {
+            Check.TLS_FAIL
         }
     }
 
-    // ─── Probe providers ───────────────────────────────────────
+    // ─── Проверка провайдеров ──────────────────────────────────
+
+    private fun probeOne(p: Provider, svcs: List<Service>, baseline: Map<String, Set<String>>): ProviderProbe {
+        val plain = plainCandidates(p)
+        val t0 = System.currentTimeMillis()
+        var test = resolveAny(p, "example.com", plain)
+        if (test.ips.isEmpty()) test = resolveAny(p, "cloudflare.com", plain)
+        val latency = System.currentTimeMillis() - t0
+        if (test.ips.isEmpty()) {
+            return ProviderProbe(p.id, false, latency, emptyMap(), "не отвечает (UDP, DoH, DoT)")
+        }
+        val dnsIps = test.dnsIps
+        val bypass = linkedMapOf<String, Boolean>()
+        val marks = linkedMapOf<String, String>()
+        val proxies = LinkedHashSet<String>()
+        for (svc in svcs) {
+            val r = resolveAny(p, svc.probeDomain, if (dnsIps.isNotEmpty()) dnsIps else plain)
+            val base = baseline[svc.id] ?: emptySet()
+            if (r.ips.isEmpty()) { bypass[svc.id] = false; marks[svc.id] = "✘ нет ответа"; continue }
+            val proxy = r.ips.any { looksLikeProxy(it, base) }
+            val ip = r.ips.firstOrNull { looksLikeProxy(it, base) } ?: r.ips.first()
+            val chk = httpsCheck(ip, svc.probeDomain)
+            val ok = proxy && chk == Check.OPEN
+            bypass[svc.id] = ok
+            marks[svc.id] = when {
+                ok -> "✔"
+                !proxy -> "✘ без подмены"
+                chk == Check.BLOCKED -> "⛔ страна/капча"
+                chk == Check.NO_CONN -> "✘ прокси не отвечает"
+                else -> "✘ TLS"
+            }
+            if (ok) for (x in r.ips) if (looksLikeProxy(x, base)) proxies.add(x)
+        }
+        val open = bypass.filter { it.value }.keys
+        val detail = (if (open.isEmpty()) "живой, ИИ не открывает" else "открывает: " +
+            open.joinToString { id -> svcs.find { it.id == id }?.title ?: id }) + " · ${test.via}"
+        return ProviderProbe(p.id, true, latency, bypass, detail, marks, dnsIps, proxies.toList(), test.via)
+    }
 
     /**
-     * Проверяет все (или выбранные) провайдеры:
-     * - отвечает ли DoH
-     * - для каждого ИИ-сервиса: IP отличается от Cloudflare и (желательно) :443 жив
+     * Проверить провайдеров (VPN выключать не нужно: трафик самого приложения идёт мимо туннеля).
+     * onProgress(готово, всего) вызывается по мере проверки.
      */
     fun probeProviders(
         providerIds: List<String> = providers.map { it.id },
         serviceIds: List<String> = services.map { it.id },
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
         onDone: (List<ProviderProbe>) -> Unit
     ) {
         io.execute {
-            val baseline = mutableMapOf<String, Set<String>>()
-            val cf = provider("cloudflare")
-            for (svc in services.filter { it.id in serviceIds }) {
-                baseline[svc.id] = dohA(cf.dohUrl, svc.probeDomain).toSet()
-            }
+            val svcs = services.filter { it.id in serviceIds }.ifEmpty { services }
+            val baseline = HashMap<String, Set<String>>()
+            for (s in svcs) baseline[s.id] = baselineA(s.probeDomain).toSet()
+            val total = providerIds.size
+            var done = 0
             val jobs = providerIds.map { pid ->
                 io.submit(Callable {
-                    val p = provider(pid)
-                    val t0 = System.currentTimeMillis()
-                    val testIps = dohA(p.dohUrl, "example.com")
-                    val alive = testIps.isNotEmpty() || dohA(p.dohUrl, "cloudflare.com").isNotEmpty()
-                    val latency = System.currentTimeMillis() - t0
-                    if (!alive) {
-                        return@Callable ProviderProbe(pid, false, latency, emptyMap(), "DoH не отвечает")
-                    }
-                    val bypass = linkedMapOf<String, Boolean>()
-                    val notes = mutableListOf<String>()
-                    for (svc in services.filter { it.id in serviceIds }) {
-                        val ips = dohA(p.dohUrl, svc.probeDomain)
-                        val base = baseline[svc.id] ?: emptySet()
-                        if (ips.isEmpty()) {
-                            bypass[svc.id] = false
-                            notes.add("${svc.title}: нет A")
-                            continue
-                        }
-                        val proxy = ips.any { looksLikeProxy(it, base) }
-                        val reach = if (proxy) ips.any { tcpReachable(it) } else false
-                        // считаем «обходит», если IP не как у CF (подмена). TCP — бонус в detail
-                        bypass[svc.id] = proxy
-                        val mark = when {
-                            proxy && reach -> "✔"
-                            proxy -> "△" // подмена есть, :443 с телефона не ответил (часто норма)
-                            else -> "✘"
-                        }
-                        notes.add("${svc.title}: $mark ${ips.first()}")
-                    }
-                    val open = bypass.filter { it.value }.keys
-                    val detail = if (open.isEmpty()) {
-                        "живой, но подмены ИИ нет · " + notes.joinToString("; ")
-                    } else {
-                        "обходит: " + open.joinToString { id -> services.find { it.id == id }?.title ?: id } +
-                            " · " + notes.joinToString("; ")
-                    }
-                    ProviderProbe(pid, true, latency, bypass, detail)
+                    val r = try { probeOne(provider(pid), svcs, baseline) }
+                    catch (e: Throwable) { ProviderProbe(pid, false, 0, emptyMap(), "ошибка: ${e.message}") }
+                    synchronized(this) { done++; onProgress(done, total) }
+                    r
                 })
             }
             val results = jobs.mapNotNull { f ->
-                try {
-                    f.get(60, TimeUnit.SECONDS)
-                } catch (e: Exception) {
-                    Log.e(TAG, "probe", e)
-                    null
-                }
+                try { f.get(120, TimeUnit.SECONDS) } catch (e: Exception) { Log.e(TAG, "probe", e); null }
             }
             onDone(results)
         }
     }
 
+    /** Лучший: больше открытых сервисов, дальше — есть обычный DNS (работает без root), дальше — быстрее. */
     fun pickBest(probes: List<ProviderProbe>, preferService: String = "chatgpt"): Provider? {
         val scored = probes.filter { it.alive && it.providerId != "cloudflare" }.map { pr ->
             val score = pr.bypass.values.count { it } * 10 +
-                (if (pr.bypass[preferService] == true) 5 else 0) -
+                (if (pr.bypass[preferService] == true) 5 else 0) +
+                (if (pr.dnsIps.isNotEmpty()) 8 else 0) -
                 (pr.latencyMs / 100).toInt()
             pr to score
-        }.sortedByDescending { it.second }
+        }.filter { it.first.bypass.values.any { v -> v } }.sortedByDescending { it.second }
         return scored.firstOrNull()?.let { provider(it.first.providerId) }
+    }
+
+    // ─── Включение обхода (внутри туннеля) ─────────────────────
+
+    fun vpnDnsIps(ctx: Context): List<String> =
+        (sp(ctx).getString("dns_ips", "") ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    fun proxyRoutes(ctx: Context): List<String> =
+        (sp(ctx).getString("routes", "") ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    fun activeProviderTitle(ctx: Context): String {
+        val id = sp(ctx).getString("active", "") ?: ""
+        return if (id.isEmpty()) "" else provider(id).title
+    }
+
+    fun lastProbeAgeMin(ctx: Context): Long {
+        val t = sp(ctx).getLong("probe_ts", 0L)
+        return if (t == 0L) -1 else (System.currentTimeMillis() - t) / 60000
+    }
+
+    /**
+     * Хук для HydraVpnService: добавить DNS-серверы обхода ИИ в Builder и вывести их из туннеля.
+     * Возвращает, сколько DNS-серверов добавлено (0 — служба поставит 1.1.1.1 сама).
+     */
+    fun applyToBuilder(ctx: Context, b: android.net.VpnService.Builder, log: (String) -> Unit): Int {
+        val ips = vpnDnsIps(ctx)
+        if (ips.isEmpty()) {
+            log("Обход ИИ включён, но сервер не выбран — открой «DNS и обход ИИ» → «Найти лучший»")
+            return 0
+        }
+        var n = 0
+        for (ip in ips.take(2)) {
+            try { b.addDnsServer(ip); n++ } catch (e: Exception) { log("Обход ИИ: addDnsServer $ip: ${e.message}") }
+        }
+        if (n == 0) return 0
+        // запасной DNS на случай, если Smart DNS умрёт: без него интернет пропал бы целиком
+        try { b.addDnsServer("1.1.1.1") } catch (_: Exception) {}
+        var k = 0
+        if (Build.VERSION.SDK_INT >= 33) {
+            for (ip in (ips + proxyRoutes(ctx)).distinct()) {
+                try {
+                    b.excludeRoute(android.net.IpPrefix(InetAddress.getByName(ip), 32)); k++
+                } catch (_: Exception) {}
+            }
+        }
+        log("Обход ИИ: ${activeProviderTitle(ctx)}, DNS ${ips.take(2).joinToString()}, мимо туннеля адресов: $k" +
+            if (Build.VERSION.SDK_INT < 33) " (Android <13: прокси ИИ идут через туннель)" else "")
+        return n + 1
+    }
+
+
+    /** Включить обход: проверить провайдера, сохранить адреса. Если обычного DNS у него нет — запасной путь через частный DNS. */
+    fun enable(ctx: Context, providerId: String, serviceIds: Set<String>, onDone: (ApplyResult) -> Unit) {
+        probeProviders(listOf(providerId), serviceIds.toList()) { list ->
+            val pr = list.firstOrNull()
+            val p = provider(providerId)
+            if (pr == null || !pr.alive) {
+                onDone(ApplyResult(false, "none", "${p.title}: сервер не отвечает. Нажми «Найти лучший»."))
+                return@probeProviders
+            }
+            if (pr.bypass.values.none { it }) {
+                onDone(ApplyResult(false, "none", "${p.title}: ни один сервис ИИ не открылся (${pr.marks.values.distinct().joinToString()}). Выбери другой сервер."))
+                return@probeProviders
+            }
+            val s = sp(ctx).edit()
+            s.putString("active", providerId).putLong("probe_ts", System.currentTimeMillis())
+            if (pr.dnsIps.isNotEmpty()) {
+                s.putString("dns_ips", pr.dnsIps.joinToString(","))
+                s.putString("routes", pr.proxyIps.joinToString(","))
+                s.apply()
+                onDone(ApplyResult(true, "tunnel", "${p.title}: DNS ${pr.dnsIps.joinToString()} · открывает: " +
+                    services.filter { pr.bypass[it.id] == true }.joinToString { it.title }))
+            } else {
+                s.putString("dns_ips", "").putString("routes", pr.proxyIps.joinToString(",")).apply()
+                val r = applyPrivateDns(ctx, providerId)
+                onDone(ApplyResult(r.ok, r.method, "У ${p.title} нет обычного DNS (только DoH/DoT). " + r.message))
+            }
+        }
+    }
+
+    fun disable(ctx: Context) {
+        sp(ctx).edit().putString("dns_ips", "").putString("routes", "").putString("active", "").apply()
     }
 
     // ─── Private DNS apply ─────────────────────────────────────
@@ -364,12 +740,12 @@ object AiDns {
                 val baseline = mutableMapOf<String, Set<String>>()
                 val cf = provider("cloudflare")
                 for (svc in services.filter { it.id in serviceIds }) {
-                    baseline[svc.probeDomain] = dohA(cf.dohUrl, svc.probeDomain).toSet()
+                    baseline[svc.probeDomain] = baselineA(svc.probeDomain).toSet()
                 }
                 val all = mutableListOf<ResolveHit>()
                 for (svc in services.filter { it.id in serviceIds }) {
                     for (d in svc.domains) {
-                        val ips = dohA(p.dohUrl, d)
+                        val ips = resolveAny(p, d).ips
                         val ip = ips.firstOrNull() ?: continue
                         val base = baseline[svc.probeDomain] ?: emptySet()
                         all.add(ResolveHit(d, ip, looksLikeProxy(ip, base)))

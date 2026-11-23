@@ -159,7 +159,7 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
             )
             Dest.Errors -> ErrorsScreen(onBack = { back() })
             Dest.Journal -> JournalScreen(onBack = { back() })
-            Dest.AiDns -> AiDnsScreen(prefs, onBack = { back() })
+            Dest.AiDns -> AiDnsScreen(prefs, vpn, onBack = { back() })
         }
     }
 }
