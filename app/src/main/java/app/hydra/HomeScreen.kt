@@ -77,6 +77,7 @@ fun HomeScreen(
     var menu by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<UpdateChecker.Info?>(null) }
     var updateBusy by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf(-1) }
     var updateStatus by remember { mutableStateOf("") }
     var wlText by remember { mutableStateOf<String?>(null) }
     var wlRelay by remember { mutableStateOf(false) }
@@ -327,7 +328,8 @@ fun HomeScreen(
                 Text(
                     "${info.marketingLabel()}\n" +
                         "Сейчас: WARP CLAUDE 3.${UpdateChecker.currentVersionCode(ctx)}\n\n" +
-                        (if (updateStatus.isNotEmpty()) updateStatus + "\n\n" else "") +
+                        (if (updateStatus.isNotEmpty()) updateStatus + "\n" else "") +
+                        (if (updateProgress in 0..100) "Прогресс: $updateProgress%\n\n" else "\n") +
                         info.name
                 )
             },
@@ -341,12 +343,16 @@ fun HomeScreen(
                             return@TextButton
                         }
                         updateBusy = true
-                        updateStatus = "Скачиваю…"
+                        updateProgress = 0
+                        updateStatus = "Скачиваю… 0%"
                         scope.launch {
                             try {
                                 val file = withContext(Dispatchers.IO) {
                                     UpdateChecker.downloadApk(ctx, info.apkUrl) { p ->
-                                        // progress optional
+                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                            updateProgress = p
+                                            updateStatus = "Скачиваю… $p%"
+                                        }
                                     }
                                 }
                                 updateStatus = "Устанавливаю…"

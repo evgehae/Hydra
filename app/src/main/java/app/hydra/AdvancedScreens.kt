@@ -129,6 +129,7 @@ fun AdvancedScreen(
     var updateCheckBusy by remember { mutableStateOf(false) }
     var updateCheckMsg by remember { mutableStateOf("") }
     var forceUpdateInfo by remember { mutableStateOf<UpdateChecker.Info?>(null) }
+    var updateDlStatus by remember { mutableStateOf("") }
     var block by remember { mutableStateOf(prefs.blockedColos) }
     var allow by remember { mutableStateOf(prefs.allowColos) }
     var fallback by remember { mutableStateOf(prefs.fallbackAny) }
@@ -443,35 +444,54 @@ fun AdvancedScreen(
 
     forceUpdateInfo?.let { info: UpdateChecker.Info ->
         AlertDialog(
-            onDismissRequest = { forceUpdateInfo = null },
+            onDismissRequest = { if (updateDlStatus.isEmpty() || updateDlStatus.startsWith("Ошибка") || updateDlStatus.startsWith("Жди")) forceUpdateInfo = null },
             title = { Text("WARP CLAUDE — обновление") },
             text = {
-                Text(info.tag + " (code " + info.versionCode + ")\n" + info.name)
+                Column {
+                    Text(info.marketingLabel() + "
+" + info.name)
+                    if (updateDlStatus.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(updateDlStatus, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val inf = info
-                    forceUpdateInfo = null
-                    Thread {
-                        try {
-                            if (!UpdateChecker.canRequestInstall(ctx)) {
-                                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                    UpdateChecker.openUnknownSourcesSettings(ctx)
+                TextButton(
+                    enabled = !updateDlStatus.startsWith("Скачиваю") && !updateDlStatus.startsWith("Установка"),
+                    onClick = {
+                        val inf = info
+                        updateDlStatus = "Скачиваю… 0%"
+                        Thread {
+                            try {
+                                if (!UpdateChecker.canRequestInstall(ctx)) {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        UpdateChecker.openUnknownSourcesSettings(ctx)
+                                        updateDlStatus = "Разреши установку и нажми «Обновить» снова"
+                                    }
+                                    return@Thread
                                 }
-                                return@Thread
+                                val f = UpdateChecker.downloadApk(ctx, inf.apkUrl) { p ->
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        updateDlStatus = "Скачиваю… $p%"
+                                    }
+                                }
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    updateDlStatus = "Установка… откроется системное окно"
+                                }
+                                UpdateChecker.installApk(ctx, f)
+                            } catch (e: Throwable) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    updateDlStatus = "Ошибка: " + (e.message ?: "")
+                                    Toast.makeText(ctx, updateDlStatus, Toast.LENGTH_LONG).show()
+                                }
                             }
-                            val f = UpdateChecker.downloadApk(ctx, inf.apkUrl, null)
-                            UpdateChecker.installApk(ctx, f)
-                        } catch (e: Throwable) {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                Toast.makeText(ctx, "Ошибка: " + (e.message ?: ""), Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }.start()
-                }) { Text("Обновить") }
+                        }.start()
+                    }
+                ) { Text("Обновить") }
             },
             dismissButton = {
-                TextButton(onClick = { forceUpdateInfo = null }) { Text("Позже") }
+                TextButton(onClick = { forceUpdateInfo = null; updateDlStatus = "" }) { Text("Позже") }
             }
         )
     }
@@ -703,7 +723,7 @@ fun AdvancedScreen(
     }
 }
 
-/** «Параметры DNS»: свой DNS внутри туннеля. */
+/** «Параметры DNS»: DNS внутри туннеля WARP (обычные IP). Обход ИИ — отдельный экран. */
 @Composable
 fun DnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
     var on by remember { mutableStateOf(prefs.customDnsOn) }
@@ -711,7 +731,10 @@ fun DnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
     var edit by remember { mutableStateOf(false) }
 
     SubPage(stringResource(R.string.conn_dns), onBack) {
-        NoteText(stringResource(R.string.dns_note))
+        NoteText(
+            "DNS внутри туннеля WARP: сюда только IP (1.1.1.1) или имя обычного DNS. " +
+                "Ссылки https://… / DoH здесь не работают — для обхода ChatGPT/Claude открой «Обход ИИ»."
+        )
         RowDivider()
         SettingSwitchRow(stringResource(R.string.dns_use), checked = on) {
             on = it
@@ -720,10 +743,17 @@ fun DnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
         }
         SettingRow(
             stringResource(R.string.dns_server),
-            value = if (dns.isEmpty()) stringResource(R.string.dns_default) else dns,
+            value = if (dns.isEmpty()) stringResource(R.string.dns_default) else dns.take(40),
             onClick = { edit = true }
         )
-        NoteText(stringResource(R.string.dns_soon))
+        // быстрые пресеты обычного DNS
+        SettingRow("Cloudflare 1.1.1.1", onClick = {
+            dns = "1.1.1.1,1.0.0.1"; prefs.customDns = dns; on = true; prefs.customDnsOn = true; vpn.restartIfActive()
+        })
+        SettingRow("Google 8.8.8.8", onClick = {
+            dns = "8.8.8.8,8.8.4.4"; prefs.customDns = dns; on = true; prefs.customDnsOn = true; vpn.restartIfActive()
+        })
+        NoteText("Обход ИИ (подмена только Claude/GPT/…) — в меню «Дополнительно» → «Обход ИИ».")
     }
     if (edit) {
         TextDialog(
