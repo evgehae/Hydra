@@ -32,7 +32,7 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
     SubPage("Обход ИИ (AI-DNS)", onBack) {
         SettingSwitchRow(
             "Обход ИИ-сервисов",
-            "DoH подменяет имена на IP прокси. С root — hosts. Без root — приложения в split VPN.",
+            "DoH → карта IP прокси → локальный DNS в VPN (без root). WARP сам по себе ИИ часто не открывает.",
             enabled
         ) {
             enabled = it
@@ -119,9 +119,10 @@ fun AiDnsScreen(prefs: Prefs, onBack: () -> Unit) {
         ) { Text("Сбросить hosts") }
 
         NoteText(
-            "DoH отдаёт A-записи. Если они отличаются от обычного Cloudflare DNS — это похоже на прокси. " +
-                "С root Гидра пишет блок # HYDRA-AI-DNS в /etc/hosts. " +
-                "Без root добавь ChatGPT/Claude/Grok в список приложений VPN (split)."
+            "1) Выбери DoH и сервисы → Проверить и применить.\n" +
+                "2) Переподключи VPN — DNS станет 127.0.0.1 (локальная подмена).\n" +
+                "3) AI-приложения должны быть в split (или выключи split).\n" +
+                "WARP-IP Cloudflare для ChatGPT/Claude часто режется — нужен именно прокси из DoH."
         )
     }
 }
