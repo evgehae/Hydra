@@ -1,0 +1,17 @@
+{
+  "updated": "2026-11-23",
+  "note": "Редактируй этот файл в репозитории — приложение подтянет его кнопкой «Обновить список» без новой сборки. dead — id встроенных серверов, которые надо убрать.",
+  "dead": ["xbox", "astracat"],
+  "providers": [
+    {"id": "comss", "title": "Comss.one", "host": "dns.comss.one", "doh": "https://dns.comss.one/dns-query", "ip": ["94.250.253.55", "212.109.195.93"], "note": "ChatGPT, Claude, Gemini, Grok"},
+    {"id": "geohide", "title": "GeoHide (EU)", "host": "geohide.ru", "doh": "https://geohide.ru/dns-query", "ip": ["143.20.64.192", "45.13.237.213"], "note": "Gemini иногда капча"},
+    {"id": "magic", "title": "MagicDNS", "host": "magicdns.ru", "doh": "https://dns.magicdns.ru/dns-query", "ip": ["109.120.132.43", "94.249.177.102"]},
+    {"id": "zapret", "title": "Zapret DNS", "host": "dns.zapret.moe", "doh": "https://dns.zapret.moe/dns-query", "ip": ["83.217.211.149"], "note": "~90 сервисов"},
+    {"id": "dagami", "title": "Dagami", "host": "dns.dagami.ru", "doh": "https://dns.dagami.ru/dns-query", "ip": ["48.102.213.179"]},
+    {"id": "keyoneday", "title": "KeyOneDay", "host": "dns.keyoneday.ru", "doh": "https://dns.keyoneday.ru/dns-query"},
+    {"id": "pereval", "title": "Перевал", "host": "free.pereval.top", "doh": "https://free.pereval.top/dns-query"},
+    {"id": "malw", "title": "Malw.link", "host": "dns.malw.link", "doh": "https://dns.malw.link/dns-query", "ip": ["84.21.189.133", "193.23.209.189"]},
+    {"id": "dnsai", "title": "DNS-AI", "host": "dns.dns-ai.ru", "doh": "https://dns.dns-ai.ru/dns-query"},
+    {"id": "bezmezhau", "title": "Bezmezhau", "host": "dns.bezmezhau.com", "doh": "https://sync.bezmezhau.com/dns-query", "note": "нестабильный"}
+  ]
+}
