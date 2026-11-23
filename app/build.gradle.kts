@@ -12,14 +12,14 @@ android {
         applicationId = "warp.claude.app"
         minSdk = 26
         targetSdk = 35
-        val vc = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 12
+        // versionCode — монотонный из CI (нужен Android для установки поверх).
+        // versionName — «человеческий» WARP CLAUDE 3.x
+        val vc = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 3
         versionCode = vc
-        versionName = "1.0.$vc-claude"
+        versionName = "3.$vc"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
-    // Подпись release: из env (CI) или из local.properties / -P (локально).
-    // Без ключа release-сборка падает — так и надо, debug остаётся для разработки.
     val storeFilePath = System.getenv("HYDRA_KEYSTORE_FILE")
         ?: (project.findProperty("HYDRA_KEYSTORE_FILE") as String?)
     val storePassword = System.getenv("HYDRA_KEYSTORE_PASSWORD")
