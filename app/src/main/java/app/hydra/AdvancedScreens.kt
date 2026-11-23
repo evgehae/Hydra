@@ -432,6 +432,9 @@ fun AdvancedScreen(
                 }
             }
         )
+        var showDonate by remember { mutableStateOf(false) }
+        SettingRow("Поддержать проект", subtitle = "Сказать спасибо автору (Сбербанк)", onClick = { showDonate = true })
+        if (showDonate) SupportDialog(onDismiss = { showDonate = false })
         SettingRow(stringResource(R.string.about_title), stringResource(R.string.engine_label, engine),
             onClick = { showLicenses = !showLicenses })
     if (showLicenses) {

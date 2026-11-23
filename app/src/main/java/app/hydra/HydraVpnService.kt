@@ -45,6 +45,8 @@ class HydraVpnService : VpnService() {
     /** TUN живёт в службе: при перезапуске ядра интерфейс не пропадает, и трафик не уходит мимо VPN. */
     private var tunPfd: ParcelFileDescriptor? = null
     private var restartFails = 0
+    private var failedSince = 0L
+    private var forcedFallback = false
     private var nextRestartAt = 0L
     private var lastNotifiedStrategy = ""
 
@@ -69,6 +71,11 @@ class HydraVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         jlog("служба: команда " + (intent?.action ?: "перезапуск системой / запуск"))
+        if (intent?.action == ACTION_STOP) {
+            val src = intent.getStringExtra("src") ?: "неизвестно (система/другое приложение)"
+            // «👤» — это действие человека или самой Гидры, а не сбой: в отчёте такие остановки не считаются поломкой
+            jlog((if (src.startsWith("авто") || src.startsWith("перезапуск")) "🔁 плановый перезапуск: " else "👤 выключено пользователем: ") + src)
+        }
         goForeground(getString(R.string.notif_connecting))
         val prefs = Prefs(this)
         if (intent?.action == ACTION_STOP) {
@@ -92,7 +99,7 @@ class HydraVpnService : VpnService() {
         )
         val stopPi = PendingIntent.getService(
             this, 1,
-            Intent(this, HydraVpnService::class.java).setAction(ACTION_STOP),
+            Intent(this, HydraVpnService::class.java).setAction(ACTION_STOP).putExtra("src", "кнопка в уведомлении"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val big = Notification.BigTextStyle()
@@ -205,6 +212,30 @@ class HydraVpnService : VpnService() {
                     blockedStreak = 0
                 }
                 val now = System.currentTimeMillis()
+                // «Бессмертие»: ядро застряло в «failed» (все стратегии подвели) — не ждём вечно
+                if (state == "failed" && Prefs(this@HydraVpnService).wantConnected && !cellWaiting) {
+                    if (failedSince == 0L) failedSince = now
+                    val failedFor = now - failedSince
+                    if (failedFor > 10 * 60_000L && !forcedFallback && !prefsNow.fallbackAny) {
+                        forcedFallback = true
+                        prefsNow.fallbackAny = true
+                        jlog("♻ 10 минут без подключения: разрешаю любой дата-центр (включая запрещённые), чтобы не остаться без VPN")
+                        failedSince = now
+                        startVpnSafe("failed 10 мин: режим «всё равно»")
+                    } else if (failedFor > 4 * 60_000L && now >= nextRestartAt) {
+                        nextRestartAt = now + 90_000L
+                        jlog("♻ 4 минуты без подключения: перезапускаю ядро с чистого листа")
+                        failedSince = now
+                        startVpnSafe("failed 4 мин")
+                    }
+                } else if (state != "failed") {
+                    failedSince = 0L
+                    if (forcedFallback && raw.startsWith("up")) {
+                        forcedFallback = false
+                        prefsNow.fallbackAny = false
+                        jlog("♻ подключение восстановлено: режим «любой дата-центр» выключен обратно")
+                    }
+                }
                 if (raw.startsWith("off") && Prefs(this@HydraVpnService).wantConnected && now >= nextRestartAt && !cellWaiting) {
                     restartFails++
                     nextRestartAt = now + minOf(60_000L, 3_000L shl minOf(restartFails, 5))
@@ -218,6 +249,12 @@ class HydraVpnService : VpnService() {
     }
 
     private fun cm() = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    /** Перезапуск ядра без остановки службы и без сброса «хочу VPN». */
+    private fun startVpnSafe(why: String) {
+        try { mobile.Mobile.stopTunnel() } catch (t: Throwable) { }
+        try { startVpn() } catch (t: Throwable) { jlog("служба: перезапуск ($why) не удался: ${t.message}") }
+    }
 
     /** Отпечаток текущего Wi-Fi или "" (если Wi-Fi нет). */
     private fun curWifiPrint(): String = try {
@@ -642,7 +679,10 @@ class HydraVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        jlog("система отозвала VPN (включён другой VPN или VPN выключен в настройках)")
+        val other = try {
+            cm().allNetworks.any { n -> cm().getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+        } catch (t: Throwable) { false }
+        jlog("🔀 система отозвала VPN: " + (if (other) "включён ДРУГОЙ VPN" else "VPN выключен в настройках Android или другим приложением") + " — это не сбой Гидры")
         stopVpn()
         super.onRevoke()
     }

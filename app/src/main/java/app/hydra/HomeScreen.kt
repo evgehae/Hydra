@@ -316,6 +316,10 @@ fun HomeScreen(
                 }) { Text(stringResource(R.string.pdns_open)) }
             }
         }
+        if (prefs.aiDnsEnabled) {
+            Spacer(Modifier.height(16.dp))
+            AiStatusRow(prefs, vpn.active)
+        }
         Spacer(Modifier.weight(3.2f))
     }
     wlText?.let { t ->

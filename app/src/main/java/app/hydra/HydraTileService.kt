@@ -26,6 +26,7 @@ class HydraTileService : TileService() {
         prefs.wantConnected = want
         val intent = Intent(this, HydraVpnService::class.java).apply {
             action = if (want) HydraVpnService.ACTION_START else HydraVpnService.ACTION_STOP
+            putExtra("src", "плитка быстрых настроек")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)

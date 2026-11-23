@@ -160,7 +160,22 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
         .append(", excludedRoutes=").append(prefs.excludedRoutes.split(',').size)
         .append(", splitOnlySelected=").append(prefs.splitOnlySelected).append(", splitApps=").append(prefs.splitApps.size).append('\n')
     sb.append("selected apps: ").append(prefs.splitApps.sorted().joinToString(", ").ifEmpty { "—" }).append('\n')
+    sb.append("обход ИИ: ").append(if (prefs.aiDnsEnabled) "вкл, сервер=" + AiDns.activeProviderTitle(ctx) + ", dns=" + AiDns.vpnDnsIps(ctx).joinToString() + ", автопоиск=" + AiDns.autoOn(ctx) + ", статус: " + AiDns.lastHealth.text else "выкл").append('\n')
     sb.append("telegram selected: ").append(prefs.splitApps.any { it.contains("telegram", true) }).append('\n')
+    val jr = try { mobile.Mobile.getJournalFull(4000) } catch (t: Throwable) { try { mobile.Mobile.getJournal(1500) } catch (t2: Throwable) { "" } }
+    run {
+        val lines = jr.lines()
+        fun cnt(p: String) = lines.count { it.contains(p) }
+        sb.append("\n--- события: кто виноват (не считать сбоями то, что сделал сам) ---\n")
+        sb.append("выключено пользователем: ").append(cnt("👤 выключено пользователем")).append('\n')
+        sb.append("плановые перезапуски (настройки, автопоиск ИИ): ").append(cnt("🔁 плановый перезапуск")).append('\n')
+        sb.append("отозван системой / включён другой VPN: ").append(cnt("🔀 система отозвала VPN")).append('\n')
+        sb.append("убито системой/слёт приложения: ").append(cnt("прошлая сессия оборвалась")).append('\n')
+        sb.append("настоящие обрывы туннеля («перестал отвечать»): ").append(cnt("перестал отвечать")).append('\n')
+        sb.append("застревание «failed» → самолечение: ").append(cnt("♻")).append('\n')
+        sb.append("автопоиск обхода ИИ (🤖): ").append(cnt("🤖")).append('\n')
+        lines.filter { it.contains("🔀") || it.contains("👤") }.takeLast(8).forEach { sb.append("  ").append(it.take(160)).append('\n') }
+    }
     sb.append("\n--- движок и память ---\n")
     sb.append(try { mobile.Mobile.diagnostics() } catch (t: Throwable) { "н/д\n" })
     sb.append("\n--- система ---\n")
@@ -170,7 +185,7 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
         checks.forEach { sb.append(if (it.ok) "OK   " else "FAIL ").append(it.name).append(": ").append(it.detail).append('\n') }
     }
     sb.append("\n--- журнал ---\n")
-    sb.append(try { mobile.Mobile.getJournalFull(4000) } catch (t: Throwable) { try { mobile.Mobile.getJournal(1500) } catch (t2: Throwable) { "" } })
+    sb.append(jr)
     return sb.toString()
 }
 

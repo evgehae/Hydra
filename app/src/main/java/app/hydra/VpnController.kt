@@ -38,7 +38,7 @@ class VpnController(private val ctx: Context, private val scope: CoroutineScope)
     fun restartIfActive() {
         if (!active) return
         scope.launch {
-            stop()
+            stop("перезапуск: применение настроек")
             delay(1200)
             start()
         }
@@ -78,9 +78,9 @@ class VpnController(private val ctx: Context, private val scope: CoroutineScope)
         )
     }
 
-    fun stop() {
+    fun stop(src: String = "кнопка в приложении") {
         Prefs(ctx).wantConnected = false
-        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP))
+        ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP).putExtra("src", src))
     }
 }
 

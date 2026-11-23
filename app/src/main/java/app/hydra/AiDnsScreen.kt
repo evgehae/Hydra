@@ -11,22 +11,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
- * Один экран «DNS и обход ИИ» вместо двух (раньше были «Параметры DNS» и «Обход ИИ»).
- *  1. Главный переключатель «Обход ИИ» — Smart DNS внутри туннеля, VPN выключать не нужно.
- *  2. Выбор сервера: «Найти лучший» проверяет все по-настоящему (подключение к выданному адресу).
- *  3. Список можно обновить из репозитория и дополнить своим сервером.
- *  4. Обычный DNS туннеля (если обход ИИ выключен) — внизу.
- *  5. «Дополнительно»: системный частный DNS и hosts (root) — запасные пути.
+ * Один экран «DNS и обход ИИ».
+ *  - Тумблер включается сразу: запоминается последний сервер и его проверка (ничего ждать не надо).
+ *  - Результаты проверки и порядок «лучшие сверху» сохраняются между открытиями.
+ *  - Автопоиск: раз в 30 минут проверяет все серверы и сам переходит на лучший.
+ *  - Приложения ИИ автоматически добавляются в туннель.
+ *  - Системный частный DNS не включается сам (из-за него пропадал интернет).
  */
 @Composable
 fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
     val ctx = LocalContext.current
 
     var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { AiDns.reload(ctx); tick++ }
-
     var on by remember { mutableStateOf(prefs.aiDnsEnabled) }
     var providerId by remember { mutableStateOf(prefs.aiDnsProvider.ifBlank { "comss" }) }
     var enabledSvc by remember {
@@ -40,28 +41,41 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
     var probes by remember { mutableStateOf<List<AiDns.ProviderProbe>>(emptyList()) }
     var customText by remember { mutableStateOf("") }
     var adv by remember { mutableStateOf(false) }
+    var auto by remember { mutableStateOf(AiDns.autoOn(ctx)) }
     var ownDnsOn by remember { mutableStateOf(prefs.customDnsOn) }
     var ownDns by remember { mutableStateOf(prefs.customDns) }
     var sysDns by remember {
         mutableStateOf(AiDns.readPrivateDns(ctx).let { (m, h) -> if (h.isBlank()) m else "$m · $h" })
     }
 
+    // загрузить список и сохранённые результаты (порядок «лучшие сверху» остаётся)
+    LaunchedEffect(Unit) {
+        AiDns.reload(ctx)
+        probes = AiDns.sortedProbes(AiDns.loadProbes(ctx))
+        val a = AiDns.activeProviderId(ctx)
+        if (on && a.isNotEmpty()) providerId = a
+        tick++
+    }
+
     fun refreshSys() {
         sysDns = AiDns.readPrivateDns(ctx).let { (m, h) -> if (h.isBlank()) m else "$m · $h" }
     }
 
-    fun toast(s: String) = Toast.makeText(ctx, s.take(140), Toast.LENGTH_LONG).show()
+    fun toast(s: String) = Toast.makeText(ctx, s.take(160), Toast.LENGTH_LONG).show()
 
     fun turnOn(id: String) {
         busy = true
-        status = "Проверяю «${AiDns.provider(id).title}» и включаю…"
+        status = "Включаю «${AiDns.provider(id).title}»…"
         AiDns.enable(ctx, id, enabledSvc) { r ->
             busy = false
             status = r.message
+            probes = AiDns.sortedProbes(AiDns.loadProbes(ctx))
             if (r.ok) {
                 on = true
+                providerId = AiDns.activeProviderId(ctx).ifEmpty { id }
                 prefs.aiDnsEnabled = true
-                prefs.aiDnsProvider = id
+                prefs.aiDnsProvider = providerId
+                AiDns.startAuto(ctx)
                 vpn.restartIfActive()
             } else {
                 on = false
@@ -74,18 +88,16 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
     fun findBest() {
         if (busy) return
         busy = true
-        probes = emptyList()
         status = "Проверяю серверы…"
-        val ids = AiDns.providers.map { it.id }
-        AiDns.probeProviders(ids, enabledSvc.toList(), onProgress = { d, t -> status = "Проверено $d из $t…" }) { list ->
+        AiDns.probeAllAndSave(ctx, enabledSvc, onProgress = { d, t -> status = "Проверено $d из $t…" }) { sorted ->
             busy = false
-            probes = list
-            val best = AiDns.pickBest(list)
+            probes = sorted
+            val best = AiDns.pickBest(sorted)
             if (best != null) {
                 providerId = best.id
                 prefs.aiDnsProvider = best.id
-                val pr = list.find { it.providerId == best.id }
-                status = "Лучший: ${best.title} — ${pr?.detail ?: ""}. Нажми переключатель «Обход ИИ»."
+                val pr = sorted.find { it.providerId == best.id }
+                status = "Лучший: ${best.title} — ${pr?.detail ?: ""}." + if (on) "" else " Включи переключатель «Обход ИИ»."
             } else {
                 status = "Ни один сервер сейчас не открывает ИИ. Нажми «Обновить список» или добавь свой сервер."
             }
@@ -96,8 +108,8 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
         val title = AiDns.activeProviderTitle(ctx)
         NoteText(
             if (on) "Обход ИИ включён" + (if (title.isNotEmpty()) ": $title" else "") +
-                ". Туннель и обход работают вместе: ИИ идёт через Smart DNS, всё остальное — через WARP."
-            else "Обход выключен. Включи переключатель ниже — VPN выключать не нужно."
+                ". ИИ идёт через Smart DNS, всё остальное — через WARP."
+            else "Обход выключен. Включай — ничего ждать не нужно, последний сервер запоминается."
         )
 
         SettingSwitchRow(
@@ -108,12 +120,22 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
             if (busy) return@SettingSwitchRow
             if (v) turnOn(providerId)
             else {
-                AiDns.disable(ctx)
+                AiDns.deactivate(ctx)
                 prefs.aiDnsEnabled = false
                 on = false
                 status = "Обход выключен"
                 vpn.restartIfActive()
             }
+        }
+
+        SettingSwitchRow(
+            "Автопоиск лучшего сервера",
+            subtitle = "Каждые 30 минут проверяет все серверы и сам переходит на лучший; если текущий умер — раньше",
+            checked = auto
+        ) { v ->
+            auto = v
+            AiDns.setAuto(ctx, v)
+            if (v && on) AiDns.startAuto(ctx)
         }
 
         if (status.isNotBlank()) {
@@ -126,9 +148,11 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
         }
 
         SectionTitle("Сервер")
+        val age = AiDns.lastProbeAgeMin(ctx)
         SettingRow(
             if (busy) "Проверяю…" else "Найти лучший",
-            subtitle = "Реальная проверка: подключается к адресу ИИ и смотрит, открывается ли. Красный — мёртвый, жёлтый — живой, но ИИ не открывает, зелёный — открывает",
+            subtitle = "Реальная проверка адреса ИИ. Зелёный — открывает, жёлтый — живой, но ИИ нет, красный — не отвечает." +
+                if (age >= 0) " Последняя проверка: ${if (age < 1) "только что" else "$age мин назад"}." else "",
             onClick = { findBest() }
         )
         SettingRow(
@@ -141,19 +165,15 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
             }
         )
 
-        val shown = tick.let { AiDns.providers.filter { it.id != "cloudflare" } }
+        val allProviders = tick.let { AiDns.providers.filter { p -> p.id != "cloudflare" } }
         val byId = probes.associateBy { it.providerId }
-        val ordered = if (probes.isNotEmpty()) {
-            shown.sortedByDescending { p ->
-                val pr = byId[p.id]
-                if (pr == null) -1000 else
-                    (if (pr.alive) 50 else 0) + pr.bypass.values.count { it } * 20 - (pr.latencyMs / 100).toInt()
-            }
-        } else shown
+        // порядок: сначала проверенные по рейтингу (как сохранили), потом непроверенные
+        val ordered = allProviders.sortedByDescending { p -> if (byId[p.id] == null) -2000 else AiDns.score(byId[p.id]) }
 
         ordered.forEach { p ->
             val pr = byId[p.id]
-            val aiCount = pr?.bypass?.values?.count { it } ?: 0
+            val aiCount = AiDns.openCount(pr)
+            val tunnelOk = pr == null || pr.dnsIps.isNotEmpty()
             val dot = when {
                 pr == null -> Color(0xFF757575)
                 !pr.alive -> Color(0xFFE53935)
@@ -164,7 +184,9 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
             else if (!pr.alive) "не отвечает"
             else run {
                 AiDns.services.filter { s -> s.id in pr.marks.keys }
-                    .joinToString(" · ") { s -> s.title + " " + (pr.marks[s.id] ?: "") } + " · ${pr.via} ${pr.latencyMs} мс"
+                    .joinToString(" · ") { s -> s.title + " " + (pr.marks[s.id] ?: "") } +
+                    " · ${pr.via} ${pr.latencyMs} мс" + (if (!tunnelOk) " · только DoH/DoT, для туннеля не подходит" else "") +
+                    (if (pr.udpHijacked) " · UDP перехвачен" else "")
             }
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -173,7 +195,10 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
                 Box(Modifier.size(10.dp).background(dot, CircleShape))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(p.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        (if (on && AiDns.activeProviderId(ctx) == p.id) "● " else "") + p.title,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                     Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (providerId == p.id) Text("✓", color = MaterialTheme.colorScheme.primary)
@@ -216,6 +241,7 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
                 }
             )
         }
+        NoteText("Приложения ChatGPT, Claude, Grok, Gemini и др. сами попадают в туннель при включении обхода. Браузеры добавь вручную в «Приложения».")
 
         SectionTitle("DNS туннеля (когда обход ИИ выключен)")
         NoteText("Обычный DNS внутри WARP. При включённом обходе ИИ его заменяет Smart DNS, поэтому этот пункт не трогай.")
@@ -242,8 +268,13 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
             onClick = { adv = !adv }
         )
         if (adv) {
-            NoteText("Сейчас в системе: $sysDns. Нужен, только если у выбранного сервера нет обычного DNS (только DoH/DoT).")
-            SettingRow("Применить сервер как частный DNS", onClick = {
+            NoteText("Сейчас в системе: $sysDns. Приложение больше не включает частный DNS само: с ним в VPN может пропасть интернет.")
+            SettingRow("Сбросить системный частный DNS", subtitle = "Вернуть «Автоматически» — если интернет пропал", onClick = {
+                val r = AiDns.disablePrivateDns(ctx)
+                refreshSys(); status = r.message; toast(r.message)
+            })
+            SettingRow("Применить сервер как частный DNS (на свой риск)",
+                subtitle = "Только для серверов с DoT; в VPN часто ломает сайты и Telegram", onClick = {
                 val r = AiDns.applyPrivateDns(ctx, providerId)
                 refreshSys(); status = r.message; toast(r.message)
             })
@@ -257,12 +288,46 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
                 RootHelper.disableDnsRedirect()
                 AiDns.clearHosts()
                 LocalDnsServer.stop()
-                AiDns.disable(ctx)
-                prefs.aiDnsEnabled = false
+                AiDns.deactivate(ctx)
                 on = false
                 refreshSys(); status = r.message
                 vpn.restartIfActive()
             })
+        }
+    }
+}
+
+/** Живой индикатор обхода ИИ для главного экрана: точка + что сейчас открывается. Обновляется раз в минуту. */
+@Composable
+fun AiStatusRow(prefs: Prefs, active: Boolean) {
+    val ctx = LocalContext.current
+    var h by remember { mutableStateOf(AiDns.lastHealth) }
+    LaunchedEffect(active) {
+        while (active && prefs.aiDnsEnabled) {
+            val r = withContext(Dispatchers.IO) { AiDns.quickHealth(ctx) }
+            h = r
+            delay(60_000)
+        }
+    }
+    if (!prefs.aiDnsEnabled) return
+    val dot = when (h.state) {
+        1 -> Color(0xFF43A047)
+        2 -> Color(0xFFFDD835)
+        3 -> Color(0xFFE53935)
+        else -> Color(0xFF757575)
+    }
+    HCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).background(dot, CircleShape))
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Обход ИИ", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (!active) "VPN выключен" else h.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
