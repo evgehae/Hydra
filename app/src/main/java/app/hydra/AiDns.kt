@@ -481,9 +481,9 @@ object AiDns {
         if (!RootHelper.hasRoot()) return false
         val script = """
             MOD=/data/adb/modules/hosts/system/etc/hosts
-            for H in \$MOD /system/etc/hosts /etc/hosts; do
-              [ -f "\$H" ] || continue
-              sed -i '/HYDRA-AI-DNS-BEGIN/,/HYDRA-AI-DNS-END/d' "\$H" 2>/dev/null || true
+            for H in ${'$'}MOD /system/etc/hosts /etc/hosts; do
+              [ -f "${'$'}H" ] || continue
+              sed -i '/HYDRA-AI-DNS-BEGIN/,/HYDRA-AI-DNS-END/d' "${'$'}H" 2>/dev/null || true
             done
             echo OK
         """.trimIndent()
