@@ -452,8 +452,7 @@ fun AdvancedScreen(
             title = { Text("WARP CLAUDE — обновление") },
             text = {
                 Column {
-                    Text(info.marketingLabel() + "
-" + info.name)
+                    Text(info.marketingLabel() + "\n" + info.name)
                     if (updateDlStatus.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         Text(updateDlStatus, color = MaterialTheme.colorScheme.primary)
