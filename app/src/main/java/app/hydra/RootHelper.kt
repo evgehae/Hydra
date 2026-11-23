@@ -215,4 +215,36 @@ object RootHelper {
         }
         return "root: да\nbackend: $backend\n$out"
     }
+
+
+    /**
+     * Перенаправить исходящий DNS (UDP/TCP 53) на локальный порт (LocalDnsServer).
+     * Только AI-имена подменяются сервером; остальное он форвардит на 1.1.1.1.
+     */
+    fun enableDnsRedirect(localPort: Int = 5353): Boolean {
+        if (!hasRoot()) return false
+        val (code, out) = su(listOf(
+            "iptables -t nat -N HYDRA_DNS 2>/dev/null || iptables -t nat -F HYDRA_DNS",
+            "iptables -t nat -F HYDRA_DNS",
+            "iptables -t nat -A HYDRA_DNS -p udp --dport 53 -j REDIRECT --to-ports ${localPort}",
+            "iptables -t nat -A HYDRA_DNS -p tcp --dport 53 -j REDIRECT --to-ports ${localPort}",
+            "iptables -t nat -C OUTPUT -j HYDRA_DNS 2>/dev/null || iptables -t nat -I OUTPUT 1 -j HYDRA_DNS",
+            "echo DNS_REDIR_OK"
+        ), timeoutMs = 10000)
+        Log.i(TAG, "enableDnsRedirect code=$code out=$out")
+        return code == 0 && out.contains("DNS_REDIR_OK")
+    }
+
+    fun disableDnsRedirect(): Boolean {
+        if (!hasRoot()) return false
+        val (code, out) = su(listOf(
+            "iptables -t nat -D OUTPUT -j HYDRA_DNS 2>/dev/null || true",
+            "iptables -t nat -F HYDRA_DNS 2>/dev/null || true",
+            "iptables -t nat -X HYDRA_DNS 2>/dev/null || true",
+            "echo DNS_REDIR_OFF"
+        ), timeoutMs = 8000)
+        Log.i(TAG, "disableDnsRedirect code=$code out=$out")
+        return code == 0
+    }
+
 }

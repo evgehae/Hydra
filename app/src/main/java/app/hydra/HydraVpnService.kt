@@ -356,18 +356,7 @@ class HydraVpnService : VpnService() {
 
         // свой DNS (внутри туннеля) или по умолчанию Cloudflare
         var dnsAdded = 0
-        if (prefs.customDnsOn) {
-            for (raw in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
-                // принимаем IP, имя хоста, tls://host и https://host/path: имя превращаем в IP-адреса
-                val host = raw.substringAfter("://").substringBefore("/").substringBefore(":")
-                val ips = if (host.matches(Regex("[0-9a-fA-F:.]+"))) listOf(raw.substringAfter("://").substringBefore("/"))
-                          else resolveHost(host)
-                for (d in ips.take(2)) {
-                    try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
-                }
-            }
-        }
-        // AI-DNS: локальный резолвер с подменой имён ИИ на IP прокси (WARP для ИИ часто мало)
+        // AI-DNS важнее «польз. DNS» с https://… — тот путь резолвит DoH-хост в IP прокси и ломает DNS
         if (prefs.aiDnsEnabled) {
             val cache = prefs.aiDnsCache
             if (cache.isNotBlank() && LocalDnsServer.mapSize() == 0) {
@@ -384,12 +373,26 @@ class HydraVpnService : VpnService() {
                 try {
                     b.addDnsServer("127.0.0.1")
                     dnsAdded++
-                    jlog("AI-DNS: локальный DNS 127.0.0.1:${LocalDnsServer.PORT}, имён ${LocalDnsServer.mapSize()}")
+                    jlog("AI-DNS only-ИИ: 127.0.0.1:" + LocalDnsServer.boundPort + " имён " + LocalDnsServer.mapSize() + " · " + LocalDnsServer.stats())
                 } catch (e: Exception) {
-                    jlog("AI-DNS: не удалось addDnsServer 127.0.0.1: ${e.message}")
+                    jlog("AI-DNS: addDnsServer 127.0.0.1 fail: " + e.message)
                 }
             } else {
-                jlog("AI-DNS включён, но карта пуста — сначала «Проверить и применить» в Обход ИИ")
+                jlog("AI-DNS: карта пуста — Обход ИИ → «Только ИИ» или «Проверить провайдеры»")
+            }
+        } else if (prefs.customDnsOn) {
+            for (raw in prefs.customDns.split(',', ';', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
+                // Только IP или hostname без https:// — DoH URL здесь бесполезен (нужен UDP/53)
+                if (raw.startsWith("https://") || raw.startsWith("http://") || raw.startsWith("tls://")) {
+                    jlog("польз. DNS: пропуск DoH/DoT URL (не UDP/53): " + raw.take(40))
+                    continue
+                }
+                val host = raw.substringAfter("://").substringBefore("/").substringBefore(":")
+                val target = if (host.isNotEmpty() && host != raw) host else raw
+                val ips = if (target.matches(Regex("[0-9a-fA-F:.]+"))) listOf(target) else resolveHost(target)
+                for (d in ips.take(2)) {
+                    try { b.addDnsServer(d); dnsAdded++ } catch (e: Exception) { }
+                }
             }
         }
         if (dnsAdded == 0) {
