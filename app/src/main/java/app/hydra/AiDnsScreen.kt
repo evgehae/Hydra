@@ -156,7 +156,7 @@ fun AiDnsScreen(prefs: Prefs, vpn: VpnController, onBack: () -> Unit) {
             onClick = {
                 if (busy) return@SettingRow
                 status = "Обновляю список…"
-                AiDns.syncRemote(ctx) { ok, msg -> status = msg; if (ok) tick++ }
+                AiDns.syncAll(ctx) { msg -> status = msg; tick++ }
             }
         )
 
