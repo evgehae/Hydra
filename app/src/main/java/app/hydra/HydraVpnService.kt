@@ -556,12 +556,25 @@ class HydraVpnService : VpnService() {
      * Сам VPN не считается. При принудительном канале — всегда сотовая.
      */
     /** Общий выбор (не «Авто») главнее; иначе протокол по типу сети: Wi-Fi / проводная (ТВ) / мобильная. */
-    private fun effectiveProtocol(): String {
-        if (prefs.protocol != "auto") return prefs.protocol
-        val key = try { currentNetKey() } catch (_: Throwable) { "" }
-        val kind = when { key.startsWith("wifi:") -> "wifi"; key.startsWith("cell:") -> "cell"; else -> "eth" }
-        return prefs.protocolFor(kind)
+private fun effectiveProtocol(): String {
+    val prefs = Prefs(this)
+
+    if (prefs.protocol != "auto") return prefs.protocol
+
+    val key = try {
+        currentNetKey()
+    } catch (_: Throwable) {
+        ""
     }
+
+    val kind = when {
+        key.startsWith("wifi:") -> "wifi"
+        key.startsWith("cell:") -> "cell"
+        else -> "eth"
+    }
+
+    return prefs.protocolFor(kind)
+}
 
     private fun currentNetKey(): String {
         val op = cellOperator()
