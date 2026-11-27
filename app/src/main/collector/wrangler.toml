@@ -1,0 +1,7 @@
+name = "hydra-collect"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "HYDRA_KV"
+id = "ВСТАВЬ_ID_KV_ПОСЛЕ_СОЗДАНИЯ"
