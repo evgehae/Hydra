@@ -343,8 +343,10 @@ class HydraVpnService : VpnService() {
             mobile.Mobile.setFallback(prefs.fallbackAny)
             mobile.Mobile.setProtocol(prefs.protocol)
             mobile.Mobile.setCustomSNI(prefs.customSni)
+            // Патч 25: на ТВ всегда горячий резерв (parallel>=2), иначе обрыв = пауза без запасного.
             val par = when {
-                prefs.tvProfile || prefs.stabilityMode -> 2L
+                prefs.isLeanback() || prefs.tvProfile -> maxOf(2L, if (prefs.parallel) 3L else 2L)
+                prefs.stabilityMode -> 2L
                 prefs.parallel -> 3L
                 else -> 1L
             }
@@ -856,6 +858,16 @@ private fun effectiveProtocol(): String {
                     // небольшая пауза: радио/сеть успевают подняться
                     handler.postDelayed({
                         val p = Prefs(this@HydraVpnService)
+                        // Патч 25: после пробуждения подтянуть root-защиту и TUN (если root).
+                        if (p.useRoot && RootHelper.hasRoot()) {
+                            try {
+                                jlog("WAKE_ROOT: protect=" + RootHelper.protectProcess(packageName))
+                                RootHelper.boostTun("tun0")
+                                jlog("WAKE_ROOT: boostTun done")
+                            } catch (t: Throwable) {
+                                jlog("WAKE_ROOT error: ${t.message}")
+                            }
+                        }
                         if (p.wantConnected) maybeServiceCheck(p, force = true)
                     }, 2500)
                 }

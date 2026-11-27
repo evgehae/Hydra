@@ -94,6 +94,9 @@ class Prefs(ctx: Context) {
     /** После подключения проверять Telegram; негодные дата-центры обходятся. */
     private val isTv: Boolean = ctx.packageManager.hasSystemFeature("android.software.leanback")
 
+    /** ТВ/приставка: leanback. */
+    fun isLeanback(): Boolean = isTv
+
     var tgGate: Boolean
         get() = sp.getBoolean("tg_gate", !isTv)   // на ТВ Telegram нет — проверка по умолчанию выключена
         set(v) { sp.edit().putBoolean("tg_gate", v).apply() }
