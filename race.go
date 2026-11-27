@@ -550,6 +550,11 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 			if err != nil && sentN >= 2 && recvN == 0 && rx+tx < 2048 && limit > 1 {
 				limit = 1
 			}
+			// Патч 25: «тихая смерть» — UDP-пробы сыпятся, а приложений почти нет трафика:
+			// не ждём полного лимита, переходим на резерв раньше (меньше «up, а пусто»).
+			if err != nil && rx+tx < 8192 && bad >= 1 && limit > 2 {
+				limit = 2
+			}
 			if err != nil {
 				bad++
 				Logf("   проба без ответа (%d из %d, в туннель ушло %d пакетов, пришло %d): %v", bad, limit,
@@ -627,25 +632,22 @@ func (e *Engine) raceRound(ctx context.Context, nk string, cands []Strategy, ski
 					sbBad = 0
 				}
 			}
-			// плановая ротация: поток в этой сети обычно умирает через ttl — меняем его заранее на свежий резерв
-			if e.cfg.Rotate && sb != nil && sbBad == 0 && bad == 0 {
-				if ttl := e.cfg.Mem.FlowTTL(nk); ttl > 0 {
-					lim := ttl * 7 / 10
-					if lim < 60*time.Second {
-						lim = 60 * time.Second
-					}
-					// Не крутим чаще 3 мин и не короче 3 мин жизни — иначе YouTube/звонки рвутся.
-					if lim < 3*time.Minute {
-						lim = 3 * time.Minute
-					}
-					if time.Since(p.start) > lim && time.Since(sb.start) < lim && time.Since(lastRotate) > 3*time.Minute {
-						lastRotate = time.Now()
-						planned = true
-						ok := failover("плановая ротация: потоки здесь живут ~" + ttl.Round(time.Second).String())
-						planned = false
-						if ok {
-							continue
-						}
+			// плановая ротация: только если путь уже долго жив и резерв свежий.
+			// Патч 24: минимум 10 мин жизни основного, не чаще раза в 5 мин —
+			// короткие флапы больше не тянут медиану вниз и не провоцируют ротацию «каждые 20 с».
+			if e.cfg.Rotate && sb != nil && sbBad == 0 && bad == 0 && e.cfg.Mem != nil {
+				ttl := e.cfg.Mem.FlowTTLRotate(nk) // уже ≥ 10 мин
+				lim := ttl * 7 / 10
+				if lim < 10*time.Minute {
+					lim = 10 * time.Minute
+				}
+				if time.Since(p.start) > lim && time.Since(sb.start) < lim && time.Since(lastRotate) > 5*time.Minute {
+					lastRotate = time.Now()
+					planned = true
+					ok := failover("плановая ротация: лимит ~" + lim.Round(time.Second).String() + " (медиана сети " + e.cfg.Mem.FlowTTL(nk).Round(time.Second).String() + ")")
+					planned = false
+					if ok {
+						continue
 					}
 				}
 			}

@@ -214,11 +214,13 @@ func isV6Strategy(s Strategy) bool {
 // ---- жизнь потока в сети: основа плановой ротации ----
 
 const (
-	flowKeep = 12               // сколько последних замеров помним
-	flowMin  = 5 * time.Second  // короткие смерти тоже считаем (иначе при обрывах «замеров нет»)
+	flowKeep = 12                // сколько последних замеров помним
+	flowMin  = 45 * time.Second  // короткие флапы (<45 с) не засоряют медиану — иначе «живут ~20 с» и лишние ротации
 )
 
 // RecordFlowLife запоминает, сколько прожил поток до гибели в этой сети.
+// Очень короткие смерти (флапы, мёртвый резерв) не пишем: они ломают оценку
+// «сколько обычно живёт рабочий путь» и провоцируют частую плановую ротацию.
 func (m *Memory) RecordFlowLife(nk string, d time.Duration) {
 	if m == nil || nk == "" || d < flowMin {
 		return
@@ -254,6 +256,22 @@ func (m *Memory) FlowTTL(nk string) time.Duration {
 		return 0
 	}
 	return time.Duration(medianSec(v)) * time.Second
+}
+
+// FlowTTLRotate — TTL для плановой ротации: не короче 10 минут.
+// Даже если медиана в отчёте ещё «набирается», живой путь не крутим чаще.
+func (m *Memory) FlowTTLRotate(nk string) time.Duration {
+	ttl := m.FlowTTL(nk)
+	const floor = 10 * time.Minute
+	if ttl < floor {
+		return floor
+	}
+	// верхняя разумная граница: не держать один поток сутками без смены
+	const ceil = 45 * time.Minute
+	if ttl > ceil {
+		return ceil
+	}
+	return ttl
 }
 
 // FlowInfo — строка для отчёта: сколько живут потоки в этой сети.

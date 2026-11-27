@@ -11,16 +11,25 @@ func TestFlowLifeMedianAndForget(t *testing.T) {
 	if m.FlowTTL("cell:1") != 0 {
 		t.Fatal("без замеров TTL должен быть 0")
 	}
-	m.RecordFlowLife("cell:1", 10*time.Second) // слишком коротко: не замер
+	m.RecordFlowLife("cell:1", 10*time.Second)  // слишком коротко: не замер
+	m.RecordFlowLife("cell:1", 30*time.Second) // <45 с — тоже не замер (патч 24)
 	for _, s := range []int{100, 200, 300} {
 		m.RecordFlowLife("cell:1", time.Duration(s)*time.Second)
 	}
 	if got := m.FlowTTL("cell:1"); got != 200*time.Second {
 		t.Fatalf("медиана: %v", got)
 	}
+	// ротационный TTL не короче 10 мин
+	if got := m.FlowTTLRotate("cell:1"); got < 10*time.Minute {
+		t.Fatalf("FlowTTLRotate floor: %v", got)
+	}
 	m.ForgetNet("cell:1")
 	if m.FlowTTL("cell:1") != 0 {
 		t.Fatal("после ForgetNet замеров быть не должно")
+	}
+	// без замеров Rotate всё равно даёт пол
+	if got := m.FlowTTLRotate("cell:2"); got != 10*time.Minute {
+		t.Fatalf("пустая сеть Rotate floor: %v", got)
 	}
 }
 

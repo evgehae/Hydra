@@ -97,6 +97,7 @@ func (m *Memory) RestoreHall(net string, p *ColoPolicy) []Strategy {
 }
 
 // hallBonusLocked — бонус к рейтингу стратегии из зала славы (вызывать под m.mu).
+// Патч 25: сильнее тянем проверенные конфиги после обрывов/heal — меньше «угадываний» с нуля.
 func (m *Memory) hallBonusLocked(net, id string) float64 {
 	b := 0.0
 	for _, r := range m.Hall[net] {
@@ -104,9 +105,14 @@ func (m *Memory) hallBonusLocked(net, id string) float64 {
 			continue
 		}
 		if !r.Seen {
-			return 0.45
+			// реальное успешное подключение в этом ДЦ
+			b = 0.75
+			if r.N >= 3 {
+				b = 0.95 // многократно подтверждался
+			}
+			return b
 		}
-		b = 0.2
+		b = 0.25 // только «видели» ДЦ под политикой
 	}
 	return b
 }
