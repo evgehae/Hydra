@@ -32,6 +32,8 @@ class HydraVpnService : VpnService() {
     companion object {
         const val ACTION_START = "app.hydra.action.START"
         const val ACTION_STOP = "app.hydra.action.STOP"
+        /** Ручной/авто сброс туннеля: extra "level" = soft | full | hard */
+        const val ACTION_RESET = "app.hydra.action.RESET"
         private const val TAG = "Hydra"
         private const val CHANNEL = "hydra_status"
         private const val NOTIF_ID = 1
@@ -50,6 +52,20 @@ class HydraVpnService : VpnService() {
     private var forcedFallback = false
     private var nextRestartAt = 0L
     private var lastNotifiedStrategy = ""
+
+    // --- Self-heal state ---
+    private var lastServiceCheckAt = 0L
+    private var serviceFailStreak = 0
+    private var blockedStreak = 0
+    private var cellWaiting = false
+    private var lastForceRestartAt = 0L
+    /** 0=норм, 1=уже делали soft, 2=full TUN, 3=hard+cache, 4=root */
+    private var healLevelReached = 0
+    private var healAttemptsWindowStart = 0L
+    private var healAttemptsInWindow = 0
+    private var lastSuccessfulServiceAt = 0L
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+    private var pendingImmediateCheck = false
 
     private fun closeTun() {
         try { tunPfd?.close() } catch (t: Throwable) { }
@@ -75,7 +91,7 @@ class HydraVpnService : VpnService() {
         if (intent?.action == ACTION_STOP) {
             val src = intent.getStringExtra("src") ?: "неизвестно (система/другое приложение)"
             // «👤» — это действие человека или самой Гидры, а не сбой: в отчёте такие остановки не считаются поломкой
-            jlog((if (src.startsWith("авто") || src.startsWith("перезапуск")) "🔁 плановый перезапуск: " else "👤 выключено пользователем: ") + src)
+            jlog((if (src.startsWith("авто") || src.startsWith("перезапуск") || src.startsWith("self-heal")) "🔁 плановый перезапуск: " else "👤 выключено пользователем: ") + src)
         }
         goForeground(getString(R.string.notif_connecting))
         val prefs = Prefs(this)
@@ -83,11 +99,19 @@ class HydraVpnService : VpnService() {
             stopVpn()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_RESET) {
+            val level = intent.getStringExtra("level") ?: "full"
+            val src = intent.getStringExtra("src") ?: "ручной"
+            jlog("RECOVERY_STARTED level=$level src=$src")
+            handler.post { performHeal(level, manual = true, reason = src) }
+            return START_STICKY
+        }
         // перезапуск системой (intent == null) — только если пользователь хотел VPN
         if (intent == null && !(prefs.wantConnected || prefs.autoStart)) {
             stopVpn()
             return START_NOT_STICKY
         }
+        registerScreenReceiver()
         startVpn()
         return START_STICKY
     }
@@ -624,58 +648,240 @@ private fun effectiveProtocol(): String {
 
 
 
-    private var lastServiceCheckAt = 0L
-    private var serviceFailStreak = 0
-    private var blockedStreak = 0
-    private var cellWaiting = false // идёт ожидание мобильной сети: сторож и повторные START не должны запускать старт ещё раз
-    private var lastForceRestartAt = 0L
-
-    /** Проверка сервисов чаще (30 с). Если DNS/YouTube/Google мертвы при state=up — переподключаемся. */
-    private fun maybeServiceCheck(prefs: Prefs) {
+    /**
+     * Self-heal: проверка реального пути через туннель + лестница восстановления.
+     * Журнал: HEALTH_CHECK_*, TUNNEL_DEGRADED, RECOVERY_*, TUN_RECREATED, CACHE_CLEARED.
+     */
+    private fun maybeServiceCheck(prefs: Prefs, force: Boolean = false) {
+        if (!prefs.autoHeal && !force && !pendingImmediateCheck) return
         val now = System.currentTimeMillis()
-        // не реже 30 с, даже если в настройках 0/3 мин
-        val intervalMs = maxOf(30_000L, prefs.serviceCheckEveryMin.coerceAtLeast(0) * 60_000L / 2)
-        if (now - lastServiceCheckAt < intervalMs) return
+        val intervalMs = if (force || pendingImmediateCheck) 0L
+            else maxOf(30_000L, prefs.serviceCheckEveryMin.coerceAtLeast(0) * 60_000L / 2)
+        if (!force && !pendingImmediateCheck && now - lastServiceCheckAt < intervalMs) return
+        pendingImmediateCheck = false
         lastServiceCheckAt = now
         Thread {
             try {
                 val res = mobile.Mobile.serviceCheck()
-                if (res.contains("✘")) jlog("ServiceCheck:\n" + res.take(800))
+                if (res.contains("✘") || res.contains("✗")) {
+                    jlog("HEALTH_CHECK_FAILED:\n" + res.take(900))
+                } else {
+                    jlog("HEALTH_CHECK_OK: " + res.lineSequence().firstOrNull { it.contains("Доступно") || it.contains("Available") }?.trim().orEmpty())
+                }
+
                 val deadDns = res.contains("DNS через туннель не ответил") ||
                     res.contains("DNS through the tunnel")
-                val deadYt = res.contains("✘ YouTube") || res.contains("✗ YouTube")
                 val deadBase = res.contains("✘ Google") || res.contains("✘ Cloudflare") ||
-                    res.contains("нет SYN-ACK")
+                    res.contains("нет SYN-ACK") || res.contains("no SYN-ACK")
                 val available = Regex("""Доступно\s+(\d+)\s+из\s+(\d+)""").find(res)
                     ?: Regex("""Available\s+(\d+)\s+of\s+(\d+)""").find(res)
                 val okCount = available?.groupValues?.getOrNull(1)?.toIntOrNull()
                 val total = available?.groupValues?.getOrNull(2)?.toIntOrNull()
                 val mostlyDead = okCount != null && total != null && total >= 6 && okCount <= 4
+                // Один сервис (напр. только YouTube) — не роняем путь; нужен широкий отказ.
+                val critical = mostlyDead || (deadDns && deadBase) ||
+                    (okCount != null && total != null && total >= 3 && okCount == 0)
 
-                // Не роняем живой туннель из-за одной кривой проверки (часто на фоне смены сети).
-                // Нужны 2 подряд плохих результата и пауза 45 с.
-                val critical = mostlyDead || (deadDns && deadBase)
-                if (critical) {
-                    serviceFailStreak++
-                    jlog("служба: туннель «up», но сервисы мертвы (streak=$serviceFailStreak) — DNS/YouTube/base")
-                    if (serviceFailStreak >= 2 && now - lastForceRestartAt > 45_000L) {
-                        lastForceRestartAt = now
-                        serviceFailStreak = 0
-                        jlog("служба: принудительное переподключение из-за мёртвых сервисов")
-                        handler.post {
-                            try {
-                                mobile.Mobile.stopTunnel()
-                            } catch (_: Throwable) { }
-                            handler.postDelayed({ startVpn() }, 800)
-                        }
+                if (!critical) {
+                    if (serviceFailStreak > 0) {
+                        jlog("HEALTH_CHECK_RECOVERED streak_was=$serviceFailStreak")
                     }
-                } else {
                     serviceFailStreak = 0
+                    healLevelReached = 0
+                    lastSuccessfulServiceAt = System.currentTimeMillis()
+                    return@Thread
+                }
+
+                serviceFailStreak++
+                jlog("TUNNEL_DEGRADED streak=$serviceFailStreak ok=$okCount/$total deadDns=$deadDns deadBase=$deadBase")
+
+                if (!prefs.autoHeal) {
+                    jlog("TUNNEL_DEGRADED auto_heal=off — только журнал, лечение не запускаю")
+                    return@Thread
+                }
+
+                val threshold = prefs.healFailThreshold
+                // После пробуждения экрана достаточно одной плохой проверки
+                val need = if (force) 1 else threshold
+                if (serviceFailStreak < need) return@Thread
+
+                // Защита от циклов: не больше 4 лечений за 15 минут
+                val now2 = System.currentTimeMillis()
+                if (now2 - healAttemptsWindowStart > 15 * 60_000L) {
+                    healAttemptsWindowStart = now2
+                    healAttemptsInWindow = 0
+                }
+                if (healAttemptsInWindow >= 4) {
+                    jlog("RECOVERY_BACKOFF attempts=$healAttemptsInWindow window=15m — жду")
+                    return@Thread
+                }
+                if (now2 - lastForceRestartAt < 45_000L) {
+                    jlog("RECOVERY_COOLDOWN ${((45_000L - (now2 - lastForceRestartAt)) / 1000)}s")
+                    return@Thread
+                }
+
+                // Лестница: soft → full → hard → (root)
+                val nextLevel = when {
+                    healLevelReached <= 0 -> "soft"
+                    healLevelReached == 1 -> "full"
+                    healLevelReached == 2 -> "hard"
+                    else -> if (prefs.rootHealEnhanced && prefs.useRoot && RootHelper.hasRoot()) "root" else "full"
+                }
+                healAttemptsInWindow++
+                lastForceRestartAt = now2
+                serviceFailStreak = 0
+                handler.post {
+                    performHeal(nextLevel, manual = false, reason = "zombie streak degraded")
                 }
             } catch (t: Throwable) {
-                jlog("ServiceCheck error: " + (t.message ?: "?"))
+                jlog("HEALTH_CHECK_ERROR: " + (t.message ?: "?"))
             }
         }.start()
+    }
+
+    /**
+     * Лестница лечения.
+     * soft  — stopTunnel + startVpn (новый выбор стратегии, TUN тот же)
+     * full  — закрыть TUN + новый TUN + гонка
+     * hard  — full + очистка своего временного состояния (AI-DNS cache, cacheDir files)
+     * root  — hard + root clearAppCache + при повторе force-stop
+     */
+    private fun performHeal(level: String, manual: Boolean, reason: String) {
+        val prefs = Prefs(this)
+        jlog("RECOVERY_STARTED level=$level manual=$manual reason=$reason healLevelReached=$healLevelReached")
+        try {
+            when (level) {
+                "soft" -> {
+                    healLevelReached = maxOf(healLevelReached, 1)
+                    jlog("RECOVERY_SOFT: stopTunnel → startVpn (TUN сохраняем)")
+                    try { mobile.Mobile.stopTunnel() } catch (_: Throwable) { }
+                    handler.postDelayed({
+                        startVpn()
+                        jlog("RECOVERY_SOFT_DONE")
+                        // через 12 с внеочередная проверка
+                        handler.postDelayed({
+                            pendingImmediateCheck = true
+                            maybeServiceCheck(Prefs(this@HydraVpnService), force = true)
+                        }, 12_000)
+                    }, 600)
+                }
+                "full" -> {
+                    healLevelReached = maxOf(healLevelReached, 2)
+                    jlog("TUN_RECREATED: закрываю TUN и поднимаю заново")
+                    try { mobile.Mobile.stopTunnel() } catch (_: Throwable) { }
+                    closeTun()
+                    handler.postDelayed({
+                        startVpn()
+                        jlog("RECOVERY_FULL_DONE")
+                        handler.postDelayed({
+                            pendingImmediateCheck = true
+                            maybeServiceCheck(Prefs(this@HydraVpnService), force = true)
+                        }, 12_000)
+                    }, 900)
+                }
+                "hard" -> {
+                    healLevelReached = maxOf(healLevelReached, 3)
+                    jlog("CACHE_CLEARED: сброс AI-DNS cache и временных файлов Гидра")
+                    try { prefs.aiDnsCache = "" } catch (_: Throwable) { }
+                    try {
+                        val cache = cacheDir
+                        cache?.listFiles()?.forEach { f ->
+                            try {
+                                if (f.isFile) f.delete()
+                                else if (f.isDirectory && (f.name == "reports" || f.name.startsWith("hydra"))) {
+                                    f.deleteRecursively()
+                                }
+                            } catch (_: Throwable) { }
+                        }
+                    } catch (_: Throwable) { }
+                    try { mobile.Mobile.stopTunnel() } catch (_: Throwable) { }
+                    closeTun()
+                    handler.postDelayed({
+                        startVpn()
+                        jlog("RECOVERY_HARD_DONE")
+                        handler.postDelayed({
+                            pendingImmediateCheck = true
+                            maybeServiceCheck(Prefs(this@HydraVpnService), force = true)
+                        }, 14_000)
+                    }, 1000)
+                }
+                "root" -> {
+                    healLevelReached = maxOf(healLevelReached, 4)
+                    jlog("RECOVERY_ROOT: clearAppCache + полный сброс туннеля")
+                    try { prefs.aiDnsCache = "" } catch (_: Throwable) { }
+                    try {
+                        val ok = RootHelper.clearAppCache(packageName)
+                        jlog(if (ok) "CACHE_CLEARED root=ok" else "CACHE_CLEARED root=fail")
+                    } catch (t: Throwable) {
+                        jlog("CACHE_CLEARED root error: ${t.message}")
+                    }
+                    try { mobile.Mobile.stopTunnel() } catch (_: Throwable) { }
+                    closeTun()
+                    // Если уже был root-уровень недавно — force-stop (последнее средство)
+                    val doForceStop = healAttemptsInWindow >= 3
+                    if (doForceStop) {
+                        jlog("RECOVERY_ROOT force-stop package (sticky/autostart поднимут снова)")
+                        handler.postDelayed({
+                            try { RootHelper.forceStopPackage(packageName) } catch (_: Throwable) { }
+                        }, 400)
+                    } else {
+                        handler.postDelayed({
+                            startVpn()
+                            jlog("RECOVERY_ROOT_DONE")
+                            handler.postDelayed({
+                                pendingImmediateCheck = true
+                                maybeServiceCheck(Prefs(this@HydraVpnService), force = true)
+                            }, 14_000)
+                        }, 1000)
+                    }
+                }
+                else -> {
+                    jlog("RECOVERY_UNKNOWN level=$level → full")
+                    performHeal("full", manual, reason)
+                }
+            }
+        } catch (t: Throwable) {
+            jlog("RECOVERY_FAILED level=$level: ${t.message}")
+        }
+    }
+
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                val a = intent?.action ?: return
+                if (a == Intent.ACTION_SCREEN_ON || a == Intent.ACTION_USER_PRESENT) {
+                    jlog("WAKE_EVENT action=$a — внеочередная проверка пути")
+                    pendingImmediateCheck = true
+                    // небольшая пауза: радио/сеть успевают подняться
+                    handler.postDelayed({
+                        val p = Prefs(this@HydraVpnService)
+                        if (p.wantConnected) maybeServiceCheck(p, force = true)
+                    }, 2500)
+                }
+            }
+        }
+        screenReceiver = r
+        val f = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(r, f, RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(r, f)
+            }
+        } catch (t: Throwable) {
+            jlog("WAKE_EVENT register error: ${t.message}")
+            screenReceiver = null
+        }
+    }
+
+    private fun unregisterScreenReceiver() {
+        try { screenReceiver?.let { unregisterReceiver(it) } } catch (_: Throwable) { }
+        screenReceiver = null
     }
 
     private fun notifyEvent(title: String, body: String) {
@@ -704,6 +910,7 @@ private fun effectiveProtocol(): String {
     private fun stopVpn() {
         jlog("служба: остановка")
         cellWaiting = false
+        unregisterScreenReceiver()
         Prefs(this).wantConnected = false
         try {
             if (Prefs(this).useRoot) RootHelper.disableKillSwitch()
@@ -732,6 +939,7 @@ private fun effectiveProtocol(): String {
     override fun onDestroy() {
         try { LocalDnsServer.stop() } catch (_: Exception) {}
         jlog("служба: уничтожена")
+        unregisterScreenReceiver()
         handler.removeCallbacksAndMessages(null)
         try { netCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }
         try { cellCallback?.let { cm().unregisterNetworkCallback(it) } } catch (t: Throwable) { }

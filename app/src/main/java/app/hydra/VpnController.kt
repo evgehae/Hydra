@@ -82,6 +82,21 @@ class VpnController(private val ctx: Context, private val scope: CoroutineScope)
         Prefs(ctx).wantConnected = false
         ctx.startService(Intent(ctx, HydraVpnService::class.java).setAction(HydraVpnService.ACTION_STOP).putExtra("src", src))
     }
+
+    /**
+     * Сброс туннеля без полного отключения «хочу VPN».
+     * level: soft | full | hard | root
+     */
+    fun resetTunnel(level: String = "full", src: String = "диагностика") {
+        Prefs(ctx).wantConnected = true
+        ContextCompat.startForegroundService(
+            ctx,
+            Intent(ctx, HydraVpnService::class.java)
+                .setAction(HydraVpnService.ACTION_RESET)
+                .putExtra("level", level)
+                .putExtra("src", src)
+        )
+    }
 }
 
 /** "wg/162.159.192.3:2408/q3" -> "WireGuard", "h3/..." -> "MASQUE·H3". */

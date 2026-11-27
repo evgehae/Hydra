@@ -53,6 +53,7 @@ fun DiagnosticsScreen(
     var svcRunning by remember { mutableStateOf(false) }
     var svcText by remember { mutableStateOf<String?>(null) }
     var wlText by remember { mutableStateOf<String?>(null) }
+    var showReset by remember { mutableStateOf(false) }
 
     val onWord = stringResource(R.string.diag_on)
     val offWord = stringResource(R.string.diag_off)
@@ -146,6 +147,11 @@ fun DiagnosticsScreen(
                     }
                 }
             }
+        )
+        SettingRow(
+            stringResource(R.string.diag_reset_tunnel),
+            stringResource(R.string.diag_reset_tunnel_sub),
+            onClick = { showReset = true }
         )
         SettingRow(
             stringResource(R.string.diag_wl),
@@ -281,6 +287,41 @@ fun DiagnosticsScreen(
                 }
             },
             confirmButton = { androidx.compose.material3.TextButton(onClick = { svcText = null }) { Text(stringResource(R.string.btn_ok)) } }
+        )
+    }
+    if (showReset) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showReset = false },
+            title = { Text(stringResource(R.string.diag_reset_tunnel)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.diag_reset_tunnel_hint), fontSize = 13.sp)
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.TextButton(onClick = {
+                        showReset = false
+                        vpn.resetTunnel("soft", "диагностика: мягкий")
+                    }) { Text(stringResource(R.string.diag_reset_soft)) }
+                    androidx.compose.material3.TextButton(onClick = {
+                        showReset = false
+                        vpn.resetTunnel("full", "диагностика: полный")
+                    }) { Text(stringResource(R.string.diag_reset_full)) }
+                    androidx.compose.material3.TextButton(onClick = {
+                        showReset = false
+                        vpn.resetTunnel("hard", "диагностика: жёсткий")
+                    }) { Text(stringResource(R.string.diag_reset_hard)) }
+                    if (prefs.useRoot) {
+                        androidx.compose.material3.TextButton(onClick = {
+                            showReset = false
+                            vpn.resetTunnel("root", "диагностика: root")
+                        }) { Text(stringResource(R.string.diag_reset_root)) }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showReset = false }) {
+                    Text(stringResource(R.string.btn_cancel))
+                }
+            }
         )
     }
 }

@@ -247,4 +247,33 @@ object RootHelper {
         return code == 0
     }
 
+    /**
+     * Очистить cacheDir приложения (эквивалент «Очистить кеш» в настройках Android).
+     * Без root недоступно на уровне системы; здесь — через su.
+     */
+    fun clearAppCache(pkg: String): Boolean {
+        if (!hasRoot()) return false
+        val (c, out) = su(listOf(
+            "rm -rf /data/data/$pkg/cache/* 2>/dev/null || true",
+            "rm -rf /data/data/$pkg/code_cache/* 2>/dev/null || true",
+            "echo CACHE_CLEARED"
+        ), timeoutMs = 10000)
+        Log.i(TAG, "clearAppCache code=$c out=$out")
+        return c == 0 && out.contains("CACHE_CLEARED")
+    }
+
+    /**
+     * Принудительно остановить процесс приложения. Служба START_STICKY / автозапуск
+     * должны поднять её снова, если wantConnected=true.
+     */
+    fun forceStopPackage(pkg: String): Boolean {
+        if (!hasRoot()) return false
+        val (c, out) = su(listOf(
+            "am force-stop $pkg",
+            "echo FORCE_STOPPED"
+        ), timeoutMs = 8000)
+        Log.i(TAG, "forceStopPackage code=$c out=$out")
+        return c == 0 && out.contains("FORCE_STOPPED")
+    }
+
 }

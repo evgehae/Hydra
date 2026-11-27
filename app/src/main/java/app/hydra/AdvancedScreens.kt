@@ -140,6 +140,8 @@ fun AdvancedScreen(
     var tgGate by remember { mutableStateOf(prefs.tgGate) }
     var useRoot by remember { mutableStateOf(prefs.useRoot) }
     var stabilityMode by remember { mutableStateOf(prefs.stabilityMode) }
+    var autoHeal by remember { mutableStateOf(prefs.autoHeal) }
+    var rootHeal by remember { mutableStateOf(prefs.rootHealEnhanced) }
     var tvProfile by remember { mutableStateOf(prefs.tvProfile) }
     var notifyStrategy by remember { mutableStateOf(prefs.notifyStrategy) }
     var notifyErrors by remember { mutableStateOf(prefs.notifyErrors) }
@@ -363,6 +365,26 @@ fun AdvancedScreen(
             stabilityMode = it
             prefs.stabilityMode = it
             vpn.restartIfActive()
+        }
+        SectionLabel(stringResource(R.string.heal_title))
+        RowDivider()
+        SettingSwitchRow(
+            stringResource(R.string.heal_auto),
+            stringResource(R.string.heal_auto_sub),
+            autoHeal
+        ) {
+            autoHeal = it
+            prefs.autoHeal = it
+        }
+        if (hasRoot) {
+            SettingSwitchRow(
+                stringResource(R.string.heal_root),
+                stringResource(R.string.heal_root_sub),
+                rootHeal
+            ) {
+                rootHeal = it
+                prefs.rootHealEnhanced = it
+            }
         }
         SettingSwitchRow(
             "Профиль ТВ / приставки",

@@ -178,6 +178,25 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("svc_check_min", 3)
         set(v) { sp.edit().putInt("svc_check_min", v).apply() }
 
+    /** Автолечение zombie-туннеля (up, но сервисы мертвы). По умолчанию включено. */
+    var autoHeal: Boolean
+        get() = sp.getBoolean("auto_heal", true)
+        set(v) { sp.edit().putBoolean("auto_heal", v).apply() }
+
+    /**
+     * Усиленное лечение с root: после неудачи обычных уровней —
+     * очистка cacheDir и при необходимости force-stop процесса.
+     * Имеет смысл только при useRoot=true и наличии root.
+     */
+    var rootHealEnhanced: Boolean
+        get() = sp.getBoolean("root_heal", false)
+        set(v) { sp.edit().putBoolean("root_heal", v).apply() }
+
+    /** Сколько плохих проверок подряд до начала лечения (1 или 2). */
+    var healFailThreshold: Int
+        get() = sp.getInt("heal_fail_thr", 2).coerceIn(1, 3)
+        set(v) { sp.edit().putInt("heal_fail_thr", v.coerceIn(1, 3)).apply() }
+
 
     /** Явные Jc/Jmin/Jmax для WG-профиля (0 = авто из стратегии). */
     var wgJc: Int
