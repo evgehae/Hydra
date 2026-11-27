@@ -310,4 +310,18 @@
     <string name="backup_hint">На ТВ: скопируй файл по USB из Download или Android/data/…/files/</string>
 
     <string name="update_repo">GitHub-репозиторий обновлений (owner/name)</string>
+
+    <!-- Self-heal / zombie tunnel -->
+    <string name="diag_reset_tunnel">Сбросить туннель</string>
+    <string name="diag_reset_tunnel_sub">Если статус «подключено», а интернет не работает</string>
+    <string name="diag_reset_tunnel_hint">Выбери силу сброса. Автолечение делает то же самое само.</string>
+    <string name="diag_reset_soft">Мягкий — смена стратегии (TUN тот же)</string>
+    <string name="diag_reset_full">Полный — новый TUN и выбор пути</string>
+    <string name="diag_reset_hard">Жёсткий — полный + очистка временных данных</string>
+    <string name="diag_reset_root">Root — очистка кеша + полный сброс</string>
+    <string name="heal_title">Автолечение туннеля</string>
+    <string name="heal_auto">Автолечение zombie-туннеля</string>
+    <string name="heal_auto_sub">Если «подключено», а сервисы не отвечают — Гидра сама лечит путь</string>
+    <string name="heal_root">Усиленное лечение (root)</string>
+    <string name="heal_root_sub">После неудачи обычных уровней: очистка cacheDir и force-stop</string>
 </resources>
