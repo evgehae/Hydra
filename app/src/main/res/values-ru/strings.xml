@@ -1,3 +1,330 @@
+.<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WARP CLAUDE</string>
+
+    <string name="tab_home">Главная</string>
+    <string name="tab_split">Приложения</string>
+    <string name="tab_diag">Проверка</string>
+    <string name="tab_settings">Настройки</string>
+
+    <string name="home_tagline">WARP, который чинит себя</string>
+    <string name="home_status_need_account">Нужен аккаунт</string>
+    <string name="home_sub_need_account">Нажми кнопку, чтобы создать аккаунт WARP</string>
+    <string name="home_status_registering">Регистрирую…</string>
+    <string name="home_sub_registering">Пробую несколько маршрутов до Cloudflare</string>
+    <string name="home_status_ready">Готово</string>
+    <string name="home_sub_ready">Подключение появится в следующей сборке</string>
+    <string name="home_soon_toast">Подключение появится в следующей сборке</string>
+
+    <string name="ready_title">Готовность</string>
+    <string name="step_engine">Движок Go</string>
+    <string name="step_account">Аккаунт WARP</string>
+    <string name="step_account_ok">Зарегистрирован · %1$s</string>
+    <string name="step_account_none">Не зарегистрирован</string>
+    <string name="step_connect">Подключение</string>
+    <string name="step_connect_sub">Нажми на щит сверху</string>
+    <string name="action_register">Зарегистрировать</string>
+    <string name="fail_rate_limited">Cloudflare ограничивает регистрации с этого IP. Подожди несколько минут и повтори.</string>
+    <string name="fail_blocked">Не удаётся достучаться до API Cloudflare: сеть или DNS блокируют. Попробуй другую сеть (мобильную или Wi-Fi).</string>
+    <string name="fail_dns">Не удаётся определить адрес API Cloudflare: DNS не отвечает, а DoH недоступен. Проверь сеть или смени её.</string>
+    <string name="fail_api">API Cloudflare отказал в запросе.</string>
+    <string name="fail_other">Не удалось зарегистрироваться.</string>
+
+    <string name="dc_title">Дата-центр</string>
+    <string name="dc_blocked">Запрещены: %1$s</string>
+    <string name="dc_allow">Только: %1$s</string>
+    <string name="dc_hint">После подключения Гидра проверит, в какой дата-центр Cloudflare ты попал, и если он запрещён, попробует другие маршруты.</string>
+
+    <string name="apps_title">Раздельное туннелирование</string>
+    <string name="mode_only">Только выбранные</string>
+    <string name="mode_except">Все, кроме выбранных</string>
+    <string name="mode_only_hint">Через VPN пойдут только отмеченные приложения</string>
+    <string name="mode_except_hint">Отмеченные приложения пойдут напрямую</string>
+    <string name="apps_search">Поиск приложений</string>
+    <string name="apps_selected">Выбрано: %1$d</string>
+    <string name="apps_all">Все</string>
+    <string name="apps_none">Сбросить</string>
+
+    <string name="diag_title">Диагностика</string>
+    <string name="diag_sub">Проверяет DNS, HTTPS и в какой дата-центр Cloudflare ты попадаешь</string>
+    <string name="diag_run">Проверить</string>
+    <string name="diag_dns">DNS</string>
+    <string name="diag_https">HTTPS</string>
+    <string name="diag_ms">%1$d мс</string>
+    <string name="diag_fail">ошибка</string>
+    <string name="diag_ip">Публичный IP</string>
+    <string name="diag_dc">Дата-центр</string>
+    <string name="diag_dc_unknown">не определён</string>
+    <string name="diag_dc_blocked">%1$s — запрещён политикой</string>
+    <string name="diag_warp">WARP</string>
+    <string name="diag_warp_on">включён</string>
+    <string name="diag_warp_off">выключен (прямое соединение)</string>
+
+    <string name="settings_title">Настройки</string>
+    <string name="settings_language">Язык</string>
+    <string name="lang_system">Системный</string>
+    <string name="lang_en">English</string>
+    <string name="lang_ru">Русский</string>
+
+    <string name="colo_title">Дата-центры Cloudflare</string>
+    <string name="colo_block">Запрещённые (коды)</string>
+    <string name="colo_allow">Только эти (необязательно)</string>
+    <string name="colo_hint">Коды аэропортов через запятую: HEL, FRA, AMS…</string>
+    <string name="colo_reset">По умолчанию</string>
+
+    <string name="account_title">Аккаунт WARP</string>
+    <string name="account_copy">Копировать</string>
+    <string name="account_paste">Вставить</string>
+    <string name="account_copied">Аккаунт скопирован</string>
+    <string name="account_nothing">Аккаунта ещё нет</string>
+    <string name="account_imported">Аккаунт импортирован</string>
+    <string name="account_hint">Скопируй аккаунт, чтобы перенести его на другое устройство</string>
+
+    <string name="conn_title">Подключение</string>
+    <string name="settings_autostart">Подключаться при запуске</string>
+    <string name="settings_killswitch">Блокировать трафик при обрыве VPN</string>
+    <string name="settings_soon">Эти опции заработают, когда будет готово подключение.</string>
+
+    <string name="about_title">О программе</string>
+    <string name="about_text">Hydra 0.6 · отрубишь одну голову — вырастут две. Сделано для тех, кому нужен интернет без компромиссов.</string>
+    <string name="engine_label">Движок: %1$s</string>
+
+    <string name="vpn_off">Не подключено</string>
+    <string name="vpn_off_sub">Нажми на щит, чтобы подключиться</string>
+    <string name="vpn_connecting">Подключаюсь…</string>
+    <string name="vpn_connecting_sub">Ищу лучший маршрут</string>
+    <string name="vpn_up">Подключено</string>
+    <string name="vpn_up_sub">Дата-центр %1$s</string>
+    <string name="vpn_reconnecting">Переподключаюсь…</string>
+    <string name="vpn_failed">Нет соединения</string>
+    <string name="tile_dc">Дата-центр</string>
+    <string name="tile_rtt">Задержка</string>
+    <string name="tile_route">Маршрут</string>
+    <string name="need_apps_toast">Сначала выберите приложения (Меню → Дополнительно → Параметры подключения → Управление исключёнными приложениями) или включите режим «Все, кроме выбранных»</string>
+
+    <string name="apps_header_chosen">Выбранные (%1$d)</string>
+    <string name="apps_header_rest">Все приложения</string>
+    <string name="journal_title">Журнал</string>
+    <string name="journal_copy">Копировать</string>
+    <string name="journal_clear">Очистить</string>
+    <string name="journal_empty">Пока пусто. Подключись или зарегистрируйся — каждый шаг появится здесь.</string>
+    <string name="journal_see">Подробности — в журнале (вкладка «Проверка»).</string>
+    <string name="channel_title">Канал связи</string>
+    <string name="channel_auto">Автоматически</string>
+    <string name="channel_cell">Мобильная сеть</string>
+    <string name="channel_wifi">Wi-Fi</string>
+    <string name="channel_eth">Проводной интернет (Ethernet)</string>
+    <string name="channel_hint">Мобильная сеть, Wi-Fi или проводной интернет: туннель идёт именно через выбранный канал, даже когда активен другой. Мобильная помогает, если провайдер домашнего Wi-Fi ведёт только в запрещённый дата-центр (расходует мобильный трафик); проводной — для ТВ и приставок. Если выбранного канала нет, Гидра подключится по доступному.</string>
+    <string name="fallback_any">Подключаться, даже если иначе никак</string>
+    <string name="fallback_hint">Если все адреса ведут в запрещённый дата-центр — подключиться к нему, а не сидеть без интернета.</string>
+    <string name="action_register_cell">Зарегистрировать через мобильную сеть</string>
+    <string name="licenses_title">Лицензии</string>
+    <string name="licenses_text">Гидра использует открытые компоненты: usque (лицензия MIT), quic-go, wireguard-go и другие под свободными лицензиями. Полные тексты — в файле NOTICE репозитория проекта.</string>
+
+    <string name="banner_blocked_title">Все маршруты ведут в запрещённый дата-центр</string>
+    <string name="banner_blocked_text">В этой сети Cloudflare всегда отправляет тебя в дата-центр, который ты запретил. Выбери выход:</string>
+    <string name="banner_use_cell">Через мобильную сеть</string>
+    <string name="banner_allow">Подключиться всё равно</string>
+
+    <string name="step_account_wg">Конфигурация WireGuard · %1$s</string>
+    <string name="wg_title">Конфигурации WARP (WireGuard)</string>
+    <string name="wg_none">Конфигурации WireGuard ещё нет</string>
+    <string name="wg_ok">Конфигурация готова · %1$s</string>
+    <string name="wg_hint">Гидра создаёт обычную конфигурацию WARP (как wgcf) и подключается по ней. Серверы WireGuard у Cloudflare нередко ведут в другой дата-центр, чем MASQUE (например, во Франкфурт вместо Москвы). Конфигурацию можно скопировать в другие приложения или импортировать свою .conf (WireGuard / AmneziaWG с Jc, Jmin, Jmax).</string>
+    <string name="wg_create">Создать конфигурацию WARP (WireGuard)</string>
+    <string name="wg_copy">Копировать .conf</string>
+    <string name="wg_import">Импорт .conf</string>
+    <string name="wg_delete">Удалить конфигурацию</string>
+    <string name="wg_copied">Конфигурация скопирована</string>
+    <string name="wg_nothing">Конфигурации ещё нет</string>
+    <string name="wg_imported">Конфигурация импортирована</string>
+
+    <string name="notif_connecting">Подключаюсь…</string>
+    <string name="notif_up">Подключено · %1$s · %2$d мс</string>
+    <string name="notif_reconnecting">Переподключаюсь…</string>
+    <string name="notif_disconnect">Отключить</string>
+    <string name="notif_open">Открыть</string>
+    <string name="notif_failed">Нет соединения, повторяю</string>
+    <string name="diag_tunnel_title">Через Гидру (туннель)</string>
+    <string name="diag_tunnel_off">Туннель выключен. Подключись, чтобы увидеть его проверки.</string>
+    <string name="diag_proto">Протокол</string>
+    <string name="diag_ping">Задержка</string>
+    <string name="proto_masque">MASQUE (HTTP/3, QUIC)</string>
+    <string name="proto_masque2">MASQUE (HTTP/2)</string>
+    <string name="proto_wg">WireGuard</string>
+    <string name="proto_unknown">неизвестно</string>
+    <string name="diag_direct_title">Прямое соединение (мимо VPN)</string>
+    <string name="diag_direct_hint">Сама Гидра работает мимо VPN, поэтому эти проверки идут напрямую. «WARP: выключен» здесь нормально.</string>
+    <string name="persist_title">Постоянная работа</string>
+    <string name="persist_hint">Гидра подключается после загрузки телефона и держит соединение, пока ты сам не выключишь. Для самой крепкой хватки включи системный «Всегда включённый VPN», разреши работу в фоне и (на Xiaomi) автозапуск.</string>
+    <string name="btn_always_on">Системный «Всегда включённый VPN»</string>
+    <string name="btn_battery">Разрешить работу в фоне</string>
+    <string name="btn_autostart_xiaomi">Автозапуск (Xiaomi)</string>
+    <string name="kill_info">Пока туннель не работает или переключается, трафик приложений в VPN блокируется, а не утекает. Системный пункт «Блокировать подключения без VPN» делает это ещё строже.</string>
+    <string name="proto_title">Протокол</string>
+    <string name="proto_auto">Авто</string>
+    <string name="proto_masque_chip">MASQUE</string>
+    <string name="proto_wg_chip">WireGuard</string>
+    <string name="proto_hint">Авто: оба протокола страхуют друг друга. Если один перестал работать, второй подхватывает.</string>
+    <string name="wg_edit">Править конфигурацию</string>
+    <string name="wg_cancel">Отменить правку</string>
+    <string name="wg_save">Сохранить конфигурацию</string>
+    <string name="menu_title">Меню</string>
+    <string name="menu_advanced">Дополнительно</string>
+    <string name="menu_diag">Диагностика</string>
+    <string name="home_private">Ваше интернет-подключение конфиденциально.</string>
+    <string name="home_not_private">Ваше интернет-подключение не конфиденциально.</string>
+    <string name="btn_apply">Применить</string>
+    <string name="btn_reset">Сбросить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="btn_ok">Да</string>
+    <string name="value_default">По умолчанию</string>
+    <string name="conn_params">Параметры подключения</string>
+    <string name="adv_more">Расширенные настройки Гидры</string>
+    <string name="adv_more_sub">Язык, дата-центры, канал связи, автозапуск, аккаунт и WireGuard</string>
+    <string name="conn_apps">Управление исключёнными приложениями</string>
+    <string name="conn_routes">Управление исключёнными маршрутами</string>
+    <string name="conn_dns">Параметры DNS</string>
+    <string name="conn_proto">Протокол туннелирования</string>
+    <string name="conn_reset_keys">Сбросить ключи безопасности</string>
+    <string name="conn_reset_keys_q">Аккаунты WARP будут удалены и созданы заново. VPN выключится.</string>
+    <string name="conn_reset_all">Сбросить все настройки</string>
+    <string name="conn_reset_all_q">Все настройки приложения вернутся к значениям по умолчанию. Аккаунт сохранится. VPN выключится.</string>
+    <string name="conn_sni">Польз. SNI (MASQUE)</string>
+    <string name="conn_sni_sub">Переопределяет SNI для туннеля MASQUE</string>
+    <string name="conn_sni_hint">например cdnjs.cloudflare.com</string>
+    <string name="conn_endpoint">Польз. конечная точка</string>
+    <string name="conn_endpoint_sub">Свой адрес сервера, пробуется первым</string>
+    <string name="conn_endpoint_hint">IP-адрес с портом</string>
+    <string name="dns_note">Свой DNS работает внутри туннеля WARP: сервер видит адрес Cloudflare, а не ваш. Изменения применяются после переподключения.</string>
+    <string name="dns_use">Использовать польз. DNS</string>
+    <string name="dns_server">DNS-сервер</string>
+    <string name="dns_default">Cloudflare 1.1.1.1</string>
+    <string name="dns_hint">IP или имя хоста, например 8.8.8.8 или dns.google</string>
+    <string name="dns_soon">Имя хоста превращается в IP-адреса при подключении и работает как обычный DNS внутри туннеля. Настоящие DoH/DoT пока не поддерживаются.</string>
+    <string name="routes_list">Исключённые IP-адреса и подсети</string>
+    <string name="routes_note">Указанные подсети идут напрямую, мимо VPN. Работает на Android 13 и новее.</string>
+    <string name="routes_add">Ввести исключённые маршруты</string>
+    <string name="routes_default">Восстановить значения по умолчанию</string>
+    <string name="routes_hint">например 192.168.0.0/16</string>
+    <string name="diag_on">ВКЛ</string>
+    <string name="diag_off">ВЫКЛ</string>
+    <string name="diag_sec_conn">Подключение</string>
+    <string name="diag_conn">Подключение</string>
+    <string name="diag_strategy">Стратегия</string>
+    <string name="diag_sec_dev">Ваше устройство</string>
+    <string name="diag_nettype">Тип подключения</string>
+    <string name="net_wifi">Wi-Fi</string>
+    <string name="net_cell">Мобильная сеть</string>
+    <string name="diag_sec_cfg">Конфигурация клиента</string>
+    <string name="diag_id">ID (MASQUE)</string>
+    <string name="diag_id_wg">ID (WireGuard)</string>
+    <string name="diag_sec_stats">Статистика</string>
+    <string name="diag_rx">Получено</string>
+    <string name="diag_tx">Отправлено</string>
+    <string name="diag_sec_tools">Инструменты</string>
+    <string name="diag_quick">Быстрая проверка</string>
+    <string name="diag_quick_sub">Узнать публичный IP и дата-центр напрямую</string>
+    <string name="diag_full">Полная диагностика</string>
+    <string name="diag_full_sub">DNS, HTTPS, API Cloudflare, сервер MASQUE, IPv6, интернет</string>
+    <string name="diag_errors">Ошибки</string>
+    <string name="diag_errors_sub">Только сбои и предупреждения из журнала</string>
+    <string name="diag_share">Поделиться отчётом</string>
+    <string name="diag_share_sub">Версия, устройство, проверки и журнал (без ключей)</string>
+    <string name="diag_copy_report">Скопировать отчёт</string>
+    <string name="diag_report_copied">Скопировано</string>
+    <string name="errors_none">Ошибок в журнале нет.</string>
+    <string name="errors_refresh">Обновить</string>
+    <string name="chk_dns">DNS (cloudflare.com)</string>
+    <string name="chk_https">HTTPS (cloudflare.com)</string>
+    <string name="chk_api">API регистрации WARP</string>
+    <string name="chk_masque">Сервер MASQUE (TCP 443)</string>
+    <string name="chk_v6">IPv6</string>
+    <string name="chk_web">Интернет (google.com)</string>
+    <string name="reg_working">Идёт регистрация устройства…</string>
+    <string name="reg_none">Устройство не зарегистрировано</string>
+    <string name="reg_retry">Повторю регистрацию сам: то по Wi-Fi, то через мобильную сеть</string>
+    <string name="value_none">нет</string>
+    <string name="adv_sec_apps">Приложения и сеть</string>
+    <string name="adv_sec_conn">Подключение</string>
+    <string name="adv_sec_other">Прочее</string>
+    <string name="adv_parallel">Параллельный режим и горячий резерв</string>
+    <string name="adv_parallel_sub">Несколько путей одновременно, мгновенный переход на резерв при сбое. Отключите, если что-то работает странно.</string>
+    <string name="diag_full_running">Проверяю, это займёт несколько секунд…</string>
+    <string name="diag_sys">Состояние системы и памяти</string>
+    <string name="diag_sys_sub">Сети, батарея, режимы Android, DNS, оператор, память стратегий</string>
+    <string name="diag_test_failover">Проверить горячий резерв</string>
+    <string name="diag_test_failover_sub">Имитирует отказ основного туннеля: смотрите результат в журнале (🧪)</string>
+    <string name="wl_title">Режим белых списков</string>
+    <string name="wl_sub">Белые списки: Cloudflare недоступен, жду</string>
+    <string name="wl_text">Оператор пропускает только российские сайты, поэтому Cloudflare WARP (как и любой зарубежный VPN) сейчас не подключается. Гидра сама проверяет сеть и подключится, когда ограничения снимут. Пока она пробует имена российских сайтов (SNI) и не портит память стратегий.</string>
+    <string name="wl_check">Проверить сеть</string>
+    <string name="wl_relay">Что можно сделать</string>
+    <string name="wl_relay_title">Как обойти белые списки</string>
+    <string name="wl_relay_text">Если оператор фильтрует по IP-адресам, поможет только ретранслятор: небольшая программа на сервере, чей адрес входит в белый список (российский хостинг или облако). Она просто пересылает UDP-пакеты к Cloudflare.\n\nНа сервере (Linux) одна команда:\nsocat UDP4-LISTEN:443,fork,reuseaddr UDP4:162.159.198.2:443\n\nВ приложении: Дополнительно → Польз. конечная точка → IP-адрес сервера:443.\n\nПодойдёт ли конкретный хостинг, зависит от оператора и региона: проверьте, открывается ли его адрес в режиме белых списков. Без собственного сервера обход возможен только если фильтр смотрит на имя сайта (SNI), а не на IP: Гидра проверяет это сама (кнопка «Проверить сеть»).</string>
+    <string name="diag_wl">Проверка белых списков</string>
+    <string name="diag_wl_sub">Какие адреса и имена доступны оператору сейчас</string>
+    <string name="diag_svc">Проверка сервисов через туннель</string>
+    <string name="diag_svc_sub">Telegram, Google, GitHub: проходит ли TCP через текущий туннель и дата-центр</string>
+    <string name="pdns_title">Включён частный DNS</string>
+    <string name="pdns_text">Строгий частный DNS (%1$s) часто не работает через VPN: из-за него могут не открываться сайты и Telegram. Выключите его или выберите «Автоматически»: Настройки → Подключение и общий доступ → Частный DNS.</string>
+    <string name="pdns_open">Открыть настройки</string>
+    <string name="adv_ipv6">IPv6 через туннель</string>
+    <string name="adv_ipv6_sub">Выключено: приложения сразу идут по IPv4 (быстрее и без зависаний). Включите, если нужен ресурс только с IPv6.</string>
+    <string name="adv_tg">Проверять Telegram после подключения</string>
+    <string name="adv_tg_sub">Если интернет есть, а Telegram не доходит, Гидра сама выберет другой дата-центр.</string>
+    <string name="notif_strategy_changed">Новый маршрут: %1$s · %2$s</string>
+    <string name="notif_section">Уведомления</string>
+    <string name="notify_strategy">Уведомлять о смене маршрута</string>
+    <string name="notify_errors">Уведомлять об ошибках</string>
+    <string name="notify_status">Плитка статуса в шторке</string>
+    <string name="export_full">Экспорт полного бэкапа</string>
+    <string name="import_full">Импорт полного бэкапа</string>
+    <string name="speed_test">Тест скорости / качества</string>
+
+    <!-- Плитка в шторке -->
+    <string name="tile_label">WARP</string>
+    <string name="tile_on">VPN вкл</string>
+    <string name="tile_on_fmt">%1$s · %2$d мс</string>
+    <string name="tile_off">VPN выкл</string>
+    <string name="tile_connecting">Подключение…</string>
+
+    <!-- WG junk / handshake UI -->
+    <string name="wg_junk_title">Мусорные пакеты WireGuard (Jc / Jmin / Jmax)</string>
+    <string name="wg_junk_sub">Amnezia-стиль: padding перед рукопожатием. 0 = авто из стратегии.</string>
+    <string name="wg_jc">Jc (число)</string>
+    <string name="wg_jmin">Jmin (байт)</string>
+    <string name="wg_jmax">Jmax (байт)</string>
+    <string name="forget_net_title">Сбросить опыт сетей</string>
+    <string name="forget_net_sub">Стереть всё, чему Гидра научилась (стратегии, запреты дата-центров, режим «через мобильную» для Wi-Fi). Аккаунты и настройки остаются. Помогает, если не подключается.</string>
+    <string name="hs_timeout_title">Таймаут рукопожатия</string>
+    <string name="hs_timeout_sub">Сколько ждать ответ WG, прежде чем перейти к следующей стратегии (мс). По умолчанию 2000.</string>
+    <string name="diag_trace_title">cdn-cgi/trace</string>
+    <string name="diag_trace_fmt">IP %1$s · %2$s · %3$s · warp=%4$s</string>
+
+
+    <string name="export_file">Экспорт бэкапа в файл</string>
+    <string name="import_file">Импорт бэкапа из файла</string>
+    <string name="export_account_file">Экспорт только аккаунта (в файл)</string>
+    <string name="import_account_file">Импорт только аккаунта (из файла)</string>
+    <string name="backup_hint">На ТВ: скопируй файл по USB из Download или Android/data/…/files/</string>
+
+    <string name="update_repo">GitHub-репозиторий обновлений (owner/name)</string>
+
+    <!-- Self-heal / zombie tunnel -->
+    <string name="diag_reset_tunnel">Сбросить туннель</string>
+    <string name="diag_reset_tunnel_sub">Если статус «подключено», а интернет не работает</string>
+    <string name="diag_reset_tunnel_hint">Выбери силу сброса. Автолечение делает то же самое само.</string>
+    <string name="diag_reset_soft">Мягкий — смена стратегии (TUN тот же)</string>
+    <string name="diag_reset_full">Полный — новый TUN и выбор пути</string>
+    <string name="diag_reset_hard">Жёсткий — полный + очистка временных данных</string>
+    <string name="diag_reset_root">Root — очистка кеша + полный сброс</string>
+    <string name="heal_title">Автолечение туннеля</string>
+    <string name="heal_auto">Автолечение zombie-туннеля</string>
+    <string name="heal_auto_sub">Если «подключено», а сервисы не отвечают — Гидра сама лечит путь</string>
+    <string name="heal_root">Усиленное лечение (root)</string>
+    <string name="heal_root_sub">После неудачи обычных уровней: очистка cacheDir и force-stop</string>
+</resources>
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WARP CLAUDE</string>
