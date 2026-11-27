@@ -94,6 +94,8 @@ fun HydraApp(prefs: Prefs, onLanguageChanged: () -> Unit) {
     val account = remember { AccountController(ctx.applicationContext, ctx.filesDir.absolutePath, scope) { systemDns(ctx) } }
     val vpn = remember { VpnController(ctx.applicationContext, scope) }
     val stack = remember { mutableStateListOf(Dest.Home) }
+    var askShare by remember { mutableStateOf(Telemetry.needAsk(ctx)) }
+    if (askShare) ShareConsentDialog { askShare = false }
 
     fun go(d: Dest) { stack.add(d) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }

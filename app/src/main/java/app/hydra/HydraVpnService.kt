@@ -152,6 +152,7 @@ class HydraVpnService : VpnService() {
     /** Раз в 3 секунды: обновляет уведомление и, если ядро остановилось, а VPN нужен, поднимает заново. */
     private val statusUpdater = object : Runnable {
         override fun run() {
+            try { Telemetry.maybeSend(this@HydraVpnService) } catch (_: Throwable) {}
             try {
                 val raw = mobile.Mobile.engineStatus()
                 val p = raw.split("|")
