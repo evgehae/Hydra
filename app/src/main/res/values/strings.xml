@@ -310,4 +310,18 @@
     <string name="backup_hint">On TV: copy the file via USB from Download or Android/data/…/files/</string>
 
     <string name="update_repo">GitHub repo for updates (owner/name)</string>
+
+    <!-- Self-heal / zombie tunnel -->
+    <string name="diag_reset_tunnel">Reset tunnel</string>
+    <string name="diag_reset_tunnel_sub">When status is connected but the internet does not work</string>
+    <string name="diag_reset_tunnel_hint">Choose reset strength. Auto-heal does the same automatically.</string>
+    <string name="diag_reset_soft">Soft — reselect strategy (keep TUN)</string>
+    <string name="diag_reset_full">Full — new TUN and path selection</string>
+    <string name="diag_reset_hard">Hard — full + clear temporary data</string>
+    <string name="diag_reset_root">Root — clear cache + full reset</string>
+    <string name="heal_title">Tunnel auto-heal</string>
+    <string name="heal_auto">Auto-heal zombie tunnel</string>
+    <string name="heal_auto_sub">If connected but services fail — Hydra heals the path itself</string>
+    <string name="heal_root">Enhanced heal (root)</string>
+    <string name="heal_root_sub">After normal levels fail: clear cacheDir and force-stop</string>
 </resources>
