@@ -163,9 +163,9 @@
     <string name="kill_info">Пока туннель не работает или переключается, трафик приложений в VPN блокируется, а не утекает. Системный пункт «Блокировать подключения без VPN» делает это ещё строже.</string>
     <string name="proto_title">Протокол</string>
     <string name="proto_auto">Авто</string>
-    <string name="proto_masque_chip">MASQUE</string>
-    <string name="proto_wg_chip">WireGuard</string>
-    <string name="proto_hint">Авто: оба протокола страхуют друг друга. Если один перестал работать, второй подхватывает.</string>
+    <string name="proto_masque_chip">Только стратегии (MASQUE)</string>
+    <string name="proto_wg_chip">Только конфиги (WireGuard)</string>
+    <string name="proto_hint">Авто: стратегии и конфиги страхуют друг друга. «Только стратегии» — MASQUE с обходом DPI (фейк-пакеты, разные порты). «Только конфиги» — WireGuard/Amnezia с прологом перед рукопожатием.</string>
     <string name="wg_edit">Править конфигурацию</string>
     <string name="wg_cancel">Отменить правку</string>
     <string name="wg_save">Сохранить конфигурацию</string>
@@ -185,7 +185,7 @@
     <string name="conn_apps">Управление исключёнными приложениями</string>
     <string name="conn_routes">Управление исключёнными маршрутами</string>
     <string name="conn_dns">Параметры DNS</string>
-    <string name="conn_proto">Протокол туннелирования</string>
+    <string name="conn_proto">Тип подключения</string>
     <string name="conn_reset_keys">Сбросить ключи безопасности</string>
     <string name="conn_reset_keys_q">Аккаунты WARP будут удалены и созданы заново. VPN выключится.</string>
     <string name="conn_reset_all">Сбросить все настройки</string>
