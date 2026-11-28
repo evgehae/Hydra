@@ -163,9 +163,9 @@
     <string name="kill_info">While the tunnel is down or switching, traffic of routed apps is blocked, not leaked. The system option “Block connections without VPN” makes it even stricter.</string>
     <string name="proto_title">Protocol</string>
     <string name="proto_auto">Auto</string>
-    <string name="proto_masque_chip">MASQUE</string>
-    <string name="proto_wg_chip">WireGuard</string>
-    <string name="proto_hint">Auto: both protocols back each other up. If one stops working, the other takes over.</string>
+    <string name="proto_masque_chip">Strategies only (MASQUE)</string>
+    <string name="proto_wg_chip">Configs only (WireGuard)</string>
+    <string name="proto_hint">Auto: strategies and configs back each other up. Strategies only: MASQUE with DPI evasion (fake packets, many ports). Configs only: WireGuard/Amnezia with a prelude before the handshake.</string>
     <string name="wg_edit">Edit config</string>
     <string name="wg_cancel">Cancel editing</string>
     <string name="wg_save">Save config</string>
@@ -185,7 +185,7 @@
     <string name="conn_apps">Manage excluded apps</string>
     <string name="conn_routes">Manage excluded routes</string>
     <string name="conn_dns">DNS settings</string>
-    <string name="conn_proto">Tunnel protocol</string>
+    <string name="conn_proto">Connection type</string>
     <string name="conn_reset_keys">Reset security keys</string>
     <string name="conn_reset_keys_q">WARP accounts will be deleted and created again. The VPN will turn off.</string>
     <string name="conn_reset_all">Reset all settings</string>
