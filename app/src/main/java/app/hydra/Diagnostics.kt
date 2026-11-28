@@ -191,7 +191,8 @@ fun buildReport(ctx: android.content.Context, prefs: Prefs, vpn: VpnController, 
 }
 
 /** Отправляет отчёт файлом .txt (так его принимают мессенджеры и почта); если не вышло — текстом. */
-fun shareReport(ctx: android.content.Context, text: String) {
+fun shareReport(ctx: android.content.Context, textFull: String) {
+    val text = compactReport(textFull)
     try {
         val dir = java.io.File(ctx.cacheDir, "reports")
         dir.mkdirs()
@@ -214,4 +215,54 @@ fun shareReport(ctx: android.content.Context, text: String) {
             ctx.startActivity(android.content.Intent.createChooser(i, null))
         } catch (t2: Throwable) { }
     }
+}
+
+
+/**
+ * Сжатый отчёт для отправки (в чат, разработчику): диагноз и состояние остаются целиком, а из журнала убираются
+ * повторяющиеся списки проверок сервисов (их десятки по 25 строк) — остаются итог «Доступно N из M» и какие именно ✘.
+ * Одинаковые подряд идущие строки склеиваются «×N». Полный журнал по-прежнему можно скопировать кнопкой «Копировать».
+ */
+fun compactReport(full: String, maxJournal: Int = 260): String {
+    val marker = "--- журнал ---"
+    val at = full.indexOf(marker)
+    if (at < 0) return full
+    val head = full.substring(0, at)
+    val ts = Regex("^\\d\\d:\\d\\d:\\d\\d\\.\\d{3}")
+    val out = ArrayList<String>()
+    var inBlock = false
+    var failed = ArrayList<String>()
+    var summary = ""
+    fun flush() {
+        if (inBlock) {
+            val extra = (if (summary.isNotBlank()) summary.trim() else "") +
+                (if (failed.isNotEmpty()) "  ✘ " + failed.joinToString(", ") else "")
+            if (extra.isNotBlank()) out.add("      → " + extra)
+        }
+        inBlock = false; failed = ArrayList(); summary = ""
+    }
+    for (l in full.substring(at + marker.length).lines()) {
+        if (ts.containsMatchIn(l)) {
+            flush()
+            out.add(l)
+            if (l.contains("проверка сервисов через туннель:") || l.contains("HEALTH_CHECK_FAILED:") || l.contains("HEALTH_CHECK_OK:")) inBlock = true
+        } else if (inBlock) {
+            val t = l.trim()
+            if (t.startsWith("✘")) failed.add(t.removePrefix("✘").trim().substringBefore(" (").substringBefore(":").trim())
+            else if (t.startsWith("Доступно")) summary = t
+        } else if (l.isNotBlank()) out.add(l)
+    }
+    flush()
+    val merged = ArrayList<String>()
+    var prevKey = ""
+    var cnt = 0
+    for (l in out) {
+        val k = l.replace(ts, "").trim()
+        if (k == prevKey && ts.containsMatchIn(l)) {
+            cnt++
+            merged[merged.size - 1] = merged.last().substringBefore("  ×") + "  ×" + (cnt + 1)
+        } else { merged.add(l); prevKey = k; cnt = 0 }
+    }
+    val tail = if (merged.size > maxJournal) merged.takeLast(maxJournal) else merged
+    return head + "--- журнал (сжатый: детали проверок свёрнуты, последние " + tail.size + " строк) ---\n" + tail.joinToString("\n") + "\n"
 }
